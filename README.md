@@ -23,15 +23,29 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE）。
 build.bat
 build.bat Debug
 build.bat Release clean
+build.bat test          :: 编译并跑 GoogleTest
+build.bat notest        :: 不编测试
 ```
 
-产物：`build/bin/Release/qingying.exe`
+产物：`build/bin/Release/qingying.exe`  
+测试：`build/bin/Release/qingying_tests.exe`
+
+GoogleTest 使用相对仓库根目录的 vcpkg：
+
+```text
+../thirdparty_install/vcpkg
+```
+
+（即与本仓库同级的 `thirdparty_install/vcpkg`，需已 `vcpkg install gtest:x64-windows`）
 
 也可手动：
 
 ```bat
-cmake -S . -B build -G "Visual Studio 16 2019" -A x64
+cmake -S . -B build -G "Visual Studio 16 2019" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=../thirdparty_install/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+  -DQINGYING_BUILD_TESTS=ON
 cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 ## 目录
@@ -48,5 +62,6 @@ src/longshot        长截图
 src/export          剪贴板 / 存盘
 src/command         本地口令
 src/mcp             MCP Bridge（PIMPL）
+tests/              GoogleTest 单元测试
 docs/               架构文档
 ```

@@ -106,3 +106,27 @@ target_link_libraries(qingying PRIVATE
 if(WIN32)
   target_link_libraries(qingying PRIVATE shell32 ole32 uuid)
 endif()
+
+# ---------------------------------------------------------------------------
+# GoogleTest via vcpkg (relative to repo root)
+#   <repo>/../thirdparty_install/vcpkg
+# ---------------------------------------------------------------------------
+option(QINGYING_BUILD_TESTS "Build GoogleTest unit tests" ON)
+
+if(QINGYING_BUILD_TESTS)
+  get_filename_component(QINGYING_VCPKG_ROOT
+    "${CMAKE_SOURCE_DIR}/../thirdparty_install/vcpkg"
+    ABSOLUTE)
+
+  set(QINGYING_VCPKG_ROOT "${QINGYING_VCPKG_ROOT}"
+      CACHE PATH "vcpkg root containing installed GTest" FORCE)
+
+  list(APPEND CMAKE_PREFIX_PATH
+       "${QINGYING_VCPKG_ROOT}/installed/x64-windows")
+
+  find_package(GTest CONFIG REQUIRED)
+
+  enable_testing()
+  include(CTest)
+  add_subdirectory(tests)
+endif()
