@@ -11,10 +11,10 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | 工程骨架（CMake / MSVC / C++17 / 10 个 static lib / 单 EXE） | ✅ 完成 | Release 单 EXE 可构建 |
-| P0 主路径「截一下」 | 🔶 基本闭环 | 热键 → 框选 → 截图 → 自动复制到剪贴板（F1/F4 的复制部分） |
-| 单元测试 | ✅ 29/29 绿 | 7 个测试套件，gtest |
+| P0 主路径「截一下」 | 🔶 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG |
+| 单元测试 | ✅ 32/32 绿 | 8 个测试套件，gtest |
 
-**一句话**：当前已打通「**热键 → 全屏遮罩 → 左键框选 → 松开自动截图 → 复制到剪贴板 → Ctrl+V 粘贴**」主链路；下一步是标注（F3）与保存 PNG（F4 另存为）。
+**一句话**：当前已打通「**热键 → 全屏遮罩 → 左键框选 → 松开自动截图 → 复制到剪贴板 / 保存 PNG**」主链路；下一步是标注（F3）。
 
 ---
 
@@ -30,6 +30,7 @@
 | 区域截图（GDI BitBlt 实装，替代原 stub） | `src/capture/capture_engine.cpp` | 单测 `capture_engine_test`；手动演示闭环 |
 | 截图 → 剪贴板（CF_DIB）复制 | `src/export/export_service.cpp` | 手动：截图后 Ctrl+V 粘贴成功 |
 | DIB 编码器（Image → CF_DIB 纯函数，底向上） | `src/export/dib_encoder.cpp` | 单测 `dib_encoder_test`（3 用例全绿） |
+| 截图 → PNG 保存（Windows WIC） | `src/export/export_service.cpp` | 单测 `export_service_test`（3 用例全绿） |
 
 **手动验收通过**：`Ctrl+Shift+Q` → 左键框选 → 松开 → 打开记事本/画图 `Ctrl+V` 粘贴出截图 ✅
 
@@ -51,7 +52,6 @@
 
 ### 3.2 功能待办（对照开发清单 P0→P1）
 
-- [ ] **P0**：另存为 PNG（`savePng` 目前是 stub）
 - [ ] **P1**：标注（矩形/椭圆/箭头/画笔/文字/马赛克 + 撤销）——F3
 - [ ] **P1**：八点调区 / 移动选区；窗口吸附（F2）
 - [ ] **P1**：Per-Monitor DPI / 双屏 + 125% / 150% 冒烟
@@ -64,7 +64,7 @@
 
 ## 4. 质量与验证基线
 
-- **单元测试**：29/29 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `mask_renderer` / `selection_controller`）
+- **单元测试**：32/32 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `selection_controller`）
 - **TDD**：核心逻辑均先写失败测试再实现（SelectionController / MaskRenderer / encodeDib）
 - **规范**：遵守 CLAUDE.md（m_ 前缀、Allman、RAII 管 GDI/HANDLE、`.at()` 防越界、宽字符 API、错误码不抛异常）；UI/系统资源壳（Overlay、Clipboard）为已批准的 TDD 例外
 - **构建**：`build.bat Release` / `build.bat test`（gtest via vcpkg，仓库同级 `../thirdparty_install/vcpkg`）
@@ -74,10 +74,9 @@
 ## 5. 下一步建议（供评审/分工参考）
 
 1. **先落提交**：把当前 6 个文件的剪贴板改动 commit + push（避免进度漂移在本地）
-2. **补 P0 缺口**：实现 `savePng`（另存 PNG），让「框选 → 复制 / 保存」两个导出出口都闭环
-3. **PIMPL 化 capture_engine**：消除裸 new/delete，达标红线
-4. **进入 P1 标注**：这是演示主路径「截—标」的核心增值点，建议优先
-5. **DPI / 多屏冒烟**：在双屏 + 125%/150% 下验证选区与成像无偏移（高风险项，早验证）
+2. **PIMPL 化 capture_engine**：消除裸 new/delete，达标红线
+3. **进入 P1 标注**：这是演示主路径「截—标」的核心增值点，建议优先
+4. **DPI / 多屏冒烟**：在双屏 + 125%/150% 下验证选区与成像无偏移（高风险项，早验证）
 
 ---
 

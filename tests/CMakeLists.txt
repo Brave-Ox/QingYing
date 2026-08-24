@@ -6,6 +6,7 @@ add_executable(qingying_tests
   capture_engine_test.cpp
   capture_session_test.cpp
   dib_encoder_test.cpp
+  export_service_test.cpp
   mask_renderer_test.cpp
   selection_controller_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp

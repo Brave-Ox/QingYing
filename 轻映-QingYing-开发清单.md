@@ -127,7 +127,7 @@ P4（可选增强）
 - [ ] 鼠标拖拽框选；Esc / 右键取消  
 - [ ] `CaptureEngine`：DXGI Desktop Duplication 主路径 + GDI fallback  
 - [ ] 复制到剪贴板（PNG/位图）  
-- [ ] 另存为 PNG  
+- [x] 另存为 PNG
 - [ ] **埋下** `ActionDispatcher` 空壳与标准 Action 枚举  
 
 #### P1 — 可用的「截—标」

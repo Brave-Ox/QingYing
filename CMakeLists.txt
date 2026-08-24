@@ -39,6 +39,9 @@ target_include_directories(qingying_export
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_export PUBLIC qingying_action)
+if(WIN32)
+  target_link_libraries(qingying_export PUBLIC windowscodecs ole32)
+endif()
 
 add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
