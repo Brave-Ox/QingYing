@@ -5,6 +5,9 @@ add_executable(qingying_tests
   action_handlers_test.cpp
   capture_engine_test.cpp
   capture_session_test.cpp
+  dib_encoder_test.cpp
+  mask_renderer_test.cpp
+  selection_controller_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 
@@ -17,6 +20,7 @@ target_link_libraries(qingying_tests
     qingying_action
     qingying_capture
     qingying_export
+    qingying_overlay
     GTest::gtest
     GTest::gtest_main
 )

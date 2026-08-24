@@ -32,6 +32,7 @@ if(WIN32)
 endif()
 
 add_library(qingying_export STATIC
+  src/export/dib_encoder.cpp
   src/export/export_service.cpp
 )
 target_include_directories(qingying_export
@@ -40,6 +41,8 @@ target_include_directories(qingying_export
 target_link_libraries(qingying_export PUBLIC qingying_action)
 
 add_library(qingying_overlay STATIC
+  src/overlay/mask_renderer.cpp
+  src/overlay/selection_controller.cpp
   src/overlay/selection_overlay.cpp
 )
 target_include_directories(qingying_overlay
@@ -118,13 +121,13 @@ endif()
 
 # ---------------------------------------------------------------------------
 # GoogleTest via vcpkg (relative to repo root)
-#   <repo>/../thirdparty_install/vcpkg
+#   <repo>/../thirdparty/vcpkg  (仓库同级目录，不入库)
 # ---------------------------------------------------------------------------
 option(QINGYING_BUILD_TESTS "Build GoogleTest unit tests" ON)
 
 if(QINGYING_BUILD_TESTS)
   get_filename_component(QINGYING_VCPKG_ROOT
-    "${CMAKE_SOURCE_DIR}/../thirdparty_install/vcpkg"
+    "${CMAKE_SOURCE_DIR}/../thirdparty/vcpkg"
     ABSOLUTE)
 
   set(QINGYING_VCPKG_ROOT "${QINGYING_VCPKG_ROOT}"

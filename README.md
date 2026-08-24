@@ -5,6 +5,7 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE）。
 
 ## 文档
 
+- [开发进度](./docs/PROGRESS.md) — 当前进度快照（已完成 / 待办 / 下一步建议）
 - [开发清单](./轻映-QingYing-开发清单.md) — 功能、指标、验收
 - [架构说明（方案 B）](./docs/architecture.md) — 多 static lib + ActionDispatcher
 
@@ -30,19 +31,20 @@ build.bat notest        :: 不编测试
 产物：`build/bin/Release/qingying.exe`  
 测试：`build/bin/Release/qingying_tests.exe`
 
-GoogleTest 使用相对仓库根目录的 vcpkg：
+GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
 
 ```text
-../thirdparty_install/vcpkg
+../thirdparty/vcpkg
 ```
 
-（即与本仓库同级的 `thirdparty_install/vcpkg`，需已 `vcpkg install gtest:x64-windows`）
+（即仓库父目录下 `thirdparty/vcpkg`，需已 `vcpkg install gtest:x64-windows`；
+vcpkg 位于仓库同级目录，不入版本控制，clone 后需自行准备）
 
 也可手动：
 
 ```bat
 cmake -S . -B build -G "Visual Studio 16 2019" -A x64 ^
-  -DCMAKE_TOOLCHAIN_FILE=../thirdparty_install/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+  -DCMAKE_TOOLCHAIN_FILE=../thirdparty/vcpkg/scripts/buildsystems/vcpkg.cmake ^
   -DQINGYING_BUILD_TESTS=ON
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure

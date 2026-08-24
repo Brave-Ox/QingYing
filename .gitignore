@@ -13,3 +13,6 @@
 *.exe
 !**/bin/**
 .cache/
+
+# 三方库（vcpkg）不入库：源码量大，团队成员各自本地安装
+/thirdparty/
