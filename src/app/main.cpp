@@ -2,8 +2,8 @@
 
 #include <Windows.h>
 
-int WINAPI wWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/,
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                     PWSTR /*lpCmdLine*/, int /*nCmdShow*/) {
-  qingying::Application app;
+  qingying::Application app(hInstance);
   return app.run();
 }

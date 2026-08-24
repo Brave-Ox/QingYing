@@ -16,32 +16,43 @@ class StatusHandler final : public IActionHandler {
     ActionResult r;
     r.ok = true;
     r.error_code = ErrorCode::kOk;
-    r.message = "qingying running (stub)";
+    r.message = "qingying running";
     return r;
   }
 };
 
 }  // namespace
 
-Application::Application() = default;
+Application::Application(HINSTANCE instance) : instance_(instance) {}
 
 Application::~Application() = default;
 
 void Application::registerHandlers() {
   dispatcher_.registerHandler(std::make_unique<StatusHandler>());
-  // P0: CaptureRegion / Copy handlers register here once engines are ready.
 }
 
 int Application::run() {
+  if (!single_instance_.acquired()) {
+    MessageBoxW(nullptr,
+                L"QingYing is already running in the system tray.",
+                L"QingYing", MB_OK | MB_ICONINFORMATION);
+    return 1;
+  }
+
   registerHandlers();
 
-  ActionRequest req;
-  req.type = ActionType::Status;
-  const ActionResult result = dispatcher_.dispatch(req);
-  (void)result;
+  if (!tray_.create(instance_)) {
+    MessageBoxW(nullptr, L"Failed to create system tray icon.", L"QingYing",
+                MB_OK | MB_ICONERROR);
+    return 2;
+  }
 
-  // P0: tray + hotkey message loop will live here.
-  return 0;
+  MSG msg = {};
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+  return static_cast<int>(msg.wParam);
 }
 
 }  // namespace qingying

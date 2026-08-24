@@ -90,8 +90,15 @@ target_link_libraries(qingying_mcp PUBLIC qingying_action)
 add_executable(qingying WIN32
   src/app/main.cpp
   src/app/application.cpp
+  src/app/single_instance_guard.cpp
+  src/app/autostart_settings.cpp
+  src/app/tray_controller.cpp
+  res/qingying.rc
 )
-target_include_directories(qingying PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(qingying PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/res
+)
 target_link_libraries(qingying PRIVATE
   qingying_action
   qingying_capture
@@ -104,7 +111,7 @@ target_link_libraries(qingying PRIVATE
   qingying_mcp
 )
 if(WIN32)
-  target_link_libraries(qingying PRIVATE shell32 ole32 uuid)
+  target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32)
 endif()
 
 # ---------------------------------------------------------------------------
