@@ -123,6 +123,8 @@ capture → （仅系统库 / 本模块 Impl）
 - **坐标**：进入 Capture 的矩形一律为**物理像素**；Overlay 负责逻辑坐标 ↔ 物理像素换算。
 - **调用模型**：P0～P3 默认**同步** `dispatch`；长截若阻塞 UI，后续再加“进行中”状态，不先上线程池复杂度。
 - **错误**：`ActionResult.ok == false` 时必须填稳定 `error_code` + 可读 `message`（供 MCP 返回）。
+- **图片载荷**：`capture` 产物统一为共享类型 `Image`（`include/qingying/action/image.hpp`，BGRA32、行优先、物理像素）。`CaptureRegion` 等 Handler 将结果存入 `CaptureSession`，`Copy/Save` 从 Session 取图交给 `export`；MCP/口令不直接碰像素。
+- **返回值**：`ActionResult.data` 为可选 UTF-8 载荷（如保存路径、MCP 返回值），不引 JSON。
 - **三条入口**：
 
 ```text
@@ -249,3 +251,4 @@ main / Application::init
 |---|---|
 | 2026-08-23 | 确认方案 B；初稿入库 |
 | 2026-08-24 | 完成 app 集成层：托盘、单实例、热键、Handler 注册、主路径接线 |
+| 2026-08-24 | 契约冻结：新增共享 `Image` 类型与 `ActionResult.data` 槽；`CaptureEngine` 以 `Image&` 出参、`ExportService` 收 `Image`，经 `CaptureSession` 打通 capture→export 图片链路 |

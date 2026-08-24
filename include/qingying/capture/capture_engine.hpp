@@ -1,5 +1,6 @@
 #pragma once
 
+#include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
 
 namespace qingying {
@@ -13,9 +14,10 @@ class CaptureEngine {
   CaptureEngine(const CaptureEngine&) = delete;
   CaptureEngine& operator=(const CaptureEngine&) = delete;
 
-  ActionResult captureRegion(int x, int y, int width, int height);
-  ActionResult captureWindow(const std::wstring& query);
-  ActionResult cropCenter(int width, int height);
+  // On success, `out` receives the BGRA32 frame (physical pixels).
+  ActionResult captureRegion(int x, int y, int width, int height, Image& out);
+  ActionResult captureWindow(const std::wstring& query, Image& out);
+  ActionResult cropCenter(int width, int height, Image& out);
 
  private:
   struct Impl;

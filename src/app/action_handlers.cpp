@@ -1,9 +1,11 @@
 #include "qingying/app/action_handlers.hpp"
 
 #include "qingying/action/i_action_handler.hpp"
+#include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
 
 #include <memory>
+#include <utility>
 
 namespace qingying {
 namespace {
@@ -38,10 +40,11 @@ class CaptureRegionHandler final : public IActionHandler {
     }
 
     session_.clear();
+    Image image;
     ActionResult result = capture_.captureRegion(
-        request.x, request.y, request.width, request.height);
+        request.x, request.y, request.width, request.height, image);
     if (result.ok) {
-      session_.markCaptured();
+      session_.setResult(std::move(image));
     }
     return result;
   }
@@ -66,7 +69,7 @@ class CopyHandler final : public IActionHandler {
       r.message = "no capture result";
       return r;
     }
-    return export_service_.copyToClipboard();
+    return export_service_.copyToClipboard(session_.result());
   }
 
  private:
@@ -96,7 +99,7 @@ class SaveHandler final : public IActionHandler {
       r.message = "save path required";
       return r;
     }
-    return export_service_.savePng(request.save_path);
+    return export_service_.savePng(session_.result(), request.save_path);
   }
 
  private:

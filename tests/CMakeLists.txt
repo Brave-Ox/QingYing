@@ -3,6 +3,7 @@
 add_executable(qingying_tests
   action_dispatcher_test.cpp
   action_handlers_test.cpp
+  capture_session_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 

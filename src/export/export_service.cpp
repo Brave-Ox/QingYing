@@ -2,7 +2,7 @@
 
 namespace qingying {
 
-ActionResult ExportService::copyToClipboard() {
+ActionResult ExportService::copyToClipboard(const Image& /*image*/) {
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;
@@ -10,7 +10,8 @@ ActionResult ExportService::copyToClipboard() {
   return r;
 }
 
-ActionResult ExportService::savePng(const std::wstring& /*path*/) {
+ActionResult ExportService::savePng(const Image& /*image*/,
+                                    const std::wstring& /*path*/) {
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;

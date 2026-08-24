@@ -14,7 +14,7 @@ CaptureEngine::~CaptureEngine() {
 }
 
 ActionResult CaptureEngine::captureRegion(int /*x*/, int /*y*/, int /*width*/,
-                                          int /*height*/) {
+                                          int /*height*/, Image& /*out*/) {
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;
@@ -22,7 +22,8 @@ ActionResult CaptureEngine::captureRegion(int /*x*/, int /*y*/, int /*width*/,
   return r;
 }
 
-ActionResult CaptureEngine::captureWindow(const std::wstring& /*query*/) {
+ActionResult CaptureEngine::captureWindow(const std::wstring& /*query*/,
+                                          Image& /*out*/) {
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;
@@ -30,7 +31,8 @@ ActionResult CaptureEngine::captureWindow(const std::wstring& /*query*/) {
   return r;
 }
 
-ActionResult CaptureEngine::cropCenter(int /*width*/, int /*height*/) {
+ActionResult CaptureEngine::cropCenter(int /*width*/, int /*height*/,
+                                       Image& /*out*/) {
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;

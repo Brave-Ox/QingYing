@@ -56,6 +56,8 @@ struct ActionResult {
   bool ok{false};
   int error_code{ErrorCode::kUnknown};
   std::string message;
+  // Optional payload: save path / MCP return value; plain UTF-8 text, no JSON dep.
+  std::string data;
 };
 
 }  // namespace qingying
