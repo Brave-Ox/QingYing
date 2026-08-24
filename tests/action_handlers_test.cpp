@@ -26,9 +26,9 @@ TEST(AppActionHandlersTest, RegistersP0Handlers) {
 
   qingying::ActionRequest region;
   region.type = qingying::ActionType::CaptureRegion;
-  region.width = 100;
-  region.height = 100;
+  region.width = 0;  // 非法宽高：handler 应在触达截屏前就拒绝，避免 GDI 环境依赖
+  region.height = 0;
   const qingying::ActionResult region_result = dispatcher.dispatch(region);
   EXPECT_FALSE(region_result.ok);
-  EXPECT_EQ(region_result.error_code, qingying::ErrorCode::kNotImplemented);
+  EXPECT_EQ(region_result.error_code, qingying::ErrorCode::kInvalidArgument);
 }
