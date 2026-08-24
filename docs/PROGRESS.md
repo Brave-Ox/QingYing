@@ -67,7 +67,7 @@
 - **单元测试**：29/29 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `mask_renderer` / `selection_controller`）
 - **TDD**：核心逻辑均先写失败测试再实现（SelectionController / MaskRenderer / encodeDib）
 - **规范**：遵守 CLAUDE.md（m_ 前缀、Allman、RAII 管 GDI/HANDLE、`.at()` 防越界、宽字符 API、错误码不抛异常）；UI/系统资源壳（Overlay、Clipboard）为已批准的 TDD 例外
-- **构建**：`build.bat Release` / `build.bat test`（gtest via vcpkg，仓库同级 `../thirdparty/vcpkg`）
+- **构建**：`build.bat Release` / `build.bat test`（gtest via vcpkg，仓库同级 `../thirdparty_install/vcpkg`）
 
 ---
 

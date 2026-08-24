@@ -121,13 +121,13 @@ endif()
 
 # ---------------------------------------------------------------------------
 # GoogleTest via vcpkg (relative to repo root)
-#   <repo>/../thirdparty/vcpkg  (仓库同级目录，不入库)
+#   <repo>/../thirdparty_install/vcpkg  (仓库同级目录，不入库)
 # ---------------------------------------------------------------------------
 option(QINGYING_BUILD_TESTS "Build GoogleTest unit tests" ON)
 
 if(QINGYING_BUILD_TESTS)
   get_filename_component(QINGYING_VCPKG_ROOT
-    "${CMAKE_SOURCE_DIR}/../thirdparty/vcpkg"
+    "${CMAKE_SOURCE_DIR}/../thirdparty_install/vcpkg"
     ABSOLUTE)
 
   set(QINGYING_VCPKG_ROOT "${QINGYING_VCPKG_ROOT}"

@@ -34,17 +34,17 @@ build.bat notest        :: 不编测试
 GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
 
 ```text
-../thirdparty/vcpkg
+../thirdparty_install/vcpkg
 ```
 
-（即仓库父目录下 `thirdparty/vcpkg`，需已 `vcpkg install gtest:x64-windows`；
+（即仓库父目录下 `thirdparty_install/vcpkg`，需已 `vcpkg install gtest:x64-windows`；
 vcpkg 位于仓库同级目录，不入版本控制，clone 后需自行准备）
 
 也可手动：
 
 ```bat
 cmake -S . -B build -G "Visual Studio 16 2019" -A x64 ^
-  -DCMAKE_TOOLCHAIN_FILE=../thirdparty/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+  -DCMAKE_TOOLCHAIN_FILE=../thirdparty_install/vcpkg/scripts/buildsystems/vcpkg.cmake ^
   -DQINGYING_BUILD_TESTS=ON
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure

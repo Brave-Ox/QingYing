@@ -18,8 +18,8 @@ set "DO_CLEAN=0"
 set "DO_TEST=0"
 set "BUILD_TESTS=ON"
 
-rem Relative to this repo's parent: ../thirdparty/vcpkg (仓库同级目录，不入库)
-set "VCPKG_ROOT=%~dp0..\thirdparty\vcpkg"
+rem Relative to this repo's parent: ../thirdparty_install/vcpkg (仓库同级目录，不入库)
+set "VCPKG_ROOT=%~dp0..\thirdparty_install\vcpkg"
 set "VCPKG_TOOLCHAIN=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
 
 :parse_args
