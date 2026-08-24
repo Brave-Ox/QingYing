@@ -209,10 +209,11 @@ main / Application::init
 
 ### P0（架构搭好的验收）
 
-- [ ] 多 static lib 链出单个 `qingying.exe`
-- [ ] `ActionDispatcher` 可注册并执行 `CaptureRegion` / `Copy` / `Status`
-- [ ] 热键 → Overlay 框选 → Capture → 剪贴板
-- [ ] 无人跨模块依赖 `*Impl` / DXGI 私有头
+- [x] 多 static lib 链出单个 `qingying.exe`
+- [x] `ActionDispatcher` 可注册并执行 `CaptureRegion` / `Copy` / `Save` / `Status`（`registerAppHandlers`）
+- [x] 集成层：`HotkeyManager`（Ctrl+Shift+Q）→ `Overlay` → `dispatch(CaptureRegion)` → `dispatch(Copy)` 已接线
+- [ ] 端到端演示：待 `overlay` 遮罩 UI 与 `capture` 区域截图落地后可跑通
+- [x] 集成层不跨模块依赖 `*Impl` / DXGI 私有头
 
 ### 建议人力切分
 
@@ -247,3 +248,4 @@ main / Application::init
 | 日期 | 说明 |
 |---|---|
 | 2026-08-23 | 确认方案 B；初稿入库 |
+| 2026-08-24 | 完成 app 集成层：托盘、单实例、热键、Handler 注册、主路径接线 |

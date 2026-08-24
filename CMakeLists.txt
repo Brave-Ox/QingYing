@@ -93,6 +93,8 @@ add_executable(qingying WIN32
   src/app/single_instance_guard.cpp
   src/app/autostart_settings.cpp
   src/app/tray_controller.cpp
+  src/app/hotkey_manager.cpp
+  src/app/action_handlers.cpp
   res/qingying.rc
 )
 target_include_directories(qingying PRIVATE

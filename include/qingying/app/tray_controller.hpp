@@ -2,10 +2,15 @@
 
 #include <Windows.h>
 
+#include <functional>
+
 namespace qingying {
 
 class TrayController {
  public:
+  using MessageFilter =
+      std::function<bool(UINT msg, WPARAM wparam, LPARAM lparam, LRESULT* result)>;
+
   TrayController();
   ~TrayController();
 
@@ -14,6 +19,8 @@ class TrayController {
 
   bool create(HINSTANCE instance);
   void destroy();
+
+  void setMessageFilter(MessageFilter filter);
 
   HWND hwnd() const { return hwnd_; }
 
@@ -33,6 +40,7 @@ class TrayController {
   HICON icon_{nullptr};
   bool icon_added_{false};
   UINT taskbar_created_msg_{0};
+  MessageFilter message_filter_;
 };
 
 }  // namespace qingying

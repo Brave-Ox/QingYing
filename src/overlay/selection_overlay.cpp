@@ -2,8 +2,9 @@
 
 namespace qingying {
 
-bool SelectionOverlay::show() {
-  return false;  // stub: no window yet
+bool SelectionOverlay::show(SelectionCallback /*callback*/) {
+  // Overlay UI is owned by qingying_overlay; integration wires the callback here.
+  return false;
 }
 
 void SelectionOverlay::hide() {}

@@ -60,6 +60,10 @@ void TrayController::destroy() {
   }
 }
 
+void TrayController::setMessageFilter(MessageFilter filter) {
+  message_filter_ = std::move(filter);
+}
+
 HICON TrayController::loadAppIcon(HINSTANCE instance) {
   HICON icon = static_cast<HICON>(LoadImageW(
       instance, MAKEINTRESOURCEW(IDI_QINGYING), IMAGE_ICON,
@@ -148,6 +152,13 @@ void TrayController::showContextMenu() {
 }
 
 LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
+  if (message_filter_) {
+    LRESULT filtered = 0;
+    if (message_filter_(msg, wparam, lparam, &filtered)) {
+      return filtered;
+    }
+  }
+
   if (taskbar_created_msg_ != 0 && msg == taskbar_created_msg_) {
     icon_added_ = false;
     addTrayIcon();

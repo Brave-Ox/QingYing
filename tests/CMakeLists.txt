@@ -2,6 +2,8 @@
 
 add_executable(qingying_tests
   action_dispatcher_test.cpp
+  action_handlers_test.cpp
+  ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 
 target_include_directories(qingying_tests
@@ -11,6 +13,8 @@ target_include_directories(qingying_tests
 target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
+    qingying_capture
+    qingying_export
     GTest::gtest
     GTest::gtest_main
 )
