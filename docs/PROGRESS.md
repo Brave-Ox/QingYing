@@ -31,6 +31,7 @@
 | 截图 → 剪贴板（CF_DIB）复制 | `src/export/export_service.cpp` | 手动：截图后 Ctrl+V 粘贴成功 |
 | DIB 编码器（Image → CF_DIB 纯函数，底向上） | `src/export/dib_encoder.cpp` | 单测 `dib_encoder_test`（3 用例全绿） |
 | 截图 → PNG 保存（Windows WIC） | `src/export/export_service.cpp` | 单测 `export_service_test`（3 用例全绿） |
+| 选区操作条保存最近截图 | `src/overlay/selection_overlay.cpp` / `src/app/application.cpp` | 框选后 → 下载图片 → 原生保存对话框 |
 
 **手动验收通过**：`Ctrl+Shift+Q` → 左键框选 → 松开 → 打开记事本/画图 `Ctrl+V` 粘贴出截图 ✅
 

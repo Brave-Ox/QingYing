@@ -119,7 +119,7 @@ target_link_libraries(qingying PRIVATE
   qingying_mcp
 )
 if(WIN32)
-  target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32)
+  target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32 comdlg32)
 endif()
 
 # ---------------------------------------------------------------------------

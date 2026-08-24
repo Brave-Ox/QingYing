@@ -4,6 +4,11 @@
 #include "qingying/app/app_messages.hpp"
 #include "qingying/action/types.hpp"
 
+#include "resource.h"
+
+#include <commdlg.h>
+#include <iterator>
+
 namespace qingying {
 
 Application::Application(HINSTANCE instance) : instance_(instance) {}
@@ -38,6 +43,38 @@ void Application::onCaptureHotkey() {
   PostMessageW(tray_.hwnd(), WM_QINGYING_BEGIN_CAPTURE, 0, 0);
 }
 
+void Application::saveLastCapture() {
+  if (!session_.hasResult()) {
+    MessageBoxW(tray_.hwnd(), L"There is no capture to save yet.", L"QingYing",
+                MB_OK | MB_ICONINFORMATION);
+    return;
+  }
+
+  wchar_t path[MAX_PATH] = L"qingying.png";
+  OPENFILENAMEW dialog = {};
+  dialog.lStructSize = sizeof(dialog);
+  dialog.hwndOwner = tray_.hwnd();
+  dialog.lpstrFilter =
+      L"PNG image (*.png)\0*.png\0All files (*.*)\0*.*\0\0";
+  dialog.lpstrFile = path;
+  dialog.nMaxFile = static_cast<DWORD>(std::size(path));
+  dialog.lpstrDefExt = L"png";
+  dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+  if (!GetSaveFileNameW(&dialog)) {
+    return;
+  }
+
+  ActionRequest request;
+  request.type = ActionType::Save;
+  request.save_path = path;
+  const ActionResult result = dispatcher_.dispatch(request);
+  if (!result.ok) {
+    MessageBoxW(tray_.hwnd(), L"Failed to save the latest capture.", L"QingYing",
+                MB_OK | MB_ICONERROR);
+  }
+}
+
 void Application::runCapturePipeline(const SelectionResult& region) {
   if (region.cancelled) {
     return;
@@ -52,6 +89,11 @@ void Application::runCapturePipeline(const SelectionResult& region) {
 
   const ActionResult capture_result = dispatcher_.dispatch(capture_req);
   if (!capture_result.ok) {
+    return;
+  }
+
+  if (region.action == SelectionAction::Save) {
+    saveLastCapture();
     return;
   }
 

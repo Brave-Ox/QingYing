@@ -29,6 +29,7 @@ class Application {
   void registerHandlers();
   void installMessageRouter();
   void onCaptureHotkey();
+  void saveLastCapture();
   void beginCaptureFlow();
   void runCapturePipeline(const SelectionResult& region);
 
