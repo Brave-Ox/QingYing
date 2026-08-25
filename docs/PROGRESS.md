@@ -12,9 +12,9 @@
 |---|---|---|
 | 工程骨架（CMake / MSVC / C++17 / 10 个 static lib / 单 EXE） | ✅ 完成 | Release 单 EXE 可构建 |
 | P0 主路径「截一下」 | 🔶 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG |
-| 单元测试 | ✅ 32/32 绿 | 8 个测试套件，gtest |
+| 单元测试 | ✅ 37/37 绿 | 9 个测试套件，gtest |
 
-**一句话**：当前已打通「**热键 → 全屏遮罩 → 左键框选 → 松开自动截图 → 复制到剪贴板 / 保存 PNG**」主链路；下一步是标注（F3）。
+**一句话**：当前已打通「**热键 → 全屏遮罩 → 左键框选 → 松开自动截图 → 复制到剪贴板 / 保存 PNG / 钉图**」主链路；下一步是标注（F3）。
 
 ---
 
@@ -32,6 +32,7 @@
 | DIB 编码器（Image → CF_DIB 纯函数，底向上） | `src/export/dib_encoder.cpp` | 单测 `dib_encoder_test`（3 用例全绿） |
 | 截图 → PNG 保存（Windows WIC） | `src/export/export_service.cpp` | 单测 `export_service_test`（3 用例全绿） |
 | 选区操作条保存最近截图 | `src/overlay/selection_overlay.cpp` / `src/app/application.cpp` | 框选后 → 下载图片 → 原生保存对话框 |
+| Pin 初版与操作条接线（置顶、多窗口、关闭、数量统计） | `src/pin/` / `src/app/` / `src/overlay/selection_overlay.cpp` | 框选后 → 点击“钉图” → 独立置顶窗口 |
 
 **手动验收通过**：`Ctrl+Shift+Q` → 左键框选 → 松开 → 打开记事本/画图 `Ctrl+V` 粘贴出截图 ✅
 
@@ -56,7 +57,8 @@
 - [ ] **P1**：标注（矩形/椭圆/箭头/画笔/文字/马赛克 + 撤销）——F3
 - [ ] **P1**：八点调区 / 移动选区；窗口吸附（F2）
 - [ ] **P1**：Per-Monitor DPI / 双屏 + 125% / 150% 冒烟
-- [ ] **P2**：钉图（Pin，F5）；长截图（F6，限定记事本/资源管理器/Edge）
+- [x] **P2 子项**：钉图初版（Pin，F5）——独立置顶窗口、多 Pin、拖动、关闭、数量统计，并已接入 Application / 操作条
+- [ ] **P2**：长截图（F6，限定记事本/资源管理器/Edge）
 - [ ] **P3**：本地口令（F8）；MCP Bridge（F9）
 
 > 完整 F1～F9 与验收用例见 [开发清单](../轻映-QingYing-开发清单.md)。
@@ -65,7 +67,7 @@
 
 ## 4. 质量与验证基线
 
-- **单元测试**：32/32 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `selection_controller`）
+- **单元测试**：37/37 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `pin_manager` / `selection_controller`）
 - **TDD**：核心逻辑均先写失败测试再实现（SelectionController / MaskRenderer / encodeDib）
 - **规范**：遵守 CLAUDE.md（m_ 前缀、Allman、RAII 管 GDI/HANDLE、`.at()` 防越界、宽字符 API、错误码不抛异常）；UI/系统资源壳（Overlay、Clipboard）为已批准的 TDD 例外
 - **构建**：`build.bat Release` / `build.bat test`（gtest via vcpkg，仓库同级 `../thirdparty_install/vcpkg`）

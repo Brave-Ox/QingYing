@@ -107,10 +107,47 @@ class SaveHandler final : public IActionHandler {
   CaptureSession& session_;
 };
 
+class PinHandler final : public IActionHandler {
+ public:
+  explicit PinHandler(PinManager& pin_manager, CaptureSession& session)
+      : pin_manager_(pin_manager), session_(session) {}
+
+  ActionType type() const override { return ActionType::Pin; }
+
+  ActionResult handle(const ActionRequest& /*request*/) override {
+    if (!session_.hasResult()) {
+      ActionResult r;
+      r.ok = false;
+      r.error_code = ErrorCode::kNotReady;
+      r.message = "no capture result";
+      return r;
+    }
+
+    if (!pin_manager_.show(session_.result())) {
+      ActionResult r;
+      r.ok = false;
+      r.error_code = ErrorCode::kUnknown;
+      r.message = "failed to create pin window";
+      return r;
+    }
+
+    ActionResult r;
+    r.ok = true;
+    r.error_code = ErrorCode::kOk;
+    r.message = "capture pinned";
+    return r;
+  }
+
+ private:
+  PinManager& pin_manager_;
+  CaptureSession& session_;
+};
+
 }  // namespace
 
 void registerAppHandlers(ActionDispatcher& dispatcher, CaptureEngine& capture,
-                         ExportService& export_service, CaptureSession& session) {
+                         ExportService& export_service, CaptureSession& session,
+                         PinManager& pin_manager) {
   dispatcher.registerHandler(std::make_unique<StatusHandler>());
   dispatcher.registerHandler(
       std::make_unique<CaptureRegionHandler>(capture, session));
@@ -118,6 +155,7 @@ void registerAppHandlers(ActionDispatcher& dispatcher, CaptureEngine& capture,
       std::make_unique<CopyHandler>(export_service, session));
   dispatcher.registerHandler(
       std::make_unique<SaveHandler>(export_service, session));
+  dispatcher.registerHandler(std::make_unique<PinHandler>(pin_manager, session));
 }
 
 }  // namespace qingying

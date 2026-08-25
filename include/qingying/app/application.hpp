@@ -8,6 +8,7 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
+#include "qingying/pin/pin_manager.hpp"
 
 #include <Windows.h>
 
@@ -41,6 +42,7 @@ class Application {
   CaptureEngine capture_;
   ExportService export_service_;
   CaptureSession session_;
+  PinManager pin_manager_;
   SelectionOverlay overlay_;
 };
 

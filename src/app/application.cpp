@@ -18,7 +18,8 @@ Application::~Application() {
 }
 
 void Application::registerHandlers() {
-  registerAppHandlers(dispatcher_, capture_, export_service_, session_);
+  registerAppHandlers(dispatcher_, capture_, export_service_, session_,
+                      pin_manager_);
 }
 
 void Application::installMessageRouter() {
@@ -94,6 +95,17 @@ void Application::runCapturePipeline(const SelectionResult& region) {
 
   if (region.action == SelectionAction::Save) {
     saveLastCapture();
+    return;
+  }
+
+  if (region.action == SelectionAction::Pin) {
+    ActionRequest pin_request;
+    pin_request.type = ActionType::Pin;
+    const ActionResult pin_result = dispatcher_.dispatch(pin_request);
+    if (!pin_result.ok) {
+      MessageBoxW(tray_.hwnd(), L"Failed to pin the latest capture.",
+                  L"QingYing", MB_OK | MB_ICONERROR);
+    }
     return;
   }
 
