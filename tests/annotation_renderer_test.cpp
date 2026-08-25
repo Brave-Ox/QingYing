@@ -1,0 +1,166 @@
+#include "qingying/annotate/annotation_renderer.hpp"
+
+#include <gtest/gtest.h>
+
+#include <cstdint>
+
+namespace qingying {
+namespace {
+
+constexpr int kCanvasWidth = 40;
+constexpr int kCanvasHeight = 30;
+constexpr std::uint32_t kWhitePx = 0xFFFFFFFFu;
+
+// 测试矩形：左上 (10, 8)，尺寸 16x12 → 内缘边界 x∈[10,25]、y∈[8,19]。
+constexpr float kRectX = 10.0f;
+constexpr float kRectY = 8.0f;
+constexpr float kRectWidth = 16.0f;
+constexpr float kRectHeight = 12.0f;
+constexpr float kStrokeWidth = 2.0f;
+
+constexpr std::uint32_t makeBgra(std::uint8_t b, std::uint8_t g,
+                                 std::uint8_t r, std::uint8_t a)
+{
+  return (static_cast<std::uint32_t>(a) << 24) |
+         (static_cast<std::uint32_t>(r) << 16) |
+         (static_cast<std::uint32_t>(g) << 8) | static_cast<std::uint32_t>(b);
+}
+
+constexpr std::uint32_t kRedPx = makeBgra(0, 0, 255, 255);
+
+Annotation makeRedRectangle()
+{
+  Annotation annotation;
+  annotation.type = AnnotationType::Rectangle;
+  annotation.bounds.x = kRectX;
+  annotation.bounds.y = kRectY;
+  annotation.bounds.width = kRectWidth;
+  annotation.bounds.height = kRectHeight;
+  annotation.style.color = ColorBgra{0, 0, 255, 255};
+  annotation.style.stroke_width = kStrokeWidth;
+  return annotation;
+}
+
+Image makeCanvas()
+{
+  Image image;
+  image.width = kCanvasWidth;
+  image.height = kCanvasHeight;
+  image.pixels.assign(static_cast<std::size_t>(kCanvasWidth) *
+                          static_cast<std::size_t>(kCanvasHeight),
+                      kWhitePx);
+  return image;
+}
+
+std::uint32_t pixelAt(const Image& image, int x, int y)
+{
+  return image.pixels.at(static_cast<std::size_t>(y) *
+                             static_cast<std::size_t>(image.width) +
+                         static_cast<std::size_t>(x));
+}
+
+}  // namespace
+
+TEST(AnnotationRendererTest, EmptySourceReturnsFalse)
+{
+  const AnnotationRenderer renderer;
+  const AnnotationDocument document;
+  const Image source;
+  Image out = makeCanvas();
+
+  EXPECT_FALSE(renderer.rasterize(source, document, out));
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(AnnotationRendererTest, EmptyDocumentCopiesSource)
+{
+  const AnnotationRenderer renderer;
+  const AnnotationDocument document;
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(out.width, kCanvasWidth);
+  EXPECT_EQ(out.height, kCanvasHeight);
+  ASSERT_EQ(out.pixels.size(), source.pixels.size());
+  EXPECT_EQ(out.pixels, source.pixels);
+}
+
+TEST(AnnotationRendererTest, RectangleStrokeIsDrawnOnBorder)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedRectangle()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 10, 8), kRedPx);   // 左上角
+  EXPECT_EQ(pixelAt(out, 25, 19), kRedPx);  // 右下角
+  EXPECT_EQ(pixelAt(out, 17, 8), kRedPx);   // 上边最外一行
+  EXPECT_EQ(pixelAt(out, 17, 9), kRedPx);   // 上边内侧一行（线宽 2）
+  EXPECT_EQ(pixelAt(out, 24, 12), kRedPx);  // 右边内侧一列
+}
+
+TEST(AnnotationRendererTest, RectangleInteriorIsNotFilled)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedRectangle()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 17, 12), kWhitePx);  // 正中间
+  EXPECT_EQ(pixelAt(out, 12, 10), kWhitePx);  // 距上/左各 2px，已在描边之内
+  EXPECT_EQ(pixelAt(out, 23, 12), kWhitePx);  // 距右 2px
+}
+
+TEST(AnnotationRendererTest, PixelsOutsideRectangleAreUnchanged)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedRectangle()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 0, 0), kWhitePx);
+  EXPECT_EQ(pixelAt(out, 17, 7), kWhitePx);   // 紧贴上边界之外
+  EXPECT_EQ(pixelAt(out, 26, 12), kWhitePx);  // 紧贴右边界之外
+  EXPECT_EQ(pixelAt(out, 39, 29), kWhitePx);
+}
+
+TEST(AnnotationRendererTest, SourceImageIsNotModified)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedRectangle()));
+  const Image source = makeCanvas();
+  const std::vector<std::uint32_t> before = source.pixels;
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(source.pixels, before);
+}
+
+TEST(AnnotationRendererTest, RectangleClippedAtCanvasEdge)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedRectangle();
+  annotation.bounds.x = 35.0f;  // 右侧超出画布（宽 40）
+  annotation.bounds.y = 5.0f;
+  annotation.bounds.width = 20.0f;
+  annotation.bounds.height = 10.0f;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  ASSERT_EQ(out.pixels.size(), source.pixels.size());
+  EXPECT_EQ(pixelAt(out, 35, 5), kRedPx);     // 可见的左上角
+  EXPECT_EQ(pixelAt(out, 39, 10), kWhitePx);  // 右边界被裁掉，此处仍是内部
+}
+
+}  // namespace qingying
