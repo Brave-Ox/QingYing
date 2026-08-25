@@ -18,6 +18,8 @@ class AnnotationDocument
   const std::vector<Annotation>& items() const;
   bool empty() const;
   std::size_t count() const;
+  bool canUndo() const;
+  bool canRedo() const;
 
  private:
   bool isValid(const Annotation& annotation) const;

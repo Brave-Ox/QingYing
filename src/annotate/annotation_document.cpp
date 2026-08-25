@@ -88,4 +88,14 @@ std::size_t AnnotationDocument::count() const
   return m_items.size();
 }
 
+bool AnnotationDocument::canUndo() const
+{
+  return !m_items.empty();
+}
+
+bool AnnotationDocument::canRedo() const
+{
+  return !m_redo_stack.empty();
+}
+
 }  // namespace qingying

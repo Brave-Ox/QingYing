@@ -4,6 +4,7 @@ add_executable(qingying_tests
   action_dispatcher_test.cpp
   action_handlers_test.cpp
   annotation_document_test.cpp
+  annotation_engine_test.cpp
   annotation_renderer_test.cpp
   capture_engine_test.cpp
   capture_session_test.cpp
