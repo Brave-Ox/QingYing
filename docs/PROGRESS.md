@@ -1,8 +1,8 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 本文记录**当前开发进度快照**：已完成且可验证 / 进行中 / 待办 / 下一步建议。
-> 功能规划与验收指标见 [轻映-QingYing-开发清单.md](../轻映-QingYing-开发清单.md)（本文与之互补，不重复规划）。
-> 更新日期：2026-08-24
+> 本文记录当前开发进度快照：已完成且可验证 / 进行中 / 待办 / 下一步建议。
+> 功能规划与验收指标见 [轻映-QingYing-开发清单.md](../轻映-QingYing-开发清单.md)，本文与之互补，不重复规划。
+> 更新日期：2026-08-25
 
 ---
 
@@ -10,77 +10,99 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| 工程骨架（CMake / MSVC / C++17 / 10 个 static lib / 单 EXE） | ✅ 完成 | Release 单 EXE 可构建 |
-| P0 主路径「截一下」 | 🔶 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG |
-| 单元测试 | ✅ 37/37 绿 | 9 个测试套件，gtest |
+| 工程骨架（CMake / MSVC / C++17 / 多 static lib / 单 EXE） | ✅ 完成 | Release 单 EXE 可构建 |
+| P0 主路径「截一下」 | ✅ 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG / 钉图 |
+| F1 自定义截图区域 | ✅ 核心完成 | 八点调整、移动选区、虚拟桌面和物理像素坐标已接入 |
+| F4 导出 | ✅ 完成 | 剪贴板复制和 PNG 保存 |
+| F5 钉图 | 🔶 初版完成 | 置顶、多 Pin、拖动、关闭、数量统计已接入 |
+| F7 托盘与热键 | ✅ 基本完成 | 单实例、托盘、全局热键和冲突提示 |
+| 单元测试 | ✅ 62/62 绿 | 12 个测试套件，gtest |
 
-**一句话**：当前已打通「**热键 → 全屏遮罩 → 左键框选 → 松开自动截图 → 复制到剪贴板 / 保存 PNG / 钉图**」主链路；下一步是标注（F3）。
+**一句话**：当前已打通「**热键 → 全屏遮罩 → 框选 / 调整 → 截图 → 复制 / 保存 / 钉图**」主路径；下一步是标注（F3）。
 
 ---
 
 ## 2. 已完成（含验证方式）
 
-### 2.1 截图与剪贴板主链路（本次里程碑）
+### 2.1 截图与选区主链路
 
 | 能力 | 文件 | 验证方式 |
 |---|---|---|
-| 全屏半透明遮罩（WS_EX_LAYERED + UpdateLayeredWindow，35% 黑 + 4px 橙框） | `src/overlay/selection_overlay.cpp` | 手动：Ctrl+Shift+Q 出现全屏遮罩 |
-| 鼠标拖拽框选（显式状态机：begin/update/confirm/cancel） | `src/overlay/selection_controller.cpp` | 单测 `selection_controller_test`（全绿） |
-| 遮罩像素渲染（遮罩 + 选中区清空 + 边框） | `src/overlay/mask_renderer.cpp` | 单测 `mask_renderer_test`（全绿） |
-| 区域截图（GDI BitBlt 实装，替代原 stub） | `src/capture/capture_engine.cpp` | 单测 `capture_engine_test`；手动演示闭环 |
-| 截图 → 剪贴板（CF_DIB）复制 | `src/export/export_service.cpp` | 手动：截图后 Ctrl+V 粘贴成功 |
-| DIB 编码器（Image → CF_DIB 纯函数，底向上） | `src/export/dib_encoder.cpp` | 单测 `dib_encoder_test`（3 用例全绿） |
-| 截图 → PNG 保存（Windows WIC） | `src/export/export_service.cpp` | 单测 `export_service_test`（3 用例全绿） |
-| 选区操作条保存最近截图 | `src/overlay/selection_overlay.cpp` / `src/app/application.cpp` | 框选后 → 下载图片 → 原生保存对话框 |
-| Pin 初版与操作条接线（置顶、多窗口、关闭、数量统计） | `src/pin/` / `src/app/` / `src/overlay/selection_overlay.cpp` | 框选后 → 点击“钉图” → 独立置顶窗口 |
+| Per-Monitor V2 DPI 感知 | `src/app/main.cpp` | 应用启动时设置 DPI awareness |
+| 虚拟桌面遮罩 | `src/overlay/selection_overlay.cpp` | 覆盖所有显示器，支持负坐标屏幕 |
+| 半透明遮罩渲染 | `src/overlay/mask_renderer.cpp` | 单元测试通过 |
+| 鼠标拖拽框选 | `src/overlay/selection_controller.cpp` | 创建 / 更新 / 确认 / 取消状态机测试通过 |
+| 八点调整和移动选区 | `src/overlay/selection_handles.cpp` / `selection_controller.cpp` | 命中、调整、移动和边界测试通过 |
+| 方向光标反馈 | `src/overlay/selection_overlay.cpp` | 边、角、内部和创建状态使用对应光标 |
+| 坐标转换 | `src/overlay/coordinate_transform.cpp` | 虚拟桌面、DPI 缩放和客户区坐标测试通过 |
+| 区域截图 | `src/capture/capture_engine.cpp` | GDI BitBlt、虚拟桌面裁剪和真实集成测试通过 |
+| 截图 → 剪贴板 | `src/export/export_service.cpp` | CF_DIB 编码测试及手动粘贴验证 |
+| 截图 → PNG 保存 | `src/export/export_service.cpp` | WIC PNG 输出测试通过 |
+| 选区操作条 | `src/overlay/selection_overlay.cpp` / `src/app/application.cpp` | 框选后显示复制、下载、编辑、钉图入口 |
 
-**手动验收通过**：`Ctrl+Shift+Q` → 左键框选 → 松开 → 打开记事本/画图 `Ctrl+V` 粘贴出截图 ✅
+### 2.2 Pin 初版与 Application 接入
 
-### 2.2 工程与基础
+- `PinWindow`：独立置顶窗口、按比例显示、拖动、单窗口关闭；
+- `PinManager`：多 Pin、全部关闭、数量统计、窗口生命周期清理；
+- `ActionType::Pin` 已注册到 `ActionDispatcher`；
+- Application 从 `CaptureSession` 取得当前图片并分发 Pin；
+- 操作条“钉图”按钮已启用；
+- Pin 单元测试和 Handler 集成测试已通过。
 
-- 10 个 static lib 目标 + 单 EXE；`qingying_action`（ActionDispatcher）为唯一业务入口
-- 托盘 / 全局热键（Ctrl+Shift+Q）/ 单实例 / 自启动（`src/app/`）
-- Action 契约：`ActionType` + `ErrorCode` + 共享 `Image` 载荷（`src/action/`）
-- 架构落地为方案 B（多 static lib + ActionDispatcher），见 `docs/architecture.md`
+### 2.3 工程与基础
+
+- 多 static lib + 单 EXE，`qingying_action` 为统一业务入口；
+- 系统托盘、全局热键 `Ctrl+Shift+Q`、单实例和自启动入口；
+- `ActionType`、`ActionResult`、共享 `Image` 和 `CaptureSession` 契约；
+- Application 通过 `ActionDispatcher` 组装 Capture / Copy / Save / Pin；
+- Release 构建和全量测试通过。
 
 ---
 
 ## 3. 进行中 / 待办
 
-### 3.1 代码待办
+### 3.1 功能状态（对照开发清单 F1～F9）
 
-- [ ] **提交当前改动**：DIB 编码 + copyToClipboard 已实现并验证，尚未 commit/push（工作区有未提交改动）
-- [ ] **PIMPL 重构 capture_engine.cpp**：当前内部用裸 `new Impl` / `delete impl_`，违反规范「禁止裸 new/delete」红线，建议改 `std::unique_ptr`（[CLAUDE.md 红线四](../.claude/CLAUDE.md)）
+- [x] **F1**：自由框选、八点调整、移动选区、取消、边界限制、多屏和 DPI 坐标转换；
+- [ ] **F2**：窗口检测、悬停高亮和窗口吸附；
+- [ ] **F3**：矩形、椭圆、箭头、画笔、文字、马赛克和撤销 / 重做；
+- [x] **F4**：剪贴板复制和 PNG 保存；
+- [~] **F5 初版**：置顶、多 Pin、拖动、关闭、数量统计和操作条接线已完成；
+- [ ] **F5 完整验收**：截图时排除自身 Pin 窗口、Pin 窗口复用 Copy / Save；
+- [ ] **F6**：记事本、资源管理器、Edge 长截图；
+- [x] **F7 基础能力**：托盘、全局热键、单实例、冲突提示；
+- [ ] **F8**：本地口令表和自然语言截图入口；
+- [ ] **F9**：MCP Bridge、Named Pipe 和标准 Tool 集。
 
-### 3.2 功能待办（对照开发清单 P0→P1）
+### 3.2 技术待办和已知边界
 
-- [ ] **P1**：标注（矩形/椭圆/箭头/画笔/文字/马赛克 + 撤销）——F3
-- [ ] **P1**：八点调区 / 移动选区；窗口吸附（F2）
-- [ ] **P1**：Per-Monitor DPI / 双屏 + 125% / 150% 冒烟
-- [x] **P2 子项**：钉图初版（Pin，F5）——独立置顶窗口、多 Pin、拖动、关闭、数量统计，并已接入 Application / 操作条
-- [ ] **P2**：长截图（F6，限定记事本/资源管理器/Edge）
-- [ ] **P3**：本地口令（F8）；MCP Bridge（F9）
-
-> 完整 F1～F9 与验收用例见 [开发清单](../轻映-QingYing-开发清单.md)。
+- [ ] 将 `capture_engine.cpp` 的裸 `new/delete` 改为 `std::unique_ptr`，完成 PIMPL 规范整改；
+- [ ] 在双屏、125% / 150% / 200% 和混合 DPI 环境下完成手动冒烟验收；
+- [ ] 当前全虚拟桌面 Overlay 的 UI 尺寸仍基于系统 DPI，后续视混合 DPI 验收结果决定是否改为按显示器管理 Overlay；
+- [ ] Pin 初版暂不包含截图时排除自身、多 Pin 自动排布、标注同步、自动保存和长截图；
+- [ ] 标注完成后仍需把最终 `Image` 写回 `CaptureSession`，再统一回到 Copy / Save / Pin。
 
 ---
 
 ## 4. 质量与验证基线
 
-- **单元测试**：37/37 绿（`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `pin_manager` / `selection_controller`）
-- **TDD**：核心逻辑均先写失败测试再实现（SelectionController / MaskRenderer / encodeDib）
-- **规范**：遵守 CLAUDE.md（m_ 前缀、Allman、RAII 管 GDI/HANDLE、`.at()` 防越界、宽字符 API、错误码不抛异常）；UI/系统资源壳（Overlay、Clipboard）为已批准的 TDD 例外
-- **构建**：`build.bat Release` / `build.bat test`（gtest via vcpkg，仓库同级 `../thirdparty_install/vcpkg`）
+- **单元测试**：62/62 通过；
+- **测试套件**：`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `selection_controller` / `selection_handles` / `coordinate_transform` / `f1_selection_integration` / `pin_manager`；
+- **集成验证**：F1 选区 → 物理像素坐标 → `CaptureEngine` 区域截图已覆盖；`CaptureSession` → Pin Handler → PinManager 已覆盖；
+- **构建**：`build.bat Release` 和 `build.bat Release test` 已验证；
+- **资源管理**：GDI、窗口和系统资源使用 RAII 或明确生命周期清理；
+- **待补验证**：不同显示器 DPI 下的真实人工操作验收，以及 F2/F3/F6/F8/F9 功能验收。
 
 ---
 
-## 5. 下一步建议（供评审/分工参考）
+## 5. 下一步建议
 
-1. **先落提交**：把当前 6 个文件的剪贴板改动 commit + push（避免进度漂移在本地）
-2. **PIMPL 化 capture_engine**：消除裸 new/delete，达标红线
-3. **进入 P1 标注**：这是演示主路径「截—标」的核心增值点，建议优先
-4. **DPI / 多屏冒烟**：在双屏 + 125%/150% 下验证选区与成像无偏移（高风险项，早验证）
+1. 优先实现 F3 标注，打通「截图 → 标注 → 复制 / 保存 / 钉图」主演示路径；
+2. 实现 F2 窗口检测和吸附；
+3. 补齐 F5 截图排除自身和 Pin 窗口 Copy / Save；
+4. 完成双屏、混合 DPI 的人工冒烟测试，并根据结果完善 Per-Monitor UI 尺寸；
+5. 再进入 F6 长截图和 F8/F9 Agent 能力。
 
 ---
 
-*进度文件由开发过程持续维护；与开发清单、架构文档联动更新。*
+*本文随开发过程持续更新；架构边界见 [docs/architecture.md](architecture.md)，完整功能目标见 [轻映-QingYing-开发清单.md](../轻映-QingYing-开发清单.md)。*

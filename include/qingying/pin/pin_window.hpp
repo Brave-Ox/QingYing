@@ -33,6 +33,9 @@ class PinWindow {
 
   void paint(HDC dc);
   void handleDestroyed();
+  void handleSizing(WPARAM edge, RECT* window_rect) const;
+  LRESULT hitTest(POINT point) const;
+  RECT closeButtonRect() const;
 
   Image image_;
   HWND hwnd_{nullptr};
