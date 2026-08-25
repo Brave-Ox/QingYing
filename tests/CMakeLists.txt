@@ -14,6 +14,7 @@ add_executable(qingying_tests
   dib_encoder_test.cpp
   export_service_test.cpp
   mask_renderer_test.cpp
+  modern_toolbar_test.cpp
   selection_controller_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
@@ -29,6 +30,7 @@ target_link_libraries(qingying_tests
     qingying_capture
     qingying_export
     qingying_overlay
+    qingying_ui
     GTest::gtest
     GTest::gtest_main
 )

@@ -10,6 +10,9 @@
 
 #include "qingying/overlay/mask_renderer.hpp"
 #include "qingying/overlay/selection_controller.hpp"
+#include "qingying/ui/modern_toolbar.hpp"
+#include "qingying/annotate/annotation_overlay.hpp"
+#include "qingying/capture/capture_engine.hpp"
 
 namespace qingying {
 
@@ -21,21 +24,41 @@ constexpr UINT kToolbarButtonCopy = 1;
 constexpr UINT kToolbarButtonSave = 2;
 constexpr UINT kToolbarButtonEdit = 3;
 constexpr UINT kToolbarButtonPin = 4;
-constexpr int kToolbarButtonWidth = 82;
-constexpr int kToolbarButtonHeight = 30;
-constexpr int kToolbarButtonGap = 4;
-constexpr int kToolbarPadding = 4;
+constexpr int kSelectionToolbarItemCount = 4;
+constexpr int kCaptureHidePumpRounds = 8;
+constexpr DWORD kCaptureHidePumpSleepMs = 10;
+
+struct ToolbarItem
+{
+  UINT id{0};
+  ToolbarIconKind icon{ToolbarIconKind::Copy};
+  bool enabled{true};
+  RECT rect{};
+};
 
 // SelectionController 等 UI 状态通过窗口属性（WindowLongPtr）附加到窗口，
 // 供 WndProc 在处理消息时访问，避免全局/静态可变量。
-struct OverlayWindowData {
+struct OverlayWindowData
+{
   SelectionController controller;
   SelectionCallback callback;
   HWND overlay{nullptr};
   HWND toolbar{nullptr};
   SelectionAction action{SelectionAction::None};
   bool selection_confirmed{false};
+  ToolbarItem toolbar_items[kSelectionToolbarItemCount]{};
+  int toolbar_hover{-1};
+  int toolbar_divider_x{0};
+  HWND tooltip{nullptr};
+  wchar_t tooltip_text[kSelectionToolbarItemCount][kToolbarTooltipMaxChars]{};
+  Image annotated_image;
 };
+
+void getScreenSize(int& out_width, int& out_height);
+bool showToolbar(HWND overlay, OverlayWindowData* data,
+                 const SelectionResult& selection, int screen_width,
+                 int screen_height);
+void beginInPlaceEdit(OverlayWindowData* data);
 
 // CreateCompatibleDC RAII：DeleteDC。
 struct CompatibleDcDeleter {
@@ -56,7 +79,7 @@ struct DibDeleter {
 };
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
-const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbar";
+const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbarV2";
 
 void destroyToolbar(OverlayWindowData* data) {
   if (data == nullptr || data->toolbar == nullptr) {
@@ -75,55 +98,182 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
   PostMessageW(data->overlay, WM_CLOSE, 0, 0);
 }
 
+void layoutSelectionToolbarItems(OverlayWindowData* data, int width,
+                                 int height)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const int y = (height - metrics.item_size) / 2;
+  int x = metrics.bar_padding;
+  const ToolbarItem seed[kSelectionToolbarItemCount] = {
+      {kToolbarButtonCopy, ToolbarIconKind::Copy, true, {}},
+      {kToolbarButtonSave, ToolbarIconKind::Save, true, {}},
+      {kToolbarButtonEdit, ToolbarIconKind::Edit, true, {}},
+      {kToolbarButtonPin, ToolbarIconKind::Pin, false, {}},
+  };
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    data->toolbar_items[i] = seed[i];
+    data->toolbar_items[i].rect = {x, y, x + metrics.item_size,
+                                   y + metrics.item_size};
+    x += metrics.item_size + metrics.gap;
+    if (i == 1)
+    {
+      data->toolbar_divider_x = x - metrics.gap + metrics.divider_gap / 2;
+      x += metrics.divider_gap - metrics.gap;
+    }
+  }
+  (void)width;
+}
+
+int hitTestToolbarItem(const OverlayWindowData* data, int x, int y)
+{
+  if (data == nullptr)
+  {
+    return -1;
+  }
+  const POINT pt{x, y};
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    if (PtInRect(&data->toolbar_items[i].rect, pt) != FALSE)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void paintSelectionToolbar(HWND hwnd, OverlayWindowData* data)
+{
+  if (hwnd == nullptr || data == nullptr)
+  {
+    return;
+  }
+
+  PAINTSTRUCT ps{};
+  const HDC hdc = BeginPaint(hwnd, &ps);
+  if (hdc == nullptr)
+  {
+    return;
+  }
+
+  RECT client{};
+  GetClientRect(hwnd, &client);
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  drawToolbarBar(hdc, client);
+
+  const int divider_pad = metrics.bar_padding + 6;
+  drawToolbarDivider(hdc, data->toolbar_divider_x, client.top + divider_pad,
+                     client.bottom - divider_pad);
+
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    const ToolbarItem& item = data->toolbar_items[i];
+    drawToolbarItem(hdc, item.rect, item.icon, i == data->toolbar_hover, false,
+                    item.enabled, false);
+  }
+  EndPaint(hwnd, &ps);
+}
+
 LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                LPARAM lparam) {
+                                LPARAM lparam)
+{
   OverlayWindowData* data = reinterpret_cast<OverlayWindowData*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
-  switch (msg) {
-    case WM_NCCREATE: {
+  switch (msg)
+  {
+    case WM_NCCREATE:
+    {
       const CREATESTRUCTW* cs = reinterpret_cast<const CREATESTRUCTW*>(lparam);
       data = static_cast<OverlayWindowData*>(cs->lpCreateParams);
-      SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                        reinterpret_cast<LONG_PTR>(data));
-      if (data != nullptr) {
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
+      if (data != nullptr)
+      {
         data->toolbar = hwnd;
       }
       return TRUE;
     }
-    case WM_CREATE: {
-      if (data == nullptr) {
+    case WM_CREATE:
+    {
+      if (data == nullptr)
+      {
         return -1;
       }
-      const HINSTANCE instance = GetModuleHandleW(nullptr);
-      const DWORD button_style = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
-      const int y = kToolbarPadding;
-      int x = kToolbarPadding;
-      const auto createButton = [&](const wchar_t* label, UINT id,
-                                    bool enabled) -> HWND {
-        HWND button = CreateWindowExW(
-            0, L"BUTTON", label, button_style, x, y, kToolbarButtonWidth,
-            kToolbarButtonHeight, hwnd,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance,
-            nullptr);
-        x += kToolbarButtonWidth + kToolbarButtonGap;
-        if (button != nullptr && !enabled) {
-          EnableWindow(button, FALSE);
-        }
-        return button;
-      };
-
-      createButton(L"复制", kToolbarButtonCopy, true);
-      createButton(L"下载图片", kToolbarButtonSave, true);
-      createButton(L"编辑", kToolbarButtonEdit, true);
-      createButton(L"钉图", kToolbarButtonPin, false);
+      RECT client{};
+      GetClientRect(hwnd, &client);
+      layoutSelectionToolbarItems(data, client.right - client.left,
+                                  client.bottom - client.top);
+      const HRGN region = CreateRoundRectRgn(
+          0, 0, client.right + 1, client.bottom + 1,
+          DefaultModernToolbarMetrics.corner_radius * 2,
+          DefaultModernToolbarMetrics.corner_radius * 2);
+      if (region != nullptr)
+      {
+        SetWindowRgn(hwnd, region, TRUE);
+      }
+      data->tooltip = createToolbarTooltip(hwnd);
+      for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+      {
+        bindToolbarTooltip(data->tooltip, hwnd, data->toolbar_items[i].id,
+                           data->toolbar_items[i].rect,
+                           toolbarIconLabel(data->toolbar_items[i].icon),
+                           data->tooltip_text[i], kToolbarTooltipMaxChars);
+      }
       return 0;
     }
-    case WM_COMMAND: {
-      if (data == nullptr || HIWORD(wparam) != BN_CLICKED) {
+    case WM_PAINT:
+      paintSelectionToolbar(hwnd, data);
+      return 0;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_MOUSEMOVE:
+    {
+      if (data == nullptr)
+      {
         return 0;
       }
-      switch (LOWORD(wparam)) {
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      const int hit = hitTestToolbarItem(data, x, y);
+      if (hit != data->toolbar_hover)
+      {
+        data->toolbar_hover = hit;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      TRACKMOUSEEVENT track{};
+      track.cbSize = sizeof(track);
+      track.dwFlags = TME_LEAVE;
+      track.hwndTrack = hwnd;
+      TrackMouseEvent(&track);
+      return 0;
+    }
+    case WM_MOUSELEAVE:
+      if (data != nullptr && data->toolbar_hover >= 0)
+      {
+        data->toolbar_hover = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+    case WM_LBUTTONUP:
+    {
+      if (data == nullptr)
+      {
+        return 0;
+      }
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      const int hit = hitTestToolbarItem(data, x, y);
+      if (hit < 0 || !data->toolbar_items[hit].enabled)
+      {
+        return 0;
+      }
+      switch (data->toolbar_items[hit].id)
+      {
         case kToolbarButtonCopy:
           chooseToolbarAction(data, SelectionAction::Copy);
           break;
@@ -131,7 +281,7 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           chooseToolbarAction(data, SelectionAction::Save);
           break;
         case kToolbarButtonEdit:
-          chooseToolbarAction(data, SelectionAction::Edit);
+          beginInPlaceEdit(data);
           break;
         default:
           break;
@@ -139,14 +289,21 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     }
     case WM_KEYDOWN:
-      if (data != nullptr && wparam == VK_ESCAPE) {
+      if (data != nullptr && wparam == VK_ESCAPE)
+      {
         data->controller.cancel();
         data->action = SelectionAction::None;
         PostMessageW(data->overlay, WM_CLOSE, 0, 0);
       }
       return 0;
     case WM_DESTROY:
-      if (data != nullptr && data->toolbar == hwnd) {
+      if (data != nullptr && data->toolbar == hwnd)
+      {
+        if (data->tooltip != nullptr)
+        {
+          DestroyWindow(data->tooltip);
+          data->tooltip = nullptr;
+        }
         data->toolbar = nullptr;
       }
       return 0;
@@ -158,21 +315,23 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection, int screen_width,
-                 int screen_height) {
-  if (data == nullptr) {
+                 int screen_height)
+{
+  if (data == nullptr)
+  {
     return false;
   }
 
-  const int button_count = 4;
-  const int toolbar_width =
-      kToolbarPadding * 2 + button_count * kToolbarButtonWidth +
-      (button_count - 1) * kToolbarButtonGap;
-  const int toolbar_height =
-      kToolbarPadding * 2 + kToolbarButtonHeight;
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const int toolbar_width = modernToolbarWidth(
+      kSelectionToolbarItemCount,
+      metrics.divider_gap - metrics.gap, metrics);
+  const int toolbar_height = modernToolbarHeight(metrics);
 
   int x = selection.x;
   int y = selection.y + selection.height + 8;
-  if (y + toolbar_height > screen_height) {
+  if (y + toolbar_height > screen_height)
+  {
     y = selection.y - toolbar_height - 8;
   }
   x = (std::max)(0, (std::min)(x, screen_width - toolbar_width));
@@ -183,7 +342,8 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kToolbarClassName, L"",
       WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, overlay,
       nullptr, instance, data);
-  if (toolbar == nullptr) {
+  if (toolbar == nullptr)
+  {
     return false;
   }
 
@@ -257,6 +417,88 @@ bool updateOverlay(HWND hwnd, int width, int height,
 void getScreenSize(int& out_width, int& out_height) {
   out_width = GetSystemMetrics(SM_CXSCREEN);
   out_height = GetSystemMetrics(SM_CYSCREEN);
+}
+
+void beginInPlaceEdit(OverlayWindowData* data)
+{
+  if (data == nullptr || data->overlay == nullptr)
+  {
+    return;
+  }
+
+  const SelectionResult selection = data->controller.selection();
+  if (selection.cancelled || selection.width <= 0 || selection.height <= 0)
+  {
+    return;
+  }
+
+  destroyToolbar(data);
+  ShowWindow(data->overlay, SW_HIDE);
+
+  for (int round = 0; round < kCaptureHidePumpRounds; ++round)
+  {
+    MSG pump{};
+    while (PeekMessageW(&pump, nullptr, 0, 0, PM_REMOVE))
+    {
+      if (pump.message == WM_QUIT)
+      {
+        PostQuitMessage(static_cast<int>(pump.wParam));
+        ShowWindow(data->overlay, SW_SHOW);
+        return;
+      }
+      TranslateMessage(&pump);
+      DispatchMessageW(&pump);
+    }
+    Sleep(kCaptureHidePumpSleepMs);
+  }
+
+  CaptureEngine capture;
+  Image image;
+  const ActionResult captured = capture.captureRegion(
+      selection.x, selection.y, selection.width, selection.height, image);
+
+  ShowWindow(data->overlay, SW_SHOW);
+  SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
+  int screen_width = 0;
+  int screen_height = 0;
+  getScreenSize(screen_width, screen_height);
+
+  if (!captured.ok || image.empty())
+  {
+    (void)showToolbar(data->overlay, data, selection, screen_width,
+                      screen_height);
+    return;
+  }
+
+  AnnotationFinishResult finish;
+  AnnotationOverlay editor;
+  const bool shown = editor.showInPlace(
+      data->overlay, image, selection.x, selection.y,
+      [&finish](const AnnotationFinishResult& result)
+      {
+        finish = result;
+      });
+
+  if (!shown)
+  {
+    (void)showToolbar(data->overlay, data, selection, screen_width,
+                      screen_height);
+    return;
+  }
+
+  if (finish.cancelled || finish.rendered_image.empty())
+  {
+    data->action = SelectionAction::None;
+    data->controller.cancel();
+    PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+    return;
+  }
+
+  data->annotated_image = finish.rendered_image;
+  data->action = SelectionAction::Edit;
+  PostMessageW(data->overlay, WM_CLOSE, 0, 0);
 }
 
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -364,6 +606,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         destroyToolbar(data);
         SelectionResult result = data->controller.selection();
         result.action = data->action;
+        result.annotated_image = std::move(data->annotated_image);
         SelectionCallback callback = data->callback;
         if (callback) {
           callback(result);
@@ -396,10 +639,11 @@ bool SelectionOverlay::show(SelectionCallback callback) {
 
   WNDCLASSEXW toolbar_wc{};
   toolbar_wc.cbSize = sizeof(WNDCLASSEXW);
+  toolbar_wc.style = CS_DROPSHADOW;
   toolbar_wc.lpfnWndProc = toolbarWndProc;
   toolbar_wc.hInstance = instance;
   toolbar_wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
-  toolbar_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+  toolbar_wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
   toolbar_wc.lpszClassName = kToolbarClassName;
   if (RegisterClassExW(&toolbar_wc) == 0 &&
       GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {

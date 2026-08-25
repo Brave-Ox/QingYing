@@ -84,7 +84,8 @@ TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
       AnnotationEditorToolButtonCount * AnnotationEditorButtonWidth +
       AnnotationEditorFontComboWidth +
       AnnotationEditorActionButtonCount * AnnotationEditorButtonWidth +
-      (AnnotationEditorToolbarControlCount - 1) * AnnotationEditorButtonGap;
+      (AnnotationEditorToolbarControlCount - 1) * AnnotationEditorButtonGap +
+      annotationEditorDividerExtra();
   EXPECT_LE(last_control_right, client_width);
 }
 
@@ -95,11 +96,12 @@ TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
 //
 // 预期：
 // 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
-// 2. 底部有 矩形/椭圆/箭头/画笔/文字/字号/撤销 + 完成/取消
+// 2. 底部现代图标工具条：矩形/椭圆/箭头/画笔/文字/字号/撤销 + 完成/取消
 // 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
 // 4. 文字：空白单击新建；已有文字单击选中（虚线框）后 Delete 删除；
 //    双击进入就地编辑；拖过阈值可改位置
 // 5. 切换箭头、画笔同样可画；点完成得到合成图；Esc/取消不改结果语义
+// 6. 框选后操作条同为圆角白底图标条（复制/下载/编辑/钉图）
 TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
 {
   AnnotationOverlay overlay;

@@ -80,6 +80,17 @@ void Application::runCapturePipeline(const SelectionResult& region) {
     return;
   }
 
+  if (region.action == SelectionAction::Edit) {
+    if (region.annotated_image.empty()) {
+      return;
+    }
+    session_.setResult(region.annotated_image);
+    ActionRequest copy_req;
+    copy_req.type = ActionType::Copy;
+    dispatcher_.dispatch(copy_req);
+    return;
+  }
+
   ActionRequest capture_req;
   capture_req.type = ActionType::CaptureRegion;
   capture_req.x = region.x;
@@ -94,30 +105,6 @@ void Application::runCapturePipeline(const SelectionResult& region) {
 
   if (region.action == SelectionAction::Save) {
     saveLastCapture();
-    return;
-  }
-
-  if (region.action == SelectionAction::Edit) {
-    if (!session_.hasResult()) {
-      return;
-    }
-
-    // 标注确认后回写 Session 并复制；取消则保留原图、不改剪贴板。
-    const bool shown = annotation_overlay_.show(
-        tray_.hwnd(), session_.result(),
-        [this](const AnnotationFinishResult& finish) {
-          if (finish.cancelled || finish.rendered_image.empty()) {
-            return;
-          }
-          session_.setResult(finish.rendered_image);
-          ActionRequest copy_req;
-          copy_req.type = ActionType::Copy;
-          dispatcher_.dispatch(copy_req);
-        });
-    if (!shown) {
-      MessageBoxW(tray_.hwnd(), L"无法打开标注编辑器。", L"QingYing",
-                  MB_OK | MB_ICONWARNING);
-    }
     return;
   }
 

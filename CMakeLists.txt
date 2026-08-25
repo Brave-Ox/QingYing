@@ -43,6 +43,16 @@ if(WIN32)
   target_link_libraries(qingying_export PUBLIC windowscodecs ole32)
 endif()
 
+add_library(qingying_ui STATIC
+  src/ui/modern_toolbar.cpp
+)
+target_include_directories(qingying_ui
+  PUBLIC ${CMAKE_SOURCE_DIR}/include
+)
+if(WIN32)
+  target_link_libraries(qingying_ui PUBLIC gdi32 user32 comctl32)
+endif()
+
 add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
   src/overlay/selection_controller.cpp
@@ -51,7 +61,10 @@ add_library(qingying_overlay STATIC
 target_include_directories(qingying_overlay
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
+target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture qingying_ui)
+if(WIN32)
+  target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_annotate)
+endif()
 
 add_library(qingying_annotate STATIC
   src/annotate/annotation_engine.cpp
@@ -64,7 +77,7 @@ add_library(qingying_annotate STATIC
 target_include_directories(qingying_annotate
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(qingying_annotate PUBLIC qingying_action)
+target_link_libraries(qingying_annotate PUBLIC qingying_action qingying_ui)
 if(WIN32)
   target_link_libraries(qingying_annotate PRIVATE gdi32 user32)
 endif()

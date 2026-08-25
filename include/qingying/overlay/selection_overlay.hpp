@@ -1,5 +1,7 @@
 #pragma once
 
+#include "qingying/action/image.hpp"
+
 #include <functional>
 
 namespace qingying {
@@ -19,6 +21,8 @@ struct SelectionResult {
   int width{0};
   int height{0};
   SelectionAction action{SelectionAction::None};
+  // 就地标注确认后带回合成图；其它动作保持 empty。
+  Image annotated_image;
 };
 
 using SelectionCallback = std::function<void(const SelectionResult&)>;

@@ -8,7 +8,6 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
-#include "qingying/annotate/annotation_overlay.hpp"
 
 #include <Windows.h>
 
@@ -43,7 +42,6 @@ class Application {
   ExportService export_service_;
   CaptureSession session_;
   SelectionOverlay overlay_;
-  AnnotationOverlay annotation_overlay_;
 };
 
 }  // namespace qingying

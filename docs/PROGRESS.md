@@ -40,7 +40,8 @@
 | 引擎组装 | `annotation_engine.*` | `annotation_engine_test` |
 | 纯逻辑会话（确认/取消） | `annotation_editor_session.*` | `annotation_editor_session_test` |
 | 拖拽交互（工具/预览/入栈） | `annotation_interaction_controller.*` | `annotation_interaction_controller_test` |
-| 编辑器窗口（完成/取消） | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟 |
+| 编辑器窗口（完成/取消） | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟；框选后「编辑」为选区上就地无边框标注 |
+| 标注底栏 | `annotation_overlay` + `modern_toolbar` | 同视觉：图标工具 + 字号 + 撤销/完成/取消 |
 | 椭圆描边 | `annotation_renderer` + Overlay「椭圆」 | 轮廓像素 / 不填充 / 交互归一化 |
 | 文字标注 | `annotation_renderer` + Overlay「文字」 | 就地 EDIT；字号；单击选中+Delete；双击改字；拖拽改位 |
 | 马赛克留位守卫 | 类型枚举 + 空渲染 | 延迟工具不可起笔；延迟类型不改像素 |
