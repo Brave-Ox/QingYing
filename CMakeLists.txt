@@ -65,11 +65,15 @@ target_link_libraries(qingying_annotate PUBLIC qingying_action)
 
 add_library(qingying_pin STATIC
   src/pin/pin_manager.cpp
+  src/pin/pin_window.cpp
 )
 target_include_directories(qingying_pin
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_pin PUBLIC qingying_action)
+if(WIN32)
+  target_link_libraries(qingying_pin PUBLIC user32 gdi32)
+endif()
 
 add_library(qingying_longshot STATIC
   src/longshot/longshot_engine.cpp
