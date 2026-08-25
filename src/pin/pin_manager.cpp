@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 namespace qingying {
 
@@ -40,6 +41,7 @@ bool PinManager::show(const Image& image) {
   PinWindow* raw_window = window.get();
   raw_window->setClosedCallback(
       [this](PinWindow* closed_window) { onWindowClosed(closed_window); });
+  raw_window->setActionCallbacks(copy_callback_, save_callback_);
   if (!raw_window->show()) {
     return false;
   }
@@ -58,6 +60,15 @@ void PinManager::closeAll() {
 
 int PinManager::count() const {
   return static_cast<int>(windows_.size());
+}
+
+void PinManager::setActionCallbacks(ImageActionCallback copy_callback,
+                                    ImageActionCallback save_callback) {
+  copy_callback_ = std::move(copy_callback);
+  save_callback_ = std::move(save_callback);
+  for (const auto& window : windows_) {
+    window->setActionCallbacks(copy_callback_, save_callback_);
+  }
 }
 
 PinManager::CaptureGuard PinManager::temporarilyHideForCapture() {

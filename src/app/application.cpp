@@ -20,6 +20,9 @@ Application::~Application() {
 void Application::registerHandlers() {
   registerAppHandlers(dispatcher_, capture_, export_service_, session_,
                       pin_manager_);
+  pin_manager_.setActionCallbacks(
+      [this](const Image& image) { return export_service_.copyToClipboard(image); },
+      [this](const Image& image) { return saveImage(image); });
 }
 
 void Application::installMessageRouter() {
@@ -51,6 +54,22 @@ void Application::saveLastCapture() {
     return;
   }
 
+  const ActionResult result = saveImage(session_.result());
+  if (!result.ok) {
+    MessageBoxW(tray_.hwnd(), L"Failed to save the latest capture.", L"QingYing",
+                MB_OK | MB_ICONERROR);
+  }
+}
+
+ActionResult Application::saveImage(const Image& image) {
+  ActionResult result;
+  if (image.empty()) {
+    result.ok = false;
+    result.error_code = ErrorCode::kNotReady;
+    result.message = "no image to save";
+    return result;
+  }
+
   wchar_t path[MAX_PATH] = L"qingying.png";
   OPENFILENAMEW dialog = {};
   dialog.lStructSize = sizeof(dialog);
@@ -63,17 +82,13 @@ void Application::saveLastCapture() {
   dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
 
   if (!GetSaveFileNameW(&dialog)) {
-    return;
+    result.ok = true;
+    result.error_code = ErrorCode::kOk;
+    result.message = "save cancelled";
+    return result;
   }
 
-  ActionRequest request;
-  request.type = ActionType::Save;
-  request.save_path = path;
-  const ActionResult result = dispatcher_.dispatch(request);
-  if (!result.ok) {
-    MessageBoxW(tray_.hwnd(), L"Failed to save the latest capture.", L"QingYing",
-                MB_OK | MB_ICONERROR);
-  }
+  return export_service_.savePng(image, path);
 }
 
 void Application::runCapturePipeline(const SelectionResult& region) {

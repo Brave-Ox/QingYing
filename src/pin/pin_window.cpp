@@ -19,6 +19,9 @@ constexpr int kMinClientHeight = 120;
 constexpr int kBorderThickness = 4;
 constexpr int kResizeBorder = 8;
 constexpr int kCloseButtonSize = 28;
+constexpr UINT_PTR kContextCopy = 1;
+constexpr UINT_PTR kContextSave = 2;
+constexpr UINT_PTR kContextClose = 3;
 
 constexpr DWORD kPinWindowStyle = WS_POPUP | WS_THICKFRAME;
 constexpr DWORD kPinWindowExStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
@@ -87,6 +90,12 @@ bool PinWindow::registerWindowClass() {
 
 void PinWindow::setClosedCallback(ClosedCallback callback) {
   closed_callback_ = std::move(callback);
+}
+
+void PinWindow::setActionCallbacks(ImageActionCallback copy_callback,
+                                   ImageActionCallback save_callback) {
+  copy_callback_ = std::move(copy_callback);
+  save_callback_ = std::move(save_callback);
 }
 
 bool PinWindow::show() {
@@ -252,6 +261,56 @@ LRESULT PinWindow::hitTest(POINT point) const {
   return HTCAPTION;
 }
 
+void PinWindow::showContextMenu(POINT screen_point) {
+  HMENU menu = CreatePopupMenu();
+  if (menu == nullptr) {
+    return;
+  }
+
+  const UINT copy_flags = copy_callback_ ? MF_STRING : MF_STRING | MF_GRAYED;
+  const UINT save_flags = save_callback_ ? MF_STRING : MF_STRING | MF_GRAYED;
+  AppendMenuW(menu, copy_flags, kContextCopy, L"复制");
+  AppendMenuW(menu, save_flags, kContextSave, L"保存图片");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, kContextClose, L"关闭");
+
+  if (screen_point.x == -1 && screen_point.y == -1) {
+    GetCursorPos(&screen_point);
+  }
+  SetForegroundWindow(hwnd_);
+  const UINT command = TrackPopupMenu(
+      menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, screen_point.x,
+      screen_point.y, 0, hwnd_, nullptr);
+  DestroyMenu(menu);
+
+  switch (command) {
+    case kContextCopy:
+      handleImageAction(copy_callback_, L"复制 Pin 图片失败");
+      break;
+    case kContextSave:
+      handleImageAction(save_callback_, L"保存 Pin 图片失败");
+      break;
+    case kContextClose:
+      DestroyWindow(hwnd_);
+      break;
+    default:
+      break;
+  }
+}
+
+void PinWindow::handleImageAction(const ImageActionCallback& callback,
+                                  const wchar_t* error_title) {
+  if (!callback) {
+    return;
+  }
+
+  const ActionResult result = callback(image_);
+  if (!result.ok) {
+    MessageBoxW(hwnd_, L"Pin 图片操作失败。", error_title,
+                MB_OK | MB_ICONERROR);
+  }
+}
+
 void PinWindow::handleSizing(WPARAM edge, RECT* window_rect) const {
   if (window_rect == nullptr || image_.width <= 0 || image_.height <= 0) {
     return;
@@ -386,6 +445,24 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
     case WM_NCPAINT:
       // There is no native frame to paint after WM_NCCALCSIZE above.
       return 0;
+    case WM_CONTEXTMENU: {
+      if (self != nullptr) {
+        POINT point{static_cast<int>(static_cast<short>(LOWORD(lparam))),
+                    static_cast<int>(static_cast<short>(HIWORD(lparam)))};
+        self->showContextMenu(point);
+        return 0;
+      }
+      break;
+    }
+    case WM_NCRBUTTONUP: {
+      if (self != nullptr) {
+        POINT point{static_cast<int>(static_cast<short>(LOWORD(lparam))),
+                    static_cast<int>(static_cast<short>(HIWORD(lparam)))};
+        self->showContextMenu(point);
+        return 0;
+      }
+      break;
+    }
     case WM_NCHITTEST: {
       if (self == nullptr) {
         return DefWindowProcW(hwnd, message, wparam, lparam);

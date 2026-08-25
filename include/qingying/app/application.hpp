@@ -31,6 +31,7 @@ class Application {
   void installMessageRouter();
   void onCaptureHotkey();
   void saveLastCapture();
+  ActionResult saveImage(const Image& image);
   void beginCaptureFlow();
   void runCapturePipeline(const SelectionResult& region);
 
