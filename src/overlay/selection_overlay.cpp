@@ -50,6 +50,7 @@ struct OverlayWindowData {
   int toolbar_button_h{kToolbarButtonHeight};
   int toolbar_button_gap{kToolbarButtonGap};
   int toolbar_padding{kToolbarPadding};
+  SelectionHandle active_handle{SelectionHandle::None};
 };
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -97,6 +98,58 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
   }
   data->action = action;
   PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+}
+
+// Win32 系统光标资源：使用显式资源编号，避免项目未定义 UNICODE 时
+// IDC_* 宏与 LoadCursorW 的字符类型不匹配。
+HCURSOR loadOverlayCursor(SelectionHandle handle, bool has_selection) {
+  int resource_id = 32512;  // IDC_ARROW
+  if (!has_selection) {
+    resource_id = 32515;  // IDC_CROSS
+  } else {
+    switch (handle) {
+      case SelectionHandle::Top:
+      case SelectionHandle::Bottom:
+        resource_id = 32645;  // IDC_SIZENS
+        break;
+      case SelectionHandle::Left:
+      case SelectionHandle::Right:
+        resource_id = 32644;  // IDC_SIZEWE
+        break;
+      case SelectionHandle::TopLeft:
+      case SelectionHandle::BottomRight:
+        resource_id = 32642;  // IDC_SIZENWSE
+        break;
+      case SelectionHandle::TopRight:
+      case SelectionHandle::BottomLeft:
+        resource_id = 32643;  // IDC_SIZENESW
+        break;
+      case SelectionHandle::Move:
+        resource_id = 32646;  // IDC_SIZEALL
+        break;
+      case SelectionHandle::None:
+        break;
+    }
+  }
+  return LoadCursorW(nullptr, MAKEINTRESOURCEW(resource_id));
+}
+
+void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
+  if (data == nullptr) {
+    return;
+  }
+
+  SelectionHandle handle = SelectionHandle::None;
+  if (data->drag == DragKind::Resize || data->drag == DragKind::Move) {
+    handle = data->active_handle;
+  } else if (data->selection_confirmed) {
+    handle = data->controller.hitTest(x, y);
+  }
+
+  HCURSOR cursor = loadOverlayCursor(handle, data->selection_confirmed);
+  if (cursor != nullptr) {
+    SetCursor(cursor);
+  }
 }
 
 // 选区从覆盖层客户区坐标 → 屏幕坐标（供工具栏定位与最终出参使用）。
@@ -331,6 +384,16 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
+    case WM_SETCURSOR: {
+      if (data == nullptr) {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+      }
+      POINT cursor_point{};
+      GetCursorPos(&cursor_point);
+      ScreenToClient(hwnd, &cursor_point);
+      updateOverlayCursor(data, cursor_point.x, cursor_point.y);
+      return TRUE;
+    }
     case WM_LBUTTONDOWN: {
       if (data == nullptr) {
         return 0;
@@ -342,6 +405,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         // 尚无有效选区：开始拖出矩形。
         SetCapture(hwnd);
         data->drag = DragKind::Create;
+        data->active_handle = SelectionHandle::None;
         data->controller.begin(x, y);
         return 0;
       }
@@ -354,27 +418,33 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         data->action = SelectionAction::None;
         SetCapture(hwnd);
         data->drag = DragKind::Create;
+        data->active_handle = SelectionHandle::None;
         data->controller.begin(x, y);
       } else if (handle == SelectionHandle::Move) {
         destroyToolbar(data);
         SetCapture(hwnd);
         data->drag = DragKind::Move;
+        data->active_handle = SelectionHandle::Move;
         data->controller.beginMove(x, y);
       } else {
         destroyToolbar(data);
         SetCapture(hwnd);
         data->drag = DragKind::Resize;
+        data->active_handle = handle;
         data->controller.beginResize(handle, x, y);
       }
       return 0;
     }
     case WM_MOUSEMOVE: {
-      if (data == nullptr || data->drag == DragKind::None ||
-          (wparam & MK_LBUTTON) == 0) {
+      if (data == nullptr) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      updateOverlayCursor(data, x, y);
+      if (data->drag == DragKind::None || (wparam & MK_LBUTTON) == 0) {
+        return 0;
+      }
       switch (data->drag) {
         case DragKind::Create:
           data->controller.update(x, y);
@@ -416,6 +486,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           break;
       }
       data->drag = DragKind::None;
+      data->active_handle = SelectionHandle::None;
 
       const SelectionResult& selection = data->controller.selection();
       if (selection.cancelled) {
