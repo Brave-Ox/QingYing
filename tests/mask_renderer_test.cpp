@@ -19,8 +19,8 @@ constexpr std::uint32_t kMakeBgra(std::uint8_t b, std::uint8_t g,
 
 // 半透明遮罩层：约 35% 不透明黑（premultiplied：alpha 0x59，RGB 0x00）。
 constexpr std::uint32_t kMaskPx = kMakeBgra(0, 0, 0, 0x59);
-// 选区内部：完全透明（露出桌面）。
-constexpr std::uint32_t kClearPx = 0x00000000u;
+// 选区内部：视觉透明（alpha=1，保持分层窗口可命中以支持移动选区）。
+constexpr std::uint32_t kClearPx = 0x01000000u;
 // 选区边框：不透明亮橙，4px（alpha 0xFF，RGB 0xFF8000）。
 constexpr std::uint32_t kBorderPx = kMakeBgra(0x00, 0x80, 0xFF, 0xFF);
 

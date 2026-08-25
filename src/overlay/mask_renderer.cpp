@@ -9,8 +9,9 @@ namespace {
 
 // 遮罩层：约 35% 不透明黑（premultiplied alpha：alpha 0x59，RGB 0x00）。
 constexpr std::uint32_t kMaskPixel = 0x59000000u;
-// 选区内部：完全透明，露出桌面。
-constexpr std::uint32_t kClearPixel = 0x00000000u;
+// 选区内部：视觉上透明（alpha=1）以露出桌面，但 alpha 非 0 使分层窗口
+// 在选区内仍可命中鼠标，从而支持「按住选区内部拖动整体移动」。
+constexpr std::uint32_t kClearPixel = 0x01000000u;
 // 选区边框：不透明亮橙，4px（premultiplied：alpha 0xFF，RGB 0xFF8000）。
 constexpr std::uint32_t kBorderPixel = 0xFFFF8000u;
 constexpr int kBorderThickness = 4;

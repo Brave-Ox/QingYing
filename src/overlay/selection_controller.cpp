@@ -177,7 +177,12 @@ SelectionHandle SelectionController::hitTest(int x, int y) const {
     return SelectionHandle::None;
   }
   return handles::hitTest(x, y, m_selection.x, m_selection.y,
-                          m_selection.width, m_selection.height);
+                          m_selection.width, m_selection.height,
+                          m_handle_radius);
+}
+
+void SelectionController::setHandleRadius(int radius) {
+  m_handle_radius = radius > 0 ? radius : handles::kHandleHitRadius;
 }
 
 void SelectionController::clampToBounds() {

@@ -58,6 +58,9 @@ class SelectionController {
   // 命中测试：基于当前已确认选区，返回点 (x, y) 上的手柄 / 内部 / 外部。
   SelectionHandle hitTest(int x, int y) const;
 
+  // 设置手柄命中半径（逻辑像素）；覆盖层按 DPI 缩放后传入。
+  void setHandleRadius(int radius);
+
  private:
   enum class Mode { None, Creating, Resizing, Moving };
 
@@ -75,6 +78,7 @@ class SelectionController {
   SelectionResult m_anchor;
   int m_bounds_width{0};
   int m_bounds_height{0};
+  int m_handle_radius{handles::kHandleHitRadius};
 };
 
 }  // namespace qingying

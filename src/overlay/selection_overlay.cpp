@@ -43,6 +43,13 @@ struct OverlayWindowData {
   bool selection_confirmed{false};
   DragKind drag{DragKind::None};
   coord::VirtualScreenRect screen;
+  // 按 DPI 缩放后的 UI 尺寸（100% 时等于基准常量）。
+  int dpi{96};
+  int handle_radius{handles::kHandleHitRadius};
+  int toolbar_button_w{kToolbarButtonWidth};
+  int toolbar_button_h{kToolbarButtonHeight};
+  int toolbar_button_gap{kToolbarButtonGap};
+  int toolbar_padding{kToolbarPadding};
 };
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -123,16 +130,16 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const HINSTANCE instance = GetModuleHandleW(nullptr);
       const DWORD button_style = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
-      const int y = kToolbarPadding;
-      int x = kToolbarPadding;
+      const int y = data->toolbar_padding;
+      int x = data->toolbar_padding;
       const auto createButton = [&](const wchar_t* label, UINT id,
                                     bool enabled) -> HWND {
         HWND button = CreateWindowExW(
-            0, L"BUTTON", label, button_style, x, y, kToolbarButtonWidth,
-            kToolbarButtonHeight, hwnd,
+            0, L"BUTTON", label, button_style, x, y, data->toolbar_button_w,
+            data->toolbar_button_h, hwnd,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance,
             nullptr);
-        x += kToolbarButtonWidth + kToolbarButtonGap;
+        x += data->toolbar_button_w + data->toolbar_button_gap;
         if (button != nullptr && !enabled) {
           EnableWindow(button, FALSE);
         }
@@ -191,9 +198,10 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
 
   const int button_count = 4;
   const int toolbar_width =
-      kToolbarPadding * 2 + button_count * kToolbarButtonWidth +
-      (button_count - 1) * kToolbarButtonGap;
-  const int toolbar_height = kToolbarPadding * 2 + kToolbarButtonHeight;
+      data->toolbar_padding * 2 + button_count * data->toolbar_button_w +
+      (button_count - 1) * data->toolbar_button_gap;
+  const int toolbar_height =
+      data->toolbar_padding * 2 + data->toolbar_button_h;
 
   int x = selection_screen.x;
   int y = selection_screen.y + selection_screen.height + 8;
@@ -227,7 +235,8 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
 // 重新渲染遮罩到分层窗口。返回 false 表示渲染失败。
 // selection 使用覆盖层客户区坐标（原点 0,0）；draw_handles 为 true 时叠加八点手柄。
 bool updateOverlay(HWND hwnd, const coord::VirtualScreenRect& screen,
-                   const SelectionResult& selection, bool draw_handles) {
+                   const SelectionResult& selection, bool draw_handles,
+                   int handle_radius) {
   const int width = screen.width;
   const int height = screen.height;
   if (width <= 0 || height <= 0) {
@@ -268,7 +277,8 @@ bool updateOverlay(HWND hwnd, const coord::VirtualScreenRect& screen,
   }
   if (draw_handles && !selection.cancelled) {
     handles::drawHandles(pixels, width, height, selection.x, selection.y,
-                         selection.width, selection.height, kHandlePixel);
+                         selection.width, selection.height, kHandlePixel,
+                         handle_radius);
   }
   // DIB 与像素缓冲同布局（BGRA，顶向下），直接拷贝。
   std::copy(pixels.begin(), pixels.end(),
@@ -315,7 +325,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       const SelectionResult& sel = data->controller.selection();
-      if (!updateOverlay(hwnd, data->screen, sel, false)) {
+      if (!updateOverlay(hwnd, data->screen, sel, false,
+                         data->handle_radius)) {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -378,7 +389,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           break;
       }
       updateOverlay(hwnd, data->screen, data->controller.selection(),
-                    data->selection_confirmed);
+                    data->selection_confirmed, data->handle_radius);
       return 0;
     }
     case WM_LBUTTONUP: {
@@ -422,7 +433,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
-      updateOverlay(hwnd, data->screen, selection, true);
+      updateOverlay(hwnd, data->screen, selection, true, data->handle_radius);
       return 0;
     }
     case WM_RBUTTONDOWN: {
@@ -500,6 +511,16 @@ bool SelectionOverlay::show(SelectionCallback callback) {
   data.callback = std::move(callback);
   data.screen = coord::getVirtualScreen();
   data.controller.setBounds(data.screen.width, data.screen.height);
+
+  // 按 DPI 缩放 UI（100% 为 96 DPI）：手柄命中半径与操作条尺寸。
+  data.dpi = coord::getSystemDpi();
+  const auto scale = [&](int value) { return MulDiv(value, data.dpi, 96); };
+  data.handle_radius = scale(handles::kHandleHitRadius);
+  data.toolbar_button_w = scale(kToolbarButtonWidth);
+  data.toolbar_button_h = scale(kToolbarButtonHeight);
+  data.toolbar_button_gap = scale(kToolbarButtonGap);
+  data.toolbar_padding = scale(kToolbarPadding);
+  data.controller.setHandleRadius(data.handle_radius);
 
   HWND hwnd = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kOverlayClassName, L"",
