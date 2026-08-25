@@ -72,7 +72,7 @@ target_include_directories(qingying_pin
 )
 target_link_libraries(qingying_pin PUBLIC qingying_action)
 if(WIN32)
-  target_link_libraries(qingying_pin PUBLIC user32 gdi32)
+  target_link_libraries(qingying_pin PUBLIC user32 gdi32 dwmapi)
 endif()
 
 add_library(qingying_longshot STATIC

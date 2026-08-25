@@ -1,4 +1,4 @@
-#include "qingying/app/application.hpp"
+﻿#include "qingying/app/application.hpp"
 
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
@@ -88,7 +88,13 @@ void Application::runCapturePipeline(const SelectionResult& region) {
   capture_req.width = region.width;
   capture_req.height = region.height;
 
-  const ActionResult capture_result = dispatcher_.dispatch(capture_req);
+  ActionResult capture_result;
+  {
+    // Pin windows are ordinary topmost windows, so GDI desktop capture would
+    // otherwise copy their border and image into the new screenshot.
+    auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
+    capture_result = dispatcher_.dispatch(capture_req);
+  }
   if (!capture_result.ok) {
     return;
   }
