@@ -57,6 +57,7 @@ add_library(qingying_annotate STATIC
   src/annotate/annotation_engine.cpp
   src/annotate/annotation_document.cpp
   src/annotate/annotation_editor_session.cpp
+  src/annotate/annotation_interaction_controller.cpp
   src/annotate/annotation_overlay.cpp
   src/annotate/annotation_renderer.cpp
 )

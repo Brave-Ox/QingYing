@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <utility>
 
+#include "qingying/annotate/annotation_editor_layout.hpp"
 #include "qingying/annotate/annotation_editor_session.hpp"
+#include "qingying/annotate/annotation_interaction_controller.hpp"
+#include "qingying/annotate/annotation_renderer.hpp"
 
 namespace qingying {
 
@@ -13,27 +16,22 @@ const wchar_t kOverlayClassName[] = L"QingYingAnnotationOverlay";
 
 constexpr UINT kButtonConfirmId = 1;
 constexpr UINT kButtonCancelId = 2;
-constexpr int kButtonWidth = 88;
-constexpr int kButtonHeight = 30;
-constexpr int kButtonGap = 8;
-constexpr int kBarPadding = 6;
+constexpr UINT kButtonRectId = 3;
+constexpr UINT kButtonArrowId = 4;
+constexpr UINT kButtonPenId = 5;
+constexpr UINT kButtonUndoId = 6;
 
-// 底部操作条高度：按钮加上下内边距。
-int toolbarHeight()
-{
-  return kButtonHeight + kBarPadding * 2;
-}
-
-// 编辑器状态挂在窗口的 GWLP_USERDATA 上，避免全局可变量。
 struct EditorWindowData
 {
   AnnotationEditorSession session;
+  AnnotationInteractionController controller;
+  AnnotationRenderer renderer;
   AnnotationCallback callback;
   HWND overlay{nullptr};
   bool confirmed{false};
+  int client_width{0};
 };
 
-// BeginPaint / EndPaint 配对释放。
 class PaintGuard
 {
  public:
@@ -64,8 +62,7 @@ class PaintGuard
   HDC m_dc{nullptr};
 };
 
-// 把源图按 1:1 画到客户区左上角。Task 5 只显示原图，尚无标注预览。
-void drawSource(HDC hdc, const Image& image)
+void blitImage(HDC hdc, const Image& image)
 {
   if (hdc == nullptr || image.empty())
   {
@@ -75,40 +72,84 @@ void drawSource(HDC hdc, const Image& image)
   BITMAPINFO bmi{};
   bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
   bmi.bmiHeader.biWidth = image.width;
-  bmi.bmiHeader.biHeight = -image.height;  // 顶向下，与 Image 行序一致
+  bmi.bmiHeader.biHeight = -image.height;
   bmi.bmiHeader.biPlanes = 1;
   bmi.bmiHeader.biBitCount = 32;
   bmi.bmiHeader.biCompression = BI_RGB;
 
-  // 返回值为实际写入的扫描行数；绘制失败只影响这一帧显示，
-  // 不改变编辑状态，故此处不做分支处理。
   (void)SetDIBitsToDevice(hdc, 0, 0, static_cast<DWORD>(image.width),
                           static_cast<DWORD>(image.height), 0, 0, 0,
                           static_cast<UINT>(image.height),
                           image.pixels.data(), &bmi, DIB_RGB_COLORS);
 }
 
-bool createButtons(HWND hwnd, const Image& source)
+void invalidateImageArea(HWND hwnd, const Image& source)
 {
-  const HINSTANCE instance = GetModuleHandleW(nullptr);
-  const DWORD style = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
-  const int y = source.height + kBarPadding;
-
-  const auto createButton = [&](const wchar_t* label, UINT id, int x) -> HWND
+  if (hwnd == nullptr || source.empty())
   {
-    return CreateWindowExW(0, L"BUTTON", label, style, x, y, kButtonWidth,
-                           kButtonHeight, hwnd,
-                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                           instance, nullptr);
-  };
+    return;
+  }
+  RECT rect{0, 0, source.width, source.height};
+  InvalidateRect(hwnd, &rect, FALSE);
+}
 
-  const int total = kButtonWidth * 2 + kButtonGap;
-  const int first_x = (std::max)(kBarPadding, source.width - total - kBarPadding);
+void paintEditor(EditorWindowData* data, HDC hdc)
+{
+  if (data == nullptr || hdc == nullptr)
+  {
+    return;
+  }
 
-  const HWND confirm = createButton(L"完成", kButtonConfirmId, first_x);
-  const HWND cancel = createButton(L"取消", kButtonCancelId,
-                                   first_x + kButtonWidth + kButtonGap);
-  return confirm != nullptr && cancel != nullptr;
+  Image composed;
+  const Annotation* preview =
+      data->controller.hasPreview() ? &data->controller.preview() : nullptr;
+  if (!data->renderer.rasterize(data->session.source(),
+                                data->session.engine().document(), preview,
+                                composed))
+  {
+    return;
+  }
+  blitImage(hdc, composed);
+}
+
+HWND createChildButton(HWND parent, const wchar_t* label, UINT id, int x,
+                       int y)
+{
+  return CreateWindowExW(
+      0, L"BUTTON", label, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, x, y,
+      AnnotationEditorButtonWidth, AnnotationEditorButtonHeight, parent,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+      GetModuleHandleW(nullptr), nullptr);
+}
+
+bool createButtons(HWND hwnd, const Image& source, int client_width)
+{
+  const int y = source.height + AnnotationEditorBarPadding;
+  int x = AnnotationEditorBarPadding;
+
+  const HWND rect = createChildButton(hwnd, L"矩形", kButtonRectId, x, y);
+  x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+  const HWND arrow = createChildButton(hwnd, L"箭头", kButtonArrowId, x, y);
+  x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+  const HWND pen = createChildButton(hwnd, L"画笔", kButtonPenId, x, y);
+  x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+  const HWND undo = createChildButton(hwnd, L"撤销", kButtonUndoId, x, y);
+
+  const int action_total =
+      AnnotationEditorButtonWidth * 2 + AnnotationEditorButtonGap;
+  const int confirm_x =
+      (std::max)(x + AnnotationEditorButtonWidth + AnnotationEditorButtonGap,
+                 client_width - action_total - AnnotationEditorBarPadding);
+  const HWND confirm =
+      createChildButton(hwnd, L"完成", kButtonConfirmId, confirm_x, y);
+  const HWND cancel =
+      createChildButton(hwnd, L"取消", kButtonCancelId,
+                        confirm_x + AnnotationEditorButtonWidth +
+                            AnnotationEditorButtonGap,
+                        y);
+
+  return rect != nullptr && arrow != nullptr && pen != nullptr &&
+         undo != nullptr && confirm != nullptr && cancel != nullptr;
 }
 
 void requestClose(EditorWindowData* data, bool confirmed)
@@ -121,8 +162,6 @@ void requestClose(EditorWindowData* data, bool confirmed)
   PostMessageW(data->overlay, WM_CLOSE, 0, 0);
 }
 
-// 窗口销毁时统一收尾：产出结果并回调。取消路径下 session 已经
-// 保证 rendered_image 为空图。
 void finishAndNotify(EditorWindowData* data)
 {
   if (data == nullptr)
@@ -135,20 +174,52 @@ void finishAndNotify(EditorWindowData* data)
   {
     if (!data->session.finishConfirmed(result))
     {
-      // 合成失败时退回取消语义，避免把半成品图交给调用方。
       result.cancelled = true;
       result.rendered_image = Image{};
     }
   }
   else
   {
-    // 未开始或已结束时返回 false，result 保持默认的 cancelled 空结果。
     (void)data->session.finishCancelled(result);
   }
 
   if (data->callback)
   {
     data->callback(result);
+  }
+}
+
+bool pointInImageArea(const Image& source, int x, int y)
+{
+  return x >= 0 && y >= 0 && x < source.width && y < source.height;
+}
+
+void handleToolCommand(EditorWindowData* data, UINT id)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  switch (id)
+  {
+    case kButtonRectId:
+      data->controller.setTool(AnnotationTool::Rectangle);
+      break;
+    case kButtonArrowId:
+      data->controller.setTool(AnnotationTool::Arrow);
+      break;
+    case kButtonPenId:
+      data->controller.setTool(AnnotationTool::Pen);
+      break;
+    case kButtonUndoId:
+      if (data->controller.undo(data->session.engine()))
+      {
+        invalidateImageArea(data->overlay, data->session.source());
+      }
+      break;
+    default:
+      break;
   }
 }
 
@@ -175,7 +246,8 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_CREATE:
     {
-      if (data == nullptr || !createButtons(hwnd, data->session.source()))
+      if (data == nullptr ||
+          !createButtons(hwnd, data->session.source(), data->client_width))
       {
         return -1;
       }
@@ -184,16 +256,58 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_PAINT:
     {
       const PaintGuard paint(hwnd);
-      if (data != nullptr)
-      {
-        drawSource(paint.dc(), data->session.source());
-      }
+      paintEditor(data, paint.dc());
       return 0;
     }
     case WM_ERASEBKGND:
-    {
-      // 图片区自绘，避免整窗擦除造成闪烁。
       return 1;
+    case WM_LBUTTONDOWN:
+    {
+      if (data == nullptr)
+      {
+        return 0;
+      }
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      if (!pointInImageArea(data->session.source(), x, y))
+      {
+        return 0;
+      }
+      if (data->controller.beginStroke(static_cast<float>(x),
+                                       static_cast<float>(y)))
+      {
+        SetCapture(hwnd);
+        invalidateImageArea(hwnd, data->session.source());
+      }
+      return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+      if (data == nullptr || !data->controller.isDrawing())
+      {
+        return 0;
+      }
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      data->controller.updateStroke(static_cast<float>(x),
+                                    static_cast<float>(y));
+      invalidateImageArea(hwnd, data->session.source());
+      return 0;
+    }
+    case WM_LBUTTONUP:
+    {
+      if (data == nullptr || !data->controller.isDrawing())
+      {
+        return 0;
+      }
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      data->controller.updateStroke(static_cast<float>(x),
+                                    static_cast<float>(y));
+      (void)data->controller.endStroke(data->session.engine());
+      ReleaseCapture();
+      invalidateImageArea(hwnd, data->session.source());
+      return 0;
     }
     case WM_COMMAND:
     {
@@ -201,27 +315,28 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         return 0;
       }
-      if (LOWORD(wparam) == kButtonConfirmId)
+      const UINT id = LOWORD(wparam);
+      if (id == kButtonConfirmId)
       {
         requestClose(data, true);
       }
-      else if (LOWORD(wparam) == kButtonCancelId)
+      else if (id == kButtonCancelId)
       {
         requestClose(data, false);
+      }
+      else
+      {
+        handleToolCommand(data, id);
       }
       return 0;
     }
     case WM_CLOSE:
-    {
       DestroyWindow(hwnd);
       return 0;
-    }
     case WM_DESTROY:
-    {
       finishAndNotify(data);
       PostQuitMessage(0);
       return 0;
-    }
     default:
       break;
   }
@@ -235,12 +350,21 @@ bool registerEditorClass(HINSTANCE instance)
   wc.cbSize = sizeof(WNDCLASSEXW);
   wc.lpfnWndProc = editorWndProc;
   wc.hInstance = instance;
-  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
   wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
   wc.lpszClassName = kOverlayClassName;
 
   return RegisterClassExW(&wc) != 0 ||
          GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+bool isCtrlZ(const MSG& msg)
+{
+  if (msg.message != WM_KEYDOWN || msg.wParam != 'Z')
+  {
+    return false;
+  }
+  return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 }
 
 }  // namespace
@@ -256,8 +380,11 @@ bool AnnotationOverlay::show(HWND owner, const Image& source,
   EditorWindowData data;
   if (!data.session.begin(source))
   {
-    return false;  // 源图为空
+    return false;
   }
+  data.client_width = annotationEditorClientWidth(source.width);
+  data.controller.setCanvasSize(source.width, source.height);
+  data.controller.setTool(AnnotationTool::Rectangle);
   data.callback = std::move(callback);
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -267,7 +394,8 @@ bool AnnotationOverlay::show(HWND owner, const Image& source,
   }
 
   const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
-  RECT rect{0, 0, source.width, source.height + toolbarHeight()};
+  RECT rect{0, 0, data.client_width,
+            source.height + annotationEditorToolbarHeight()};
   if (AdjustWindowRect(&rect, style, FALSE) == FALSE)
   {
     return false;
@@ -295,14 +423,20 @@ bool AnnotationOverlay::show(HWND owner, const Image& source,
   ShowWindow(hwnd, SW_SHOW);
   SetForegroundWindow(hwnd);
 
-  // 模态循环：与 SelectionOverlay 一致，直到窗口销毁（WM_DESTROY →
-  // PostQuitMessage）才返回。Esc 在此拦截，保证焦点在按钮上时同样生效。
   MSG msg{};
   while (GetMessageW(&msg, nullptr, 0, 0) > 0)
   {
     if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
     {
       requestClose(&data, false);
+      continue;
+    }
+    if (isCtrlZ(msg))
+    {
+      if (data.controller.undo(data.session.engine()))
+      {
+        invalidateImageArea(hwnd, data.session.source());
+      }
       continue;
     }
     TranslateMessage(&msg);

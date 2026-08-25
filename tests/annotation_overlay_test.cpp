@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include "qingying/annotate/annotation_editor_layout.hpp"
+
 namespace qingying {
 namespace {
 
@@ -70,13 +72,30 @@ TEST(AnnotationOverlayTest, HideOnIdleOverlayIsSafe)
   EXPECT_FALSE(overlay.isVisible());
 }
 
-// 手工冒烟：会真实弹出编辑器窗口，需要人工点击，因此默认跳过。
-// 运行方式见 docs 或提交说明：
-//   qingying_tests.exe --gtest_also_run_disabled_tests \
+TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
+{
+  // 冒烟图画布仅 320 宽；六个按钮若不扩宽窗口会把「完成/取消」裁出客户区。
+  const int client_width = annotationEditorClientWidth(kCanvasWidth);
+  EXPECT_GE(client_width, annotationEditorToolbarWidth());
+  EXPECT_GE(client_width, kCanvasWidth);
+
+  const int last_button_right =
+      AnnotationEditorBarPadding +
+      AnnotationEditorButtonCount * AnnotationEditorButtonWidth +
+      (AnnotationEditorButtonCount - 1) * AnnotationEditorButtonGap;
+  EXPECT_LE(last_button_right, client_width);
+}
+
+// 手工冒烟：会真实弹出编辑器窗口，需要人工操作，因此默认跳过。
+// 运行：
+//   qingying_tests.exe --gtest_also_run_disabled_tests `
 //                      --gtest_filter=AnnotationOverlayTest.DISABLED_*
 //
-// 预期：窗口居中弹出，显示蓝白横条纹图（第一条为蓝色，说明未上下颠倒），
-// 底部有「完成」「取消」两个按钮。
+// 预期：
+// 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
+// 2. 底部有 矩形/箭头/画笔/撤销 + 完成/取消
+// 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
+// 4. 切换箭头、画笔同样可画；点完成得到合成图；Esc/取消不改结果语义
 TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
 {
   AnnotationOverlay overlay;
@@ -89,14 +108,13 @@ TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
                              result = finished;
                            }));
 
-  testing::Message() << "点「完成」应得到 cancelled=false 且图像与源图一致；"
-                        "点「取消」/按 Esc/关闭窗口应得到 cancelled=true。";
   EXPECT_FALSE(overlay.isVisible());
   if (!result.cancelled)
   {
     EXPECT_EQ(result.rendered_image.width, kCanvasWidth);
     EXPECT_EQ(result.rendered_image.height, kCanvasHeight);
-    EXPECT_EQ(result.rendered_image.pixels, source.pixels);
+    // 若画过标注，像素应与源图不同；若直接完成，则等于源图拷贝。
+    EXPECT_FALSE(result.rendered_image.empty());
   }
   else
   {

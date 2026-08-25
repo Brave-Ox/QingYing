@@ -6,6 +6,7 @@ add_executable(qingying_tests
   annotation_document_test.cpp
   annotation_editor_session_test.cpp
   annotation_engine_test.cpp
+  annotation_interaction_controller_test.cpp
   annotation_overlay_test.cpp
   annotation_renderer_test.cpp
   capture_engine_test.cpp

@@ -14,6 +14,11 @@ class AnnotationRenderer
   // 源图为空时返回 false，并把 out 置空。
   bool rasterize(const Image& source, const AnnotationDocument& document,
                  Image& out) const;
+
+  // 在已提交文档之上额外绘制 preview（拖拽预览，不要求通过文档校验）。
+  // preview 为 nullptr 时与三参数版本等价。
+  bool rasterize(const Image& source, const AnnotationDocument& document,
+                 const Annotation* preview, Image& out) const;
 };
 
 }  // namespace qingying

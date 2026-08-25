@@ -214,6 +214,13 @@ bool AnnotationRenderer::rasterize(const Image& source,
                                    const AnnotationDocument& document,
                                    Image& out) const
 {
+  return rasterize(source, document, nullptr, out);
+}
+
+bool AnnotationRenderer::rasterize(const Image& source,
+                                   const AnnotationDocument& document,
+                                   const Annotation* preview, Image& out) const
+{
   if (source.empty())
   {
     out = Image{};
@@ -224,6 +231,10 @@ bool AnnotationRenderer::rasterize(const Image& source,
   for (const Annotation& annotation : document.items())
   {
     drawAnnotation(out, annotation);
+  }
+  if (preview != nullptr)
+  {
+    drawAnnotation(out, *preview);
   }
 
   return true;

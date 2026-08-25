@@ -339,4 +339,17 @@ TEST(AnnotationRendererTest, PenDoesNotCloseThePath)
   EXPECT_EQ(pixelAt(out, 15, 15), kWhitePx);
 }
 
+TEST(AnnotationRendererTest, PreviewAnnotationIsDrawnWithoutEnteringDocument)
+{
+  const AnnotationRenderer renderer;
+  const AnnotationDocument empty;
+  const Annotation preview = makeRedRectangle();
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, empty, &preview, out));
+  EXPECT_EQ(pixelAt(out, 10, 8), kRedPx);
+  EXPECT_TRUE(empty.empty());  // 预览不得污染文档
+}
+
 }  // namespace qingying
