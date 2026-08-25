@@ -1,4 +1,4 @@
-#include "qingying/capture/capture_engine.hpp"
+﻿#include "qingying/capture/capture_engine.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"

@@ -1,4 +1,4 @@
-#include "qingying/overlay/mask_renderer.hpp"
+﻿#include "qingying/overlay/mask_renderer.hpp"
 
 #include <algorithm>
 

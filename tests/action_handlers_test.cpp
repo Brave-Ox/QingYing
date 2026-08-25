@@ -1,4 +1,4 @@
-#include "qingying/app/action_handlers.hpp"
+﻿#include "qingying/app/action_handlers.hpp"
 #include "qingying/app/capture_session.hpp"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"

@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 
 #include "qingying/overlay/selection_controller.hpp"
 

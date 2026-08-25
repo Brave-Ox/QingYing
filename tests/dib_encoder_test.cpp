@@ -1,4 +1,4 @@
-// BITMAPINFOHEADER / BI_RGB 用于断言 DIB 字节布局（测试层面引用 Win32 常量，
+﻿// BITMAPINFOHEADER / BI_RGB 用于断言 DIB 字节布局（测试层面引用 Win32 常量，
 // encodeDib 本身是纯函数，不依赖 Win32）。
 #include <Windows.h>
 
