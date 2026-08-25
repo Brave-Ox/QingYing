@@ -115,7 +115,7 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
       createButton(L"复制", kToolbarButtonCopy, true);
       createButton(L"下载图片", kToolbarButtonSave, true);
-      createButton(L"编辑", kToolbarButtonEdit, false);
+      createButton(L"编辑", kToolbarButtonEdit, true);
       createButton(L"钉图", kToolbarButtonPin, false);
       return 0;
     }
@@ -129,6 +129,9 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           break;
         case kToolbarButtonSave:
           chooseToolbarAction(data, SelectionAction::Save);
+          break;
+        case kToolbarButtonEdit:
+          chooseToolbarAction(data, SelectionAction::Edit);
           break;
         default:
           break;
