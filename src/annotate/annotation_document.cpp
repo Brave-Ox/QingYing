@@ -1,5 +1,7 @@
 #include "qingying/annotate/annotation_document.hpp"
 
+#include <cstddef>
+
 namespace qingying {
 
 namespace {
@@ -39,6 +41,30 @@ bool AnnotationDocument::add(const Annotation& annotation)
   }
 
   m_items.push_back(annotation);
+  m_redo_stack.clear();
+  return true;
+}
+
+bool AnnotationDocument::replaceAt(std::size_t index, const Annotation& annotation)
+{
+  if (index >= m_items.size() || !isValid(annotation))
+  {
+    return false;
+  }
+
+  m_items.at(index) = annotation;
+  m_redo_stack.clear();
+  return true;
+}
+
+bool AnnotationDocument::removeAt(std::size_t index)
+{
+  if (index >= m_items.size())
+  {
+    return false;
+  }
+
+  m_items.erase(m_items.begin() + static_cast<std::ptrdiff_t>(index));
   m_redo_stack.clear();
   return true;
 }

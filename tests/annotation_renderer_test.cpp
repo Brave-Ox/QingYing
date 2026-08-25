@@ -41,6 +41,24 @@ Annotation makeRedRectangle()
   return annotation;
 }
 
+// 正圆：左上 (10, 5)，20x20 → 像素边界 [10,29]×[5,24]，中心 (19.5, 14.5)，半径 9.5。
+constexpr float kEllipseX = 10.0f;
+constexpr float kEllipseY = 5.0f;
+constexpr float kEllipseSize = 20.0f;
+
+Annotation makeRedEllipse()
+{
+  Annotation annotation;
+  annotation.type = AnnotationType::Ellipse;
+  annotation.bounds.x = kEllipseX;
+  annotation.bounds.y = kEllipseY;
+  annotation.bounds.width = kEllipseSize;
+  annotation.bounds.height = kEllipseSize;
+  annotation.style.color = ColorBgra{0, 0, 255, 255};
+  annotation.style.stroke_width = kStrokeWidth;
+  return annotation;
+}
+
 // 水平箭头：(5, 15) → (30, 15)，线宽 1 便于逐像素断言。
 constexpr float kArrowStartX = 5.0f;
 constexpr float kArrowEndX = 30.0f;
@@ -215,6 +233,66 @@ TEST(AnnotationRendererTest, RectangleClippedAtCanvasEdge)
   EXPECT_EQ(pixelAt(out, 39, 10), kWhitePx);  // 右边界被裁掉，此处仍是内部
 }
 
+TEST(AnnotationRendererTest, EllipseStrokeIsDrawnOnPerimeter)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedEllipse()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 10, 14), kRedPx);  // 左端
+  EXPECT_EQ(pixelAt(out, 29, 14), kRedPx);  // 右端
+  EXPECT_EQ(pixelAt(out, 19, 5), kRedPx);   // 上端
+  EXPECT_EQ(pixelAt(out, 19, 24), kRedPx);  // 下端
+}
+
+TEST(AnnotationRendererTest, EllipseInteriorIsNotFilled)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedEllipse()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 19, 14), kWhitePx);  // 圆心附近
+  EXPECT_EQ(pixelAt(out, 19, 10), kWhitePx);  // 半径内、描边环之内
+}
+
+TEST(AnnotationRendererTest, PixelsOutsideEllipseAreUnchanged)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(makeRedEllipse()));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 0, 0), kWhitePx);
+  EXPECT_EQ(pixelAt(out, 19, 4), kWhitePx);   // 紧贴上端之外
+  EXPECT_EQ(pixelAt(out, 30, 14), kWhitePx);  // 紧贴右端之外
+}
+
+TEST(AnnotationRendererTest, EllipseClippedAtCanvasEdge)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedEllipse();
+  annotation.bounds.x = 30.0f;  // 右侧超出画布（宽 40）
+  annotation.bounds.y = 5.0f;
+  annotation.bounds.width = 20.0f;
+  annotation.bounds.height = 20.0f;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 30, 14), kRedPx);  // 可见左端
+  EXPECT_EQ(out.pixels.size(), source.pixels.size());
+}
+
 TEST(AnnotationRendererTest, ArrowLineConnectsEndpoints)
 {
   const AnnotationRenderer renderer;
@@ -352,24 +430,76 @@ TEST(AnnotationRendererTest, PreviewAnnotationIsDrawnWithoutEnteringDocument)
   EXPECT_TRUE(empty.empty());  // 预览不得污染文档
 }
 
-TEST(AnnotationRendererTest, DeferredTypesDoNotModifyPixels)
+TEST(AnnotationRendererTest, TextDrawsNonEmptyStringChangingPixels)
 {
-  // Task 7：椭圆 / 文字 / 马赛克本轮不实现栅格化，入档后仍应等于源图像素拷贝。
   const AnnotationRenderer renderer;
   AnnotationDocument document;
-
-  Annotation ellipse;
-  ellipse.type = AnnotationType::Ellipse;
-  ellipse.bounds = RectF{kRectX, kRectY, kRectWidth, kRectHeight};
-  ellipse.style.color = ColorBgra{0, 0, 255, 255};
-  ASSERT_TRUE(document.add(ellipse));
-
   Annotation text;
   text.type = AnnotationType::Text;
-  text.start = PointF{5.0f, 5.0f};
-  text.text = L"hello";
+  text.start = PointF{4.0f, 4.0f};
+  text.text = L"Hi";
+  text.style.color = ColorBgra{0, 0, 255, 255};
+  text.style.font_size = DefaultFontSize;
+  ASSERT_TRUE(document.add(text));
+
+  const Image source = makeCanvas();
+  Image out;
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_NE(out.pixels, source.pixels);
+  EXPECT_EQ(source.pixels.size(), out.pixels.size());
+}
+
+TEST(AnnotationRendererTest, TextLeavesSourceImageUnmodified)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{4.0f, 4.0f};
+  text.text = L"Hi";
   text.style.color = ColorBgra{0, 0, 255, 255};
   ASSERT_TRUE(document.add(text));
+
+  const Image source = makeCanvas();
+  const std::vector<std::uint32_t> before = source.pixels;
+  Image out;
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(source.pixels, before);
+}
+
+TEST(AnnotationRendererTest, TextUsesRequestedFontSizeChangingMorePixels)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument small_doc;
+  AnnotationDocument large_doc;
+
+  Annotation small_text;
+  small_text.type = AnnotationType::Text;
+  small_text.start = PointF{2.0f, 2.0f};
+  small_text.text = L"A";
+  small_text.style.color = ColorBgra{0, 0, 255, 255};
+  small_text.style.font_size = 12;
+  ASSERT_TRUE(small_doc.add(small_text));
+
+  Annotation large_text = small_text;
+  large_text.style.font_size = 32;
+  ASSERT_TRUE(large_doc.add(large_text));
+
+  const Image source = makeCanvas();
+  Image small_out;
+  Image large_out;
+  ASSERT_TRUE(renderer.rasterize(source, small_doc, small_out));
+  ASSERT_TRUE(renderer.rasterize(source, large_doc, large_out));
+  EXPECT_NE(small_out.pixels, source.pixels);
+  EXPECT_NE(large_out.pixels, source.pixels);
+  EXPECT_NE(small_out.pixels, large_out.pixels);
+}
+
+TEST(AnnotationRendererTest, DeferredTypesDoNotModifyPixels)
+{
+  // 马赛克仍留位，入档后栅格化不得改像素。
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
 
   Annotation mosaic;
   mosaic.type = AnnotationType::Mosaic;

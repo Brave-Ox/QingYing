@@ -65,6 +65,9 @@ target_include_directories(qingying_annotate
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_annotate PUBLIC qingying_action)
+if(WIN32)
+  target_link_libraries(qingying_annotate PRIVATE gdi32 user32)
+endif()
 
 add_library(qingying_pin STATIC
   src/pin/pin_manager.cpp

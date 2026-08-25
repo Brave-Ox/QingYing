@@ -31,8 +31,8 @@ AnnotationType toolToType(AnnotationTool tool)
 
 bool isDrawableTool(AnnotationTool tool)
 {
-  return tool == AnnotationTool::Rectangle || tool == AnnotationTool::Arrow ||
-         tool == AnnotationTool::Pen;
+  return tool == AnnotationTool::Rectangle || tool == AnnotationTool::Ellipse ||
+         tool == AnnotationTool::Arrow || tool == AnnotationTool::Pen;
 }
 
 }  // namespace
@@ -95,6 +95,7 @@ void AnnotationInteractionController::rebuildPreview(float x, float y)
   switch (m_tool)
   {
     case AnnotationTool::Rectangle:
+    case AnnotationTool::Ellipse:
     {
       const float left = (std::min)(m_start_x, x);
       const float top = (std::min)(m_start_y, y);

@@ -12,10 +12,10 @@
 |---|---|---|
 | 工程骨架（CMake / MSVC / C++17 / 10 个 static lib / 单 EXE） | ✅ 完成 | Release 单 EXE 可构建 |
 | P0 主路径「截一下」 | 🔶 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG |
-| P1 标注（第二人 Checkpoint B） | ✅ 模块可交付 | 矩形/椭圆/箭头/画笔 + 撤销 + Overlay；文字/马赛克留位 |
+| P1 标注（第二人 Checkpoint B） | ✅ 模块可交付 | 矩形/椭圆/箭头/画笔/文字 + 撤销 + Overlay；马赛克留位 |
 | 单元测试 | ✅ 全绿 | annotate 相关套件已接入；以本地 `qingying_tests` 为准 |
 
-**一句话**：截图主链路已通；标注模块已到 **Checkpoint B**（第三人可只依赖 `annotation_overlay.hpp` 接线）。**椭圆已实现**；文字 / 马赛克仍留位。
+**一句话**：截图主链路已通；标注模块已到 **Checkpoint B**（第三人可只依赖 `annotation_overlay.hpp` 接线）。椭圆 + 文字（就地输入 / 再编辑 / 拖拽改位）已实现；马赛克仍留位。
 
 ---
 
@@ -42,7 +42,8 @@
 | 拖拽交互（工具/预览/入栈） | `annotation_interaction_controller.*` | `annotation_interaction_controller_test` |
 | 编辑器窗口（完成/取消） | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟 |
 | 椭圆描边 | `annotation_renderer` + Overlay「椭圆」 | 轮廓像素 / 不填充 / 交互归一化 |
-| 文字/马赛克留位守卫 | 类型枚举 + 空渲染 | 延迟工具不可起笔；延迟类型不改像素 |
+| 文字标注 | `annotation_renderer` + Overlay「文字」 | 就地 EDIT；字号；单击选中+Delete；双击改字；拖拽改位 |
+| 马赛克留位守卫 | 类型枚举 + 空渲染 | 延迟工具不可起笔；延迟类型不改像素 |
 
 **第三人接线**：`#include "qingying/annotate/annotation_overlay.hpp"` → `show(owner, image, callback)`。
 
@@ -64,7 +65,8 @@
 
 - [x] **P1 标注初版（第二人）**：矩形 + 椭圆 + 箭头 + 画笔 + 撤销 + Overlay —— Checkpoint B
 - [x] **P1**：Edit → AnnotationOverlay → 回写 Session → 复制（最小接线）
-- [ ] **P1 标注后续**：文字 / 马赛克；颜色/线宽面板；二次编辑；重做 UI
+- [x] **P1 标注文字**：图上就地输入 + 字号下拉；单击选中 / 双击编辑 / Delete 删除；拖拽改位
+- [ ] **P1 标注后续**：马赛克；颜色/线宽面板；重做 UI
 - [ ] **P1**：钉图接线；标注完成后回到完整操作条（Copy/Save/Pin）
 - [ ] **P1**：八点调区 / DPI / 多屏冒烟
 - [ ] **P2**：钉图；长截图
@@ -81,8 +83,8 @@
 
 ## 5. 下一步建议
 
-1. **钉图接线** / 标注完成后完整操作条
-2. **第二人可选后续**：文字 / 马赛克 / 样式面板
+1. **马赛克**（第二人）或 **钉图接线**
+2. **颜色/线宽面板** / 重做 UI
 3. **DPI / 多屏冒烟**
 
 ---

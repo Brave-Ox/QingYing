@@ -74,16 +74,18 @@ TEST(AnnotationOverlayTest, HideOnIdleOverlayIsSafe)
 
 TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
 {
-  // 冒烟图画布仅 320 宽；六个按钮若不扩宽窗口会把「完成/取消」裁出客户区。
+  // 冒烟图画布仅 320 宽；工具栏含字号下拉，必须扩宽以免裁掉「完成/取消」。
   const int client_width = annotationEditorClientWidth(kCanvasWidth);
   EXPECT_GE(client_width, annotationEditorToolbarWidth());
   EXPECT_GE(client_width, kCanvasWidth);
 
-  const int last_button_right =
+  const int last_control_right =
       AnnotationEditorBarPadding +
-      AnnotationEditorButtonCount * AnnotationEditorButtonWidth +
-      (AnnotationEditorButtonCount - 1) * AnnotationEditorButtonGap;
-  EXPECT_LE(last_button_right, client_width);
+      AnnotationEditorToolButtonCount * AnnotationEditorButtonWidth +
+      AnnotationEditorFontComboWidth +
+      AnnotationEditorActionButtonCount * AnnotationEditorButtonWidth +
+      (AnnotationEditorToolbarControlCount - 1) * AnnotationEditorButtonGap;
+  EXPECT_LE(last_control_right, client_width);
 }
 
 // 手工冒烟：会真实弹出编辑器窗口，需要人工操作，因此默认跳过。
@@ -93,9 +95,11 @@ TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
 //
 // 预期：
 // 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
-// 2. 底部有 矩形/箭头/画笔/撤销 + 完成/取消
+// 2. 底部有 矩形/椭圆/箭头/画笔/文字/字号/撤销 + 完成/取消
 // 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
-// 4. 切换箭头、画笔同样可画；点完成得到合成图；Esc/取消不改结果语义
+// 4. 文字：空白单击新建；已有文字单击选中（虚线框）后 Delete 删除；
+//    双击进入就地编辑；拖过阈值可改位置
+// 5. 切换箭头、画笔同样可画；点完成得到合成图；Esc/取消不改结果语义
 TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
 {
   AnnotationOverlay overlay;

@@ -10,22 +10,22 @@ namespace qingying {
 enum class AnnotationType
 {
   Rectangle,
-  Ellipse,   // Task 7：本轮仅留位，UI/栅格化未接
+  Ellipse,
   Arrow,
   Pen,
-  Text,      // Task 7：本轮仅留位
-  Mosaic,    // Task 7：本轮仅留位
+  Text,
+  Mosaic,  // 本轮仅留位
 };
 
 enum class AnnotationTool
 {
   None,
   Rectangle,
-  Ellipse,  // Task 7：本轮仅留位，交互层拒绝起笔
+  Ellipse,
   Arrow,
   Pen,
-  Text,     // Task 7：本轮仅留位
-  Mosaic,   // Task 7：本轮仅留位
+  Text,
+  Mosaic,  // 本轮仅留位，交互层拒绝起笔
 };
 
 inline constexpr float DefaultStrokeWidth = 3.0f;
@@ -33,6 +33,8 @@ inline constexpr float MinStrokeWidth = 1.0f;
 inline constexpr float MaxStrokeWidth = 16.0f;
 inline constexpr float DefaultOpacity = 1.0f;
 inline constexpr int DefaultFontSize = 16;
+inline constexpr int MinFontSize = 8;
+inline constexpr int MaxFontSize = 72;
 inline constexpr int DefaultMosaicBlockSize = 12;
 inline constexpr int MinAnnotationSizePx = 2;
 inline constexpr std::size_t MinPenPointCount = 2;

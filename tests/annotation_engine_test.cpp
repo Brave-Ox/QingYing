@@ -181,4 +181,35 @@ TEST(AnnotationEngineTest, UndoneAnnotationIsNotRendered)
   EXPECT_EQ(pixelAt(out, 10, 8), kWhitePx);
 }
 
+TEST(AnnotationEngineTest, ReplaceAtDelegatesToDocument)
+{
+  AnnotationEngine engine;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{3.0f, 4.0f};
+  text.text = L"a";
+  ASSERT_TRUE(engine.add(text));
+
+  Annotation moved = text;
+  moved.start = PointF{10.0f, 12.0f};
+  moved.text = L"b";
+  ASSERT_TRUE(engine.replaceAt(0, moved));
+  ASSERT_EQ(engine.document().count(), 1u);
+  EXPECT_EQ(engine.document().items().at(0).text, L"b");
+  EXPECT_FLOAT_EQ(engine.document().items().at(0).start.x, 10.0f);
+}
+
+TEST(AnnotationEngineTest, RemoveAtDelegatesToDocument)
+{
+  AnnotationEngine engine;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{3.0f, 4.0f};
+  text.text = L"a";
+  ASSERT_TRUE(engine.add(text));
+  ASSERT_TRUE(engine.removeAt(0));
+  EXPECT_TRUE(engine.document().empty());
+  EXPECT_FALSE(engine.removeAt(0));
+}
+
 }  // namespace qingying

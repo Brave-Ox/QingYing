@@ -80,6 +80,42 @@ TEST(AnnotationInteractionControllerTest, RectangleStrokeAddsNormalizedBoundsOnE
   EXPECT_FLOAT_EQ(engine.document().items().at(0).bounds.y, 20.0f);
 }
 
+TEST(AnnotationInteractionControllerTest, EllipseStrokeAddsNormalizedBoundsOnEnd)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setTool(AnnotationTool::Ellipse);
+  AnnotationEngine engine;
+
+  ASSERT_TRUE(controller.beginStroke(40.0f, 50.0f));
+  controller.updateStroke(10.0f, 20.0f);
+  EXPECT_TRUE(controller.hasPreview());
+  EXPECT_EQ(controller.preview().type, AnnotationType::Ellipse);
+  EXPECT_FLOAT_EQ(controller.preview().bounds.x, 10.0f);
+  EXPECT_FLOAT_EQ(controller.preview().bounds.y, 20.0f);
+  EXPECT_FLOAT_EQ(controller.preview().bounds.width, 30.0f);
+  EXPECT_FLOAT_EQ(controller.preview().bounds.height, 30.0f);
+
+  ASSERT_TRUE(controller.endStroke(engine));
+  ASSERT_EQ(engine.document().count(), 1u);
+  EXPECT_EQ(engine.document().items().at(0).type, AnnotationType::Ellipse);
+  EXPECT_FLOAT_EQ(engine.document().items().at(0).bounds.width, 30.0f);
+}
+
+TEST(AnnotationInteractionControllerTest, TinyEllipseIsRejectedOnEnd)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setTool(AnnotationTool::Ellipse);
+  AnnotationEngine engine;
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(10.5f, 10.5f);
+
+  EXPECT_FALSE(controller.endStroke(engine));
+  EXPECT_TRUE(engine.document().empty());
+}
+
 TEST(AnnotationInteractionControllerTest, TinyRectangleIsRejectedOnEnd)
 {
   AnnotationInteractionController controller;
@@ -204,10 +240,7 @@ TEST(AnnotationInteractionControllerTest, DeferredToolsCannotBeginStroke)
   AnnotationInteractionController controller;
   prepare(controller);
 
-  // Task 7：椭圆 / 文字 / 马赛克本轮仅留位，交互层不得起笔。
-  controller.setTool(AnnotationTool::Ellipse);
-  EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
-
+  // 文字走 Overlay 单击输入，不走拖拽起笔；马赛克仍留位。
   controller.setTool(AnnotationTool::Text);
   EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
 

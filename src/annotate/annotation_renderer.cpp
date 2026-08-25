@@ -1,9 +1,15 @@
 #include "qingying/annotate/annotation_renderer.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace qingying {
 
@@ -84,6 +90,89 @@ void drawRectangle(Image& target, const Annotation& annotation)
     for (int x = clipped_left; x <= clipped_right; ++x)
     {
       if (isOnStroke(x, y, left, top, right, bottom, thickness))
+      {
+        setPixel(target, x, y, color);
+      }
+    }
+  }
+}
+
+double ellipseNormSq(double x, double y, double cx, double cy, double rx,
+                     double ry)
+{
+  if (rx <= 0.0 || ry <= 0.0)
+  {
+    return 0.0;
+  }
+
+  const double nx = (x - cx) / rx;
+  const double ny = (y - cy) / ry;
+  return nx * nx + ny * ny;
+}
+
+// 描边椭圆：外椭圆为 bounds 内接椭圆；内椭圆沿半轴内缩 thickness。
+// 外边界额外扩 0.5px，避免半像素圆心时整数端点落在 outer>1 之外。
+bool isOnEllipseStroke(int x, int y, double cx, double cy, double rx,
+                       double ry, int thickness)
+{
+  constexpr double HalfPixel = 0.5;
+  const double outer_rx = rx + HalfPixel;
+  const double outer_ry = ry + HalfPixel;
+  const double outer =
+      ellipseNormSq(static_cast<double>(x), static_cast<double>(y), cx, cy,
+                    outer_rx, outer_ry);
+  if (outer > 1.0)
+  {
+    return false;
+  }
+
+  const double inner_rx =
+      rx - static_cast<double>(thickness) - HalfPixel;
+  const double inner_ry =
+      ry - static_cast<double>(thickness) - HalfPixel;
+  if (inner_rx <= 0.0 || inner_ry <= 0.0)
+  {
+    return true;
+  }
+
+  return ellipseNormSq(static_cast<double>(x), static_cast<double>(y), cx, cy,
+                       inner_rx, inner_ry) > 1.0;
+}
+
+void drawEllipse(Image& target, const Annotation& annotation)
+{
+  const int left = toPixel(annotation.bounds.x);
+  const int top = toPixel(annotation.bounds.y);
+  const int width = toPixel(annotation.bounds.width);
+  const int height = toPixel(annotation.bounds.height);
+  if (width < MinAnnotationSizePx || height < MinAnnotationSizePx)
+  {
+    return;
+  }
+
+  const int right = left + width - 1;
+  const int bottom = top + height - 1;
+  const double cx = (static_cast<double>(left) + static_cast<double>(right)) / 2.0;
+  const double cy =
+      (static_cast<double>(top) + static_cast<double>(bottom)) / 2.0;
+  const double rx =
+      (static_cast<double>(right) - static_cast<double>(left)) / 2.0;
+  const double ry =
+      (static_cast<double>(bottom) - static_cast<double>(top)) / 2.0;
+
+  const int thickness = strokeThickness(annotation.style.stroke_width);
+  const std::uint32_t color = packBgra(annotation.style.color);
+
+  const int clipped_left = std::max(0, left);
+  const int clipped_top = std::max(0, top);
+  const int clipped_right = std::min(target.width - 1, right);
+  const int clipped_bottom = std::min(target.height - 1, bottom);
+
+  for (int y = clipped_top; y <= clipped_bottom; ++y)
+  {
+    for (int x = clipped_left; x <= clipped_right; ++x)
+    {
+      if (isOnEllipseStroke(x, y, cx, cy, rx, ry, thickness))
       {
         setPixel(target, x, y, color);
       }
@@ -189,6 +278,113 @@ void drawPen(Image& target, const Annotation& annotation)
   }
 }
 
+class GdiDcGuard
+{
+ public:
+  explicit GdiDcGuard(HDC dc) : m_dc(dc) {}
+  ~GdiDcGuard()
+  {
+    if (m_dc != nullptr)
+    {
+      DeleteDC(m_dc);
+    }
+  }
+  GdiDcGuard(const GdiDcGuard&) = delete;
+  GdiDcGuard& operator=(const GdiDcGuard&) = delete;
+  HDC get() const { return m_dc; }
+
+ private:
+  HDC m_dc{nullptr};
+};
+
+class GdiObjectGuard
+{
+ public:
+  explicit GdiObjectGuard(HGDIOBJ obj) : m_obj(obj) {}
+  ~GdiObjectGuard()
+  {
+    if (m_obj != nullptr)
+    {
+      DeleteObject(m_obj);
+    }
+  }
+  GdiObjectGuard(const GdiObjectGuard&) = delete;
+  GdiObjectGuard& operator=(const GdiObjectGuard&) = delete;
+  HGDIOBJ get() const { return m_obj; }
+
+ private:
+  HGDIOBJ m_obj{nullptr};
+};
+
+int clampFontSize(int font_size)
+{
+  return (std::min)((std::max)(font_size, MinFontSize), MaxFontSize);
+}
+
+// 经顶置 DIB + GDI 文本输出，把字形像素写回 Image（BGRA32）。
+void drawText(Image& target, const Annotation& annotation)
+{
+  if (annotation.text.empty() || target.empty())
+  {
+    return;
+  }
+
+  BITMAPINFO bmi{};
+  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth = target.width;
+  bmi.bmiHeader.biHeight = -target.height;  // 顶置，与 Image 行优先一致
+  bmi.bmiHeader.biPlanes = 1;
+  bmi.bmiHeader.biBitCount = 32;
+  bmi.bmiHeader.biCompression = BI_RGB;
+
+  void* bits = nullptr;
+  const GdiObjectGuard dib(CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS,
+                                            &bits, nullptr, 0));
+  if (dib.get() == nullptr || bits == nullptr)
+  {
+    return;
+  }
+
+  const std::size_t byte_count =
+      static_cast<std::size_t>(target.width) *
+      static_cast<std::size_t>(target.height) * sizeof(std::uint32_t);
+  std::memcpy(bits, target.pixels.data(), byte_count);
+
+  const GdiDcGuard mem_dc(CreateCompatibleDC(nullptr));
+  if (mem_dc.get() == nullptr)
+  {
+    return;
+  }
+
+  const HGDIOBJ old_bitmap = SelectObject(mem_dc.get(), dib.get());
+  const int font_px = clampFontSize(annotation.style.font_size);
+  const GdiObjectGuard font(CreateFontW(
+      -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI"));
+  const HGDIOBJ old_font =
+      font.get() != nullptr ? SelectObject(mem_dc.get(), font.get()) : nullptr;
+
+  const ColorBgra& c = annotation.style.color;
+  SetTextColor(mem_dc.get(), RGB(c.r, c.g, c.b));
+  SetBkMode(mem_dc.get(), TRANSPARENT);
+
+  const int x = toPixel(annotation.start.x);
+  const int y = toPixel(annotation.start.y);
+  RECT rect{x, y, target.width, target.height};
+  DrawTextW(mem_dc.get(), annotation.text.c_str(),
+            static_cast<int>(annotation.text.size()), &rect,
+            DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE);
+
+  if (old_font != nullptr)
+  {
+    SelectObject(mem_dc.get(), old_font);
+  }
+  SelectObject(mem_dc.get(), old_bitmap);
+
+  std::memcpy(target.pixels.data(), bits, byte_count);
+}
+
 void drawAnnotation(Image& target, const Annotation& annotation)
 {
   switch (annotation.type)
@@ -196,14 +392,20 @@ void drawAnnotation(Image& target, const Annotation& annotation)
     case AnnotationType::Rectangle:
       drawRectangle(target, annotation);
       break;
+    case AnnotationType::Ellipse:
+      drawEllipse(target, annotation);
+      break;
     case AnnotationType::Arrow:
       drawArrow(target, annotation);
       break;
     case AnnotationType::Pen:
       drawPen(target, annotation);
       break;
+    case AnnotationType::Text:
+      drawText(target, annotation);
+      break;
     default:
-      // Task 7：Ellipse / Text / Mosaic 本轮空实现，不改像素。
+      // Mosaic 仍留位，不改像素。
       break;
   }
 }

@@ -7,6 +7,16 @@ bool AnnotationEngine::add(const Annotation& annotation)
   return m_document.add(annotation);
 }
 
+bool AnnotationEngine::replaceAt(std::size_t index, const Annotation& annotation)
+{
+  return m_document.replaceAt(index, annotation);
+}
+
+bool AnnotationEngine::removeAt(std::size_t index)
+{
+  return m_document.removeAt(index);
+}
+
 bool AnnotationEngine::undo()
 {
   return m_document.undo();

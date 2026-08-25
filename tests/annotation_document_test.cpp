@@ -162,6 +162,116 @@ TEST(AnnotationDocumentTest, RejectEmptyText)
   EXPECT_EQ(document.count(), 0u);
 }
 
+TEST(AnnotationDocumentTest, ReplaceAtUpdatesExistingText)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{5.0f, 6.0f};
+  text.text = L"old";
+  ASSERT_TRUE(document.add(text));
+
+  Annotation updated = text;
+  updated.start = PointF{15.0f, 16.0f};
+  updated.text = L"new";
+  ASSERT_TRUE(document.replaceAt(0, updated));
+  ASSERT_EQ(document.count(), 1u);
+  EXPECT_EQ(document.items().at(0).text, L"new");
+  EXPECT_FLOAT_EQ(document.items().at(0).start.x, 15.0f);
+  EXPECT_FLOAT_EQ(document.items().at(0).start.y, 16.0f);
+}
+
+TEST(AnnotationDocumentTest, ReplaceAtRejectsInvalidIndexOrEmptyText)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{5.0f, 6.0f};
+  text.text = L"keep";
+  ASSERT_TRUE(document.add(text));
+
+  Annotation empty = text;
+  empty.text.clear();
+  EXPECT_FALSE(document.replaceAt(0, empty));
+  EXPECT_FALSE(document.replaceAt(1, text));
+  EXPECT_EQ(document.items().at(0).text, L"keep");
+}
+
+TEST(AnnotationDocumentTest, ReplaceAtClearsRedoStack)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{1.0f, 1.0f};
+  text.text = L"x";
+  ASSERT_TRUE(document.add(text));
+  ASSERT_TRUE(document.add(makeRectangle()));
+  ASSERT_TRUE(document.undo());
+  EXPECT_TRUE(document.canRedo());
+
+  Annotation moved = text;
+  moved.start = PointF{8.0f, 9.0f};
+  ASSERT_TRUE(document.replaceAt(0, moved));
+  EXPECT_FALSE(document.canRedo());
+  EXPECT_FLOAT_EQ(document.items().at(0).start.x, 8.0f);
+}
+
+TEST(AnnotationDocumentTest, RemoveAtDeletesMiddleItemAndCompacts)
+{
+  AnnotationDocument document;
+  Annotation first;
+  first.type = AnnotationType::Text;
+  first.start = PointF{1.0f, 1.0f};
+  first.text = L"a";
+  Annotation second;
+  second.type = AnnotationType::Text;
+  second.start = PointF{2.0f, 2.0f};
+  second.text = L"b";
+  Annotation third;
+  third.type = AnnotationType::Text;
+  third.start = PointF{3.0f, 3.0f};
+  third.text = L"c";
+  ASSERT_TRUE(document.add(first));
+  ASSERT_TRUE(document.add(second));
+  ASSERT_TRUE(document.add(third));
+
+  ASSERT_TRUE(document.removeAt(1));
+  ASSERT_EQ(document.count(), 2u);
+  EXPECT_EQ(document.items().at(0).text, L"a");
+  EXPECT_EQ(document.items().at(1).text, L"c");
+}
+
+TEST(AnnotationDocumentTest, RemoveAtRejectsOutOfRange)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{1.0f, 1.0f};
+  text.text = L"keep";
+  ASSERT_TRUE(document.add(text));
+
+  EXPECT_FALSE(document.removeAt(1));
+  EXPECT_EQ(document.count(), 1u);
+  EXPECT_EQ(document.items().at(0).text, L"keep");
+}
+
+TEST(AnnotationDocumentTest, RemoveAtClearsRedoStack)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{1.0f, 1.0f};
+  text.text = L"x";
+  ASSERT_TRUE(document.add(text));
+  ASSERT_TRUE(document.add(makeRectangle()));
+  ASSERT_TRUE(document.undo());
+  EXPECT_TRUE(document.canRedo());
+
+  ASSERT_TRUE(document.removeAt(0));
+  EXPECT_FALSE(document.canRedo());
+  EXPECT_TRUE(document.empty());
+}
+
 TEST(AnnotationDocumentTest, RejectedAddDoesNotClearRedoStack)
 {
   AnnotationDocument document;

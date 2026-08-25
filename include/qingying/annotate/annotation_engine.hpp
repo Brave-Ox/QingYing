@@ -14,6 +14,8 @@ class AnnotationEngine
  public:
   // 几何非法的对象会被拒绝并返回 false，且不影响撤销栈。
   bool add(const Annotation& annotation);
+  bool replaceAt(std::size_t index, const Annotation& annotation);
+  bool removeAt(std::size_t index);
   bool undo();
   bool redo();
   void clear();
