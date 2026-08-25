@@ -203,7 +203,7 @@ void drawAnnotation(Image& target, const Annotation& annotation)
       drawPen(target, annotation);
       break;
     default:
-      // 椭圆、文字、马赛克在后续任务实现。
+      // Task 7：Ellipse / Text / Mosaic 本轮空实现，不改像素。
       break;
   }
 }

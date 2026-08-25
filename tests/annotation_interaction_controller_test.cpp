@@ -199,4 +199,22 @@ TEST(AnnotationInteractionControllerTest, UndoWhileDrawingCancelsPreviewFirst)
   EXPECT_TRUE(engine.document().empty());
 }
 
+TEST(AnnotationInteractionControllerTest, DeferredToolsCannotBeginStroke)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  // Task 7：椭圆 / 文字 / 马赛克本轮仅留位，交互层不得起笔。
+  controller.setTool(AnnotationTool::Ellipse);
+  EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
+
+  controller.setTool(AnnotationTool::Text);
+  EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
+
+  controller.setTool(AnnotationTool::Mosaic);
+  EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
+
+  EXPECT_FALSE(controller.isDrawing());
+}
+
 }  // namespace qingying

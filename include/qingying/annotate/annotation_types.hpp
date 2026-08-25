@@ -10,22 +10,22 @@ namespace qingying {
 enum class AnnotationType
 {
   Rectangle,
-  Ellipse,
+  Ellipse,   // Task 7：本轮仅留位，UI/栅格化未接
   Arrow,
   Pen,
-  Text,
-  Mosaic,
+  Text,      // Task 7：本轮仅留位
+  Mosaic,    // Task 7：本轮仅留位
 };
 
 enum class AnnotationTool
 {
   None,
   Rectangle,
-  Ellipse,
+  Ellipse,  // Task 7：本轮仅留位，交互层拒绝起笔
   Arrow,
   Pen,
-  Text,
-  Mosaic,
+  Text,     // Task 7：本轮仅留位
+  Mosaic,   // Task 7：本轮仅留位
 };
 
 inline constexpr float DefaultStrokeWidth = 3.0f;

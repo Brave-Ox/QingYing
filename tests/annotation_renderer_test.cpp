@@ -352,4 +352,34 @@ TEST(AnnotationRendererTest, PreviewAnnotationIsDrawnWithoutEnteringDocument)
   EXPECT_TRUE(empty.empty());  // 预览不得污染文档
 }
 
+TEST(AnnotationRendererTest, DeferredTypesDoNotModifyPixels)
+{
+  // Task 7：椭圆 / 文字 / 马赛克本轮不实现栅格化，入档后仍应等于源图像素拷贝。
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+
+  Annotation ellipse;
+  ellipse.type = AnnotationType::Ellipse;
+  ellipse.bounds = RectF{kRectX, kRectY, kRectWidth, kRectHeight};
+  ellipse.style.color = ColorBgra{0, 0, 255, 255};
+  ASSERT_TRUE(document.add(ellipse));
+
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{5.0f, 5.0f};
+  text.text = L"hello";
+  text.style.color = ColorBgra{0, 0, 255, 255};
+  ASSERT_TRUE(document.add(text));
+
+  Annotation mosaic;
+  mosaic.type = AnnotationType::Mosaic;
+  mosaic.bounds = RectF{kRectX, kRectY, kRectWidth, kRectHeight};
+  ASSERT_TRUE(document.add(mosaic));
+
+  const Image source = makeCanvas();
+  Image out;
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(out.pixels, source.pixels);
+}
+
 }  // namespace qingying
