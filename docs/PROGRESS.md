@@ -14,7 +14,7 @@
 | P0 主路径「截一下」 | ✅ 基本闭环 | 热键 → 框选 → 截图 → 复制 / 保存 PNG / 钉图 |
 | F1 自定义截图区域 | ✅ 核心完成 | 八点调整、移动选区、虚拟桌面和物理像素坐标已接入 |
 | F4 导出 | ✅ 完成 | 剪贴板复制和 PNG 保存 |
-| F5 钉图 | 🔶 初版完成 | 置顶、多 Pin、拖动、关闭、数量统计已接入 |
+| F5 钉图 | 🔶 基本完成，待手工验收 | 置顶、多 Pin、拖动、关闭、等比例缩放、截图排除 Pin、Pin 独立复制 / 保存已接入 |
 | F7 托盘与热键 | ✅ 基本完成 | 单实例、托盘、全局热键和冲突提示 |
 | 单元测试 | ✅ 62/62 绿 | 12 个测试套件，gtest |
 
@@ -40,14 +40,17 @@
 | 截图 → PNG 保存 | `src/export/export_service.cpp` | WIC PNG 输出测试通过 |
 | 选区操作条 | `src/overlay/selection_overlay.cpp` / `src/app/application.cpp` | 框选后显示复制、下载、编辑、钉图入口 |
 
-### 2.2 Pin 初版与 Application 接入
+### 2.2 Pin 与 Application 接入
 
-- `PinWindow`：独立置顶窗口、按比例显示、拖动、单窗口关闭；
+- `PinWindow`：无原生标题栏、红色高亮边框、按比例显示、拖动、边缘 / 四角缩放和单窗口关闭；
+- `PinWindow`：右键菜单支持复制、保存图片和关闭，复制 / 保存使用当前 Pin 自身的 `Image`；
 - `PinManager`：多 Pin、全部关闭、数量统计、窗口生命周期清理；
+- 截图保护作用域：截图前临时隐藏可见 Pin，等待桌面合成后执行截图，完成或失败后恢复 Pin 并保持置顶；
 - `ActionType::Pin` 已注册到 `ActionDispatcher`；
 - Application 从 `CaptureSession` 取得当前图片并分发 Pin；
 - 操作条“钉图”按钮已启用；
-- Pin 单元测试和 Handler 集成测试已通过。
+- Application 通过 `ExportService` 为 Pin 提供复制 / 保存回调，避免多个 Pin 之间串图；
+- Pin 单元测试和 Handler 集成测试已通过，完整 Release 测试 62/62 通过。
 
 ### 2.3 工程与基础
 
@@ -67,8 +70,7 @@
 - [ ] **F2**：窗口检测、悬停高亮和窗口吸附；
 - [ ] **F3**：矩形、椭圆、箭头、画笔、文字、马赛克和撤销 / 重做；
 - [x] **F4**：剪贴板复制和 PNG 保存；
-- [~] **F5 初版**：置顶、多 Pin、拖动、关闭、数量统计和操作条接线已完成；
-- [ ] **F5 完整验收**：截图时排除自身 Pin 窗口、Pin 窗口复用 Copy / Save；
+- [~] **F5**：置顶、多 Pin、拖动、关闭、等比例缩放、截图排除自身 Pin、Pin 独立复制 / 保存和操作条接线已完成；待手工验证多 Pin 操作及隐藏 / 恢复时的视觉体验；
 - [ ] **F6**：记事本、资源管理器、Edge 长截图；
 - [x] **F7 基础能力**：托盘、全局热键、单实例、冲突提示；
 - [ ] **F8**：本地口令表和自然语言截图入口；
@@ -79,7 +81,7 @@
 - [ ] 将 `capture_engine.cpp` 的裸 `new/delete` 改为 `std::unique_ptr`，完成 PIMPL 规范整改；
 - [ ] 在双屏、125% / 150% / 200% 和混合 DPI 环境下完成手动冒烟验收；
 - [ ] 当前全虚拟桌面 Overlay 的 UI 尺寸仍基于系统 DPI，后续视混合 DPI 验收结果决定是否改为按显示器管理 Overlay；
-- [ ] Pin 初版暂不包含截图时排除自身、多 Pin 自动排布、标注同步、自动保存和长截图；
+- [ ] Pin 后续增强：多 Pin 自动排布、标注同步、自动保存和长截图；
 - [ ] 标注完成后仍需把最终 `Image` 写回 `CaptureSession`，再统一回到 Copy / Save / Pin。
 
 ---
@@ -88,10 +90,10 @@
 
 - **单元测试**：62/62 通过；
 - **测试套件**：`action_dispatcher` / `action_handlers` / `capture_engine` / `capture_session` / `dib_encoder` / `export_service` / `mask_renderer` / `selection_controller` / `selection_handles` / `coordinate_transform` / `f1_selection_integration` / `pin_manager`；
-- **集成验证**：F1 选区 → 物理像素坐标 → `CaptureEngine` 区域截图已覆盖；`CaptureSession` → Pin Handler → PinManager 已覆盖；
+- **集成验证**：F1 选区 → 物理像素坐标 → `CaptureEngine` 区域截图已覆盖；`CaptureSession` → Pin Handler → PinManager → PinWindow 已覆盖；截图保护作用域和 Pin 独立复制 / 保存代码路径已接入；
 - **构建**：`build.bat Release` 和 `build.bat Release test` 已验证；
 - **资源管理**：GDI、窗口和系统资源使用 RAII 或明确生命周期清理；
-- **待补验证**：不同显示器 DPI 下的真实人工操作验收，以及 F2/F3/F6/F8/F9 功能验收。
+- **待补验证**：F5 多 Pin 手工操作、截图时 Pin 隐藏 / 恢复的视觉体验、不同显示器 DPI 下的真实人工操作，以及 F2/F3/F6/F8/F9 功能验收。
 
 ---
 
@@ -99,7 +101,7 @@
 
 1. 优先实现 F3 标注，打通「截图 → 标注 → 复制 / 保存 / 钉图」主演示路径；
 2. 实现 F2 窗口检测和吸附；
-3. 补齐 F5 截图排除自身和 Pin 窗口 Copy / Save；
+3. 完成 F5 多 Pin 和截图隐藏 / 恢复的手工验收，必要时优化视觉闪烁；
 4. 完成双屏、混合 DPI 的人工冒烟测试，并根据结果完善 Per-Monitor UI 尺寸；
 5. 再进入 F6 长截图和 F8/F9 Agent 能力。
 
