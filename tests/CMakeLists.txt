@@ -3,6 +3,7 @@
 add_executable(qingying_tests
   action_dispatcher_test.cpp
   action_handlers_test.cpp
+  annotation_document_test.cpp
   capture_engine_test.cpp
   capture_session_test.cpp
   dib_encoder_test.cpp
@@ -19,6 +20,7 @@ target_include_directories(qingying_tests
 target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
+    qingying_annotate
     qingying_capture
     qingying_export
     qingying_overlay

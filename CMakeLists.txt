@@ -55,6 +55,7 @@ target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
 
 add_library(qingying_annotate STATIC
   src/annotate/annotation_engine.cpp
+  src/annotate/annotation_document.cpp
 )
 target_include_directories(qingying_annotate
   PUBLIC ${CMAKE_SOURCE_DIR}/include
