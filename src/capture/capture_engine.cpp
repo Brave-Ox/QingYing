@@ -93,24 +93,23 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
     return r;
   }
 
-  const int screen_w = GetSystemMetrics(SM_CXSCREEN);
-  const int screen_h = GetSystemMetrics(SM_CYSCREEN);
+  // 与虚拟桌面（所有显示器并集）求交：负坐标/越界都收敛到桌面内，
+  // 得到实际可拷贝的源区域。GetDC(nullptr) 的 DC 坐标即虚拟桌面坐标。
+  const std::int64_t virt_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  const std::int64_t virt_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  const std::int64_t virt_right =
+      virt_left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  const std::int64_t virt_bottom =
+      virt_top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-  // 与屏幕可见区求交：负坐标/越界都收敛到屏幕内，得到实际可拷贝的源区域。
   const std::int64_t x1 = static_cast<std::int64_t>(x);
   const std::int64_t y1 = static_cast<std::int64_t>(y);
   const std::int64_t x2 = x1 + static_cast<std::int64_t>(width);
   const std::int64_t y2 = y1 + static_cast<std::int64_t>(height);
-  const std::int64_t e_x1 = (x1 > 0) ? x1 : 0;
-  const std::int64_t e_y1 = (y1 > 0) ? y1 : 0;
-  const std::int64_t e_x2 =
-      (x2 < static_cast<std::int64_t>(screen_w))
-          ? x2
-          : static_cast<std::int64_t>(screen_w);
-  const std::int64_t e_y2 =
-      (y2 < static_cast<std::int64_t>(screen_h))
-          ? y2
-          : static_cast<std::int64_t>(screen_h);
+  const std::int64_t e_x1 = (x1 > virt_left) ? x1 : virt_left;
+  const std::int64_t e_y1 = (y1 > virt_top) ? y1 : virt_top;
+  const std::int64_t e_x2 = (x2 < virt_right) ? x2 : virt_right;
+  const std::int64_t e_y2 = (y2 < virt_bottom) ? y2 : virt_bottom;
   const std::int64_t e_w = e_x2 - e_x1;
   const std::int64_t e_h = e_y2 - e_y1;
 

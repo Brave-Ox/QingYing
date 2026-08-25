@@ -47,6 +47,8 @@ add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
   src/overlay/selection_controller.cpp
   src/overlay/selection_overlay.cpp
+  src/overlay/selection_handles.cpp
+  src/overlay/coordinate_transform.cpp
 )
 target_include_directories(qingying_overlay
   PUBLIC ${CMAKE_SOURCE_DIR}/include

@@ -9,6 +9,9 @@ add_executable(qingying_tests
   export_service_test.cpp
   mask_renderer_test.cpp
   selection_controller_test.cpp
+  selection_handles_test.cpp
+  coordinate_transform_test.cpp
+  f1_selection_integration_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 

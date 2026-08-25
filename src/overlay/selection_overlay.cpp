@@ -8,8 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/overlay/mask_renderer.hpp"
 #include "qingying/overlay/selection_controller.hpp"
+#include "qingying/overlay/selection_handles.hpp"
 
 namespace qingying {
 
@@ -25,6 +27,10 @@ constexpr int kToolbarButtonWidth = 82;
 constexpr int kToolbarButtonHeight = 30;
 constexpr int kToolbarButtonGap = 4;
 constexpr int kToolbarPadding = 4;
+constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
+
+// 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
+enum class DragKind { None, Create, Resize, Move };
 
 // SelectionController 等 UI 状态通过窗口属性（WindowLongPtr）附加到窗口，
 // 供 WndProc 在处理消息时访问，避免全局/静态可变量。
@@ -35,6 +41,8 @@ struct OverlayWindowData {
   HWND toolbar{nullptr};
   SelectionAction action{SelectionAction::None};
   bool selection_confirmed{false};
+  DragKind drag{DragKind::None};
+  coord::VirtualScreenRect screen;
 };
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -51,6 +59,15 @@ struct DibDeleter {
   void operator()(HBITMAP bitmap) const noexcept {
     if (bitmap != nullptr) {
       DeleteObject(bitmap);
+    }
+  }
+};
+
+// GetDC 的 HDC RAII：ReleaseDC。
+struct ScreenHdcDeleter {
+  void operator()(HDC hdc) const noexcept {
+    if (hdc != nullptr) {
+      ReleaseDC(nullptr, hdc);
     }
   }
 };
@@ -73,6 +90,15 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
   }
   data->action = action;
   PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+}
+
+// 选区从覆盖层客户区坐标 → 屏幕坐标（供工具栏定位与最终出参使用）。
+SelectionResult toScreenSelection(const SelectionResult& client,
+                                  const coord::VirtualScreenRect& screen) {
+  SelectionResult out = client;
+  out.x += screen.left;
+  out.y += screen.top;
+  return out;
 }
 
 LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -154,8 +180,8 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 }
 
 bool showToolbar(HWND overlay, OverlayWindowData* data,
-                 const SelectionResult& selection, int screen_width,
-                 int screen_height) {
+                 const SelectionResult& selection_screen,
+                 const coord::VirtualScreenRect& screen) {
   if (data == nullptr) {
     return false;
   }
@@ -164,16 +190,20 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
   const int toolbar_width =
       kToolbarPadding * 2 + button_count * kToolbarButtonWidth +
       (button_count - 1) * kToolbarButtonGap;
-  const int toolbar_height =
-      kToolbarPadding * 2 + kToolbarButtonHeight;
+  const int toolbar_height = kToolbarPadding * 2 + kToolbarButtonHeight;
 
-  int x = selection.x;
-  int y = selection.y + selection.height + 8;
-  if (y + toolbar_height > screen_height) {
-    y = selection.y - toolbar_height - 8;
+  int x = selection_screen.x;
+  int y = selection_screen.y + selection_screen.height + 8;
+  if (y + toolbar_height > screen.bottom()) {
+    y = selection_screen.y - toolbar_height - 8;
   }
-  x = (std::max)(0, (std::min)(x, screen_width - toolbar_width));
-  y = (std::max)(0, (std::min)(y, screen_height - toolbar_height));
+
+  const int min_x = screen.left;
+  const int min_y = screen.top;
+  const int max_x = screen.right() - toolbar_width;
+  const int max_y = screen.bottom() - toolbar_height;
+  x = (std::max)(min_x, (std::min)(x, max_x));
+  y = (std::max)(min_y, (std::min)(y, max_y));
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   const HWND toolbar = CreateWindowExW(
@@ -192,15 +222,21 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
 }
 
 // 重新渲染遮罩到分层窗口。返回 false 表示渲染失败。
-bool updateOverlay(HWND hwnd, int width, int height,
-                   const SelectionResult& selection) {
-  HDC screen_dc = GetDC(nullptr);
+// selection 使用覆盖层客户区坐标（原点 0,0）；draw_handles 为 true 时叠加八点手柄。
+bool updateOverlay(HWND hwnd, const coord::VirtualScreenRect& screen,
+                   const SelectionResult& selection, bool draw_handles) {
+  const int width = screen.width;
+  const int height = screen.height;
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  std::unique_ptr<HDC__, ScreenHdcDeleter> screen_dc(GetDC(nullptr));
   if (screen_dc == nullptr) {
     return false;
   }
   std::unique_ptr<HDC__, CompatibleDcDeleter> mem_dc(
-      CreateCompatibleDC(screen_dc));
-  ReleaseDC(nullptr, screen_dc);
+      CreateCompatibleDC(screen_dc.get()));
   if (mem_dc == nullptr) {
     return false;
   }
@@ -227,11 +263,15 @@ bool updateOverlay(HWND hwnd, int width, int height,
   if (pixels.size() != num_pixels) {
     return false;
   }
+  if (draw_handles && !selection.cancelled) {
+    handles::drawHandles(pixels, width, height, selection.x, selection.y,
+                         selection.width, selection.height, kHandlePixel);
+  }
   // DIB 与像素缓冲同布局（BGRA，顶向下），直接拷贝。
   std::copy(pixels.begin(), pixels.end(),
             reinterpret_cast<std::uint32_t*>(dib_bits));
 
-  POINT pt_zero{0, 0};
+  POINT dst{screen.left, screen.top};
   SIZE size{width, height};
   POINT pt_src{0, 0};
   BLENDFUNCTION blend{};
@@ -243,17 +283,11 @@ bool updateOverlay(HWND hwnd, int width, int height,
   if (old_bitmap == nullptr || old_bitmap == HGDI_ERROR) {
     return false;
   }
-  const BOOL ok =
-      UpdateLayeredWindow(hwnd, screen_dc, &pt_zero, &size, mem_dc.get(),
-                          &pt_src, 0, &blend, ULW_ALPHA);
+  const BOOL ok = UpdateLayeredWindow(hwnd, screen_dc.get(), &dst, &size,
+                                      mem_dc.get(), &pt_src, 0, &blend,
+                                      ULW_ALPHA);
   SelectObject(mem_dc.get(), old_bitmap);
   return ok != FALSE;
-}
-
-// 返回当前屏幕宽/高（主显示器）。
-void getScreenSize(int& out_width, int& out_height) {
-  out_width = GetSystemMetrics(SM_CXSCREEN);
-  out_height = GetSystemMetrics(SM_CYSCREEN);
 }
 
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -278,67 +312,121 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       const SelectionResult& sel = data->controller.selection();
-      int width = 0;
-      int height = 0;
-      getScreenSize(width, height);
-      if (!updateOverlay(hwnd, width, height, sel)) {
+      if (!updateOverlay(hwnd, data->screen, sel, false)) {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
     }
     case WM_LBUTTONDOWN: {
-      if (data == nullptr || data->selection_confirmed) {
+      if (data == nullptr) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      SetCapture(hwnd);
-      data->controller.begin(x, y);
+
+      if (!data->selection_confirmed) {
+        // 尚无有效选区：开始拖出矩形。
+        SetCapture(hwnd);
+        data->drag = DragKind::Create;
+        data->controller.begin(x, y);
+        return 0;
+      }
+
+      // 已有有效选区：命中测试决定「调整 / 移动 / 重新框选」。
+      const SelectionHandle handle = data->controller.hitTest(x, y);
+      if (handle == SelectionHandle::None) {
+        destroyToolbar(data);
+        data->selection_confirmed = false;
+        data->action = SelectionAction::None;
+        SetCapture(hwnd);
+        data->drag = DragKind::Create;
+        data->controller.begin(x, y);
+      } else if (handle == SelectionHandle::Move) {
+        destroyToolbar(data);
+        SetCapture(hwnd);
+        data->drag = DragKind::Move;
+        data->controller.beginMove(x, y);
+      } else {
+        destroyToolbar(data);
+        SetCapture(hwnd);
+        data->drag = DragKind::Resize;
+        data->controller.beginResize(handle, x, y);
+      }
       return 0;
     }
     case WM_MOUSEMOVE: {
-      if (data == nullptr || data->selection_confirmed ||
+      if (data == nullptr || data->drag == DragKind::None ||
           (wparam & MK_LBUTTON) == 0) {
-        return 0;  // 仅拖拽期间更新
+        return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      data->controller.update(x, y);
-      int width = 0;
-      int height = 0;
-      getScreenSize(width, height);
-      updateOverlay(hwnd, width, height, data->controller.selection());
+      switch (data->drag) {
+        case DragKind::Create:
+          data->controller.update(x, y);
+          break;
+        case DragKind::Resize:
+          data->controller.updateResize(x, y);
+          break;
+        case DragKind::Move:
+          data->controller.updateMove(x, y);
+          break;
+        default:
+          break;
+      }
+      updateOverlay(hwnd, data->screen, data->controller.selection(),
+                    data->selection_confirmed);
       return 0;
     }
     case WM_LBUTTONUP: {
-      if (data == nullptr || data->selection_confirmed) {
+      if (data == nullptr || data->drag == DragKind::None) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
       ReleaseCapture();
-      data->controller.update(x, y);
-      data->controller.confirm();
+      switch (data->drag) {
+        case DragKind::Create:
+          data->controller.update(x, y);
+          data->controller.confirm();
+          break;
+        case DragKind::Resize:
+          data->controller.updateResize(x, y);
+          data->controller.endDrag();
+          break;
+        case DragKind::Move:
+          data->controller.updateMove(x, y);
+          data->controller.endDrag();
+          break;
+        default:
+          break;
+      }
+      data->drag = DragKind::None;
+
       const SelectionResult& selection = data->controller.selection();
       if (selection.cancelled) {
+        data->selection_confirmed = false;
+        destroyToolbar(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
 
       data->selection_confirmed = true;
-      int screen_width = 0;
-      int screen_height = 0;
-      getScreenSize(screen_width, screen_height);
-      if (!showToolbar(hwnd, data, selection, screen_width, screen_height)) {
+      const SelectionResult selection_screen =
+          toScreenSelection(selection, data->screen);
+      if (!showToolbar(hwnd, data, selection_screen, data->screen)) {
         data->controller.cancel();
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        return 0;
       }
+      updateOverlay(hwnd, data->screen, selection, true);
       return 0;
     }
     case WM_RBUTTONDOWN: {
       if (data != nullptr) {
         data->controller.cancel();
         data->action = SelectionAction::None;
+        data->selection_confirmed = false;
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -347,6 +435,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data != nullptr && wparam == VK_ESCAPE) {
         data->controller.cancel();
         data->action = SelectionAction::None;
+        data->selection_confirmed = false;
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -359,7 +448,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_DESTROY: {
       if (data != nullptr) {
         destroyToolbar(data);
-        SelectionResult result = data->controller.selection();
+        SelectionResult result = toScreenSelection(data->controller.selection(),
+                                                   data->screen);
         result.action = data->action;
         SelectionCallback callback = data->callback;
         if (callback) {
@@ -405,15 +495,14 @@ bool SelectionOverlay::show(SelectionCallback callback) {
 
   OverlayWindowData data;
   data.callback = std::move(callback);
-
-  int screen_w = 0;
-  int screen_h = 0;
-  getScreenSize(screen_w, screen_h);
+  data.screen = coord::getVirtualScreen();
+  data.controller.setBounds(data.screen.width, data.screen.height);
 
   HWND hwnd = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kOverlayClassName, L"",
-      WS_POPUP | WS_VISIBLE, 0, 0, screen_w, screen_h, nullptr, nullptr,
-      instance, &data);
+      WS_POPUP | WS_VISIBLE, data.screen.left, data.screen.top,
+      data.screen.width, data.screen.height, nullptr, nullptr, instance,
+      &data);
   if (hwnd == nullptr) {
     return false;
   }
