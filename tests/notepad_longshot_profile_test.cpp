@@ -16,11 +16,29 @@ namespace {
 
 constexpr wchar_t kNotepadWindowClass[] = L"Notepad";
 constexpr wchar_t kUnsupportedWindowClass[] = L"QingYingUnsupportedWindow";
+constexpr wchar_t kTrackedEditorWindowClass[] = L"RichEditQingYingTest";
 
-bool ensureWindowClass(const wchar_t* class_name) {
+LRESULT CALLBACK trackedEditorWindowProc(HWND window, UINT message,
+                                         WPARAM w_param, LPARAM l_param) {
+  if (message == WM_NCCREATE) {
+    const auto* create = reinterpret_cast<const CREATESTRUCTW*>(l_param);
+    SetWindowLongPtrW(window, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+  } else if (message == WM_MOUSEWHEEL) {
+    auto* wheel_count =
+        reinterpret_cast<int*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (wheel_count != nullptr) {
+      ++(*wheel_count);
+    }
+  }
+  return DefWindowProcW(window, message, w_param, l_param);
+}
+
+bool ensureWindowClass(const wchar_t* class_name,
+                       WNDPROC window_proc = DefWindowProcW) {
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
-  wc.lpfnWndProc = DefWindowProcW;
+  wc.lpfnWndProc = window_proc;
   wc.hInstance = GetModuleHandleW(nullptr);
   wc.lpszClassName = class_name;
   if (RegisterClassExW(&wc) != 0) {
@@ -31,7 +49,8 @@ bool ensureWindowClass(const wchar_t* class_name) {
 
 class TestEditorWindow {
  public:
-  explicit TestEditorWindow(const wchar_t* root_class) {
+  explicit TestEditorWindow(const wchar_t* root_class,
+                            bool track_wheel = false) {
     if (!ensureWindowClass(root_class)) {
       return;
     }
@@ -44,9 +63,23 @@ class TestEditorWindow {
       return;
     }
 
-    editor_ = CreateWindowExW(
-        0, L"Edit", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | WS_VSCROLL,
-        20, 30, 300, 180, root_, nullptr, GetModuleHandleW(nullptr), nullptr);
+    const wchar_t* editor_class = L"Edit";
+    DWORD editor_style =
+        WS_CHILD | WS_VISIBLE | ES_MULTILINE | WS_VSCROLL;
+    void* creation_parameter = nullptr;
+    if (track_wheel) {
+      if (!ensureWindowClass(kTrackedEditorWindowClass,
+                             trackedEditorWindowProc)) {
+        return;
+      }
+      editor_class = kTrackedEditorWindowClass;
+      editor_style = WS_CHILD | WS_VISIBLE | WS_VSCROLL;
+      creation_parameter = &wheel_message_count_;
+    }
+
+    editor_ = CreateWindowExW(0, editor_class, L"", editor_style, 20, 30, 300,
+                              180, root_, nullptr, GetModuleHandleW(nullptr),
+                              creation_parameter);
   }
 
   ~TestEditorWindow() {
@@ -60,6 +93,7 @@ class TestEditorWindow {
 
   HWND root() const { return root_; }
   HWND editor() const { return editor_; }
+  int wheelMessageCount() const { return wheel_message_count_; }
 
   RECT editorScreenRect() const {
     RECT rect{};
@@ -74,6 +108,7 @@ class TestEditorWindow {
  private:
   HWND root_{nullptr};
   HWND editor_{nullptr};
+  int wheel_message_count_{0};
 };
 
 }  // namespace
@@ -198,6 +233,67 @@ TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error_code, ErrorCode::kLongShotUnsupported);
   EXPECT_TRUE(out.empty());
+}
+
+TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+
+  constexpr int kSelectionWidth = 80;
+  constexpr int kSelectionHeight = 60;
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x + 10,
+      profile.content_y + 10, kSelectionWidth, kSelectionHeight};
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  LongShotFramePair frames;
+
+  const ActionResult result = engine.captureInitialPair(request, frames);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kOk);
+  EXPECT_TRUE(frames.valid());
+  EXPECT_EQ(frames.first_frame.width, kSelectionWidth);
+  EXPECT_EQ(frames.first_frame.height, kSelectionHeight);
+  EXPECT_EQ(frames.second_frame.width, kSelectionWidth);
+  EXPECT_EQ(frames.second_frame.height, kSelectionHeight);
+  EXPECT_EQ(frames.first_frame.pixels.size(),
+            static_cast<std::size_t>(kSelectionWidth * kSelectionHeight));
+  EXPECT_EQ(frames.second_frame.pixels.size(),
+            static_cast<std::size_t>(kSelectionWidth * kSelectionHeight));
+  EXPECT_EQ(window.wheelMessageCount(), 1);
+}
+
+TEST(LongShotInitialPairTest, InvalidSelectionDoesNotScrollAndClearsFrames) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
+      profile.content_y, profile.content_width, profile.content_height};
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  LongShotFramePair frames;
+  frames.first_frame = Image{1, 1, {0xFFFFFFFFu}};
+  frames.second_frame = Image{1, 1, {0xFFFFFFFFu}};
+
+  const ActionResult result = engine.captureInitialPair(request, frames);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kLongShotUnsupported);
+  EXPECT_TRUE(frames.first_frame.empty());
+  EXPECT_TRUE(frames.second_frame.empty());
+  EXPECT_EQ(window.wheelMessageCount(), 0);
 }
 
 }  // namespace qingying

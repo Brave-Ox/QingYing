@@ -39,4 +39,20 @@ TEST(LongShotEngineTest, InvalidWindowIsUnsupported) {
   EXPECT_TRUE(out.empty());
 }
 
+TEST(LongShotEngineTest, InvalidPairRequestClearsBothFrames) {
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  LongShotRequest request;
+  LongShotFramePair frames;
+  frames.first_frame = Image{1, 1, {0xFFFFFFFFu}};
+  frames.second_frame = Image{1, 1, {0xFFFFFFFFu}};
+
+  const ActionResult result = engine.captureInitialPair(request, frames);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kInvalidArgument);
+  EXPECT_TRUE(frames.first_frame.empty());
+  EXPECT_TRUE(frames.second_frame.empty());
+}
+
 }  // namespace qingying

@@ -24,6 +24,16 @@ struct LongShotRequest {
   }
 };
 
+// Step-4 raw result: two captures of the exact same screen rectangle, before
+// and after one scroll input. It is not yet the final stitched long image.
+struct LongShotFramePair {
+  Image first_frame;
+  Image second_frame;
+
+  bool valid() const;
+  void clear();
+};
+
 class LongShotEngine {
  public:
   explicit LongShotEngine(CaptureEngine& capture);
@@ -35,6 +45,12 @@ class LongShotEngine {
   // Repeatedly captures exactly request.{x,y,width,height} while scrolling
   // request.owner_window through an application-specific profile.
   ActionResult captureSelection(const LongShotRequest& request, Image& out);
+
+  // Captures exactly two raw frames around one wheel input. This staged API
+  // keeps captureSelection's final-image contract intact until stitching is
+  // connected in the next step.
+  ActionResult captureInitialPair(const LongShotRequest& request,
+                                  LongShotFramePair& out);
 
  private:
   struct Impl;
