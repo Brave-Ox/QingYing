@@ -189,7 +189,7 @@ TEST(NotepadLongShotProfileTest, ChildHandleCannotReplaceRecordedRootWindow) {
 }
 
 TEST(LongShotEngineProfileIntegrationTest,
-     SupportedSelectionStopsBeforeCaptureAndScroll) {
+     SupportedSelectionStitchesInitialPair) {
   TestEditorWindow window(kNotepadWindowClass);
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
@@ -207,9 +207,14 @@ TEST(LongShotEngineProfileIntegrationTest,
 
   const ActionResult result = engine.captureSelection(request, out);
 
-  EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error_code, ErrorCode::kNotImplemented);
-  EXPECT_TRUE(out.empty());
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kOk);
+  EXPECT_FALSE(out.empty());
+  EXPECT_EQ(out.width, profile.content_width);
+  EXPECT_EQ(out.height, profile.content_height);
+  EXPECT_EQ(out.pixels.size(),
+            static_cast<std::size_t>(out.width) *
+                static_cast<std::size_t>(out.height));
 }
 
 TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {

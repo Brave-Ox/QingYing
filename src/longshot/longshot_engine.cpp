@@ -1,6 +1,7 @@
 ﻿#include "qingying/longshot/longshot_engine.hpp"
 
 #include "qingying/capture/capture_engine.hpp"
+#include "qingying/longshot/image_stitcher.hpp"
 #include "qingying/longshot/notepad_longshot_profile.hpp"
 
 #include <Windows.h>
@@ -130,14 +131,23 @@ void LongShotFramePair::clear() {
 ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                                               Image& out) {
   out = Image{};
-  LongShotProfileResult profile;
-  const ActionResult validation = validateRequest(request, profile);
-  if (!validation.ok) {
-    return validation;
+  LongShotFramePair frames;
+  const ActionResult capture_result = captureInitialPair(request, frames);
+  if (!capture_result.ok) {
+    return capture_result;
   }
 
-  return makeFailure(ErrorCode::kNotImplemented,
-                     "LongShotEngine::captureSelection stub");
+  Image stitched = std::move(frames.first_frame);
+  ImageStitcher stitcher;
+  if (!stitcher.append(stitched, frames.second_frame) ||
+      stitched.width != request.width || stitched.height <= 0 ||
+      stitched.pixels.empty()) {
+    return makeFailure(ErrorCode::kCaptureFailed,
+                       "longshot: failed to stitch initial frames");
+  }
+
+  out = std::move(stitched);
+  return makeSuccess();
 }
 
 ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
