@@ -3,6 +3,7 @@
 add_executable(qingying_tests
   action_dispatcher_test.cpp
   action_handlers_test.cpp
+  longshot_request_adapter_test.cpp
   capture_engine_test.cpp
   capture_session_test.cpp
   dib_encoder_test.cpp

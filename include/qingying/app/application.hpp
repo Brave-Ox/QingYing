@@ -3,6 +3,7 @@
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/capture_session.hpp"
 #include "qingying/app/hotkey_manager.hpp"
+#include "qingying/app/longshot_request_adapter.hpp"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
 #include "qingying/capture/capture_engine.hpp"
@@ -45,6 +46,8 @@ class Application {
   CaptureSession session_;
   PinManager pin_manager_;
   SelectionOverlay overlay_;
+  std::uintptr_t recorded_owner_window_{0};
+  LongShotRequest pending_longshot_request_{};
 };
 
 }  // namespace qingying

@@ -138,6 +138,19 @@ void Application::runCapturePipeline(const SelectionResult& region) {
 }
 
 void Application::beginCaptureFlow() {
+  // Capture the original top-level target before any capture/overlay work
+  // can change the foreground window. LongShotEngine consumes this recorded
+  // handle later; it must not infer the target from the foreground window.
+  HWND target = GetForegroundWindow();
+  if (target != nullptr) {
+    const HWND root = GetAncestor(target, GA_ROOT);
+    if (root != nullptr) {
+      target = root;
+    }
+  }
+  recorded_owner_window_ = reinterpret_cast<std::uintptr_t>(target);
+  pending_longshot_request_ = LongShotRequest{};
+
   // 先截取虚拟桌面作为遮罩界面背景（排除 Pin 窗口）。遮罩基于截图渲染，
   // 其它窗口（含从属浮层）在截图里保持可见，不再被实时 topmost 窗口盖住。
   // 截屏失败时 background 为空，遮罩退回纯半透明遮罩。
@@ -151,11 +164,15 @@ void Application::beginCaptureFlow() {
 
   const bool shown = overlay_.show(
       background, [this](const SelectionResult& region) {
+        pending_longshot_request_ =
+            makeLongShotRequest(recorded_owner_window_, region);
         runCapturePipeline(region);
       });
 
   if (!shown) {
     // Overlay not ready yet — keep integration path wired for when UI lands.
+    recorded_owner_window_ = 0;
+    pending_longshot_request_ = LongShotRequest{};
     return;
   }
 }
