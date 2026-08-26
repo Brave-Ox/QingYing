@@ -13,6 +13,8 @@ add_executable(qingying_tests
   coordinate_transform_test.cpp
   f1_selection_integration_test.cpp
   pin_manager_test.cpp
+  longshot_stitcher_test.cpp
+  longshot_engine_test.cpp
   window_detector_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
@@ -28,6 +30,7 @@ target_link_libraries(qingying_tests
     qingying_export
     qingying_overlay
     qingying_pin
+    qingying_longshot
     GTest::gtest
     GTest::gtest_main
 )

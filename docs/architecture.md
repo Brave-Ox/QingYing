@@ -115,7 +115,7 @@ capture → （仅系统库 / 本模块 Impl）
 | `Copy` | 当前结果 → 剪贴板 | export | P0 |
 | `Save` | 当前结果 → PNG | export | P0 |
 | `Pin` | 当前结果钉桌面 | pin | P2 |
-| `LongShotForeground` | 前台页长截（三应用） | longshot | P2 |
+| `LongShotRegion` | 对用户选定物理矩形滚动拼接 | longshot | P2 |
 | `SuggestName` | 建议文件名（可选云） | command/mcp | P4 |
 
 ### 4.2 约定
@@ -140,7 +140,7 @@ main / Application::init
   ├── CaptureEngine (PIMPL)
   ├── register CaptureRegion / CaptureWindow / CropCenter
   ├── register Copy / Save
-  ├── register Pin / LongShotForeground（可后挂）
+  ├── register Pin / LongShotRegion（可后挂）
   ├── Tray + Hotkey → 打开 Overlay
   └── Overlay 完成选区 → dispatch(CaptureRegion) → dispatch(Copy)
 ```
@@ -201,7 +201,7 @@ main / Application::init
 | 30 | 捕获失败 |
 | 40 | 窗口未找到 |
 | 41 | 窗口匹配歧义 |
-| 50 | 长截不支持当前前台应用 |
+| 50 | 长截不支持目标应用或用户选区 |
 | 60 | 保存/剪贴板失败 |
 | 70 | 口令未匹配（无云或云不可用） |
 

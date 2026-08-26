@@ -48,7 +48,7 @@
 | **F6** | 长截图 | 选区自动滚动拼接 | **记事本 / 资源管理器 / Edge** 各至少一次 |
 | **F7** | 托盘与热键 | 托盘常驻 + 全局热键 | 单实例；热键冲突有提示 |
 | **F8** | 口令截图 | 自然语言：中央裁切 / 按名截窗 / 长截 / 命名保存 | 本地口令表可演示；未命中可离线退回框选；云解析可选 |
-| **F9** | Agent / MCP | 标准 Tool 调用本地能力 | 至少：`status`、`capture_window`、`crop_center`、`longshot_foreground`、`save`、`copy`、`pin` |
+| **F9** | Agent / MCP | 标准 Tool 调用本地能力 | 至少：`status`、`capture_window`、`crop_center`、`longshot_select`、`save`、`copy`、`pin` |
 
 ### F1～F9 ↔ 技术模块
 
@@ -229,7 +229,7 @@ MCP Tool       ─┘
 | `status()` | 查询托盘是否运行 | 否 |
 | `capture_window(query)` | 按窗口名截取；多匹配返回歧义 | 否 |
 | `crop_center(width, height)` | 裁取画面中央 | 否 |
-| `longshot_foreground()` | 前台页长截（仅三应用） | 否 |
+| `longshot_select()` | 打开长截图选框，由用户确认区域（仅三应用） | 否 |
 | `save(path, name)` | 按名保存 | 否 |
 | `copy()` / `pin()` | 复制 / 钉住当前结果 | 否 |
 | `suggest_name()` | 建议文件名（需确认） | **是，可选** |

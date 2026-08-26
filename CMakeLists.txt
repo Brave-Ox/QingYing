@@ -81,6 +81,7 @@ endif()
 
 add_library(qingying_longshot STATIC
   src/longshot/longshot_engine.cpp
+  src/longshot/image_stitcher.cpp
 )
 target_include_directories(qingying_longshot
   PUBLIC ${CMAKE_SOURCE_DIR}/include
