@@ -1,6 +1,7 @@
 ﻿#include "qingying/longshot/longshot_engine.hpp"
 
 #include "qingying/capture/capture_engine.hpp"
+#include "qingying/longshot/notepad_longshot_profile.hpp"
 
 namespace qingying {
 
@@ -26,6 +27,23 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
     r.ok = false;
     r.error_code = ErrorCode::kInvalidArgument;
     r.message = "longshot: owner window and selection are required";
+    return r;
+  }
+
+  LongShotProfileResult profile;
+  if (!resolveNotepadProfile(request.owner_window, profile)) {
+    ActionResult r;
+    r.ok = false;
+    r.error_code = ErrorCode::kLongShotUnsupported;
+    r.message = "longshot: target is not a supported Notepad window";
+    return r;
+  }
+  if (!profile.containsSelection(request.x, request.y, request.width,
+                                 request.height)) {
+    ActionResult r;
+    r.ok = false;
+    r.error_code = ErrorCode::kLongShotUnsupported;
+    r.message = "longshot: selection must stay inside Notepad content";
     return r;
   }
 

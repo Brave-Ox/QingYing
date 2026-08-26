@@ -15,6 +15,7 @@ add_executable(qingying_tests
   pin_manager_test.cpp
   longshot_stitcher_test.cpp
   longshot_engine_test.cpp
+  notepad_longshot_profile_test.cpp
   window_detector_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )

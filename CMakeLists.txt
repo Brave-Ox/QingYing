@@ -82,11 +82,15 @@ endif()
 add_library(qingying_longshot STATIC
   src/longshot/longshot_engine.cpp
   src/longshot/image_stitcher.cpp
+  src/longshot/notepad_longshot_profile.cpp
 )
 target_include_directories(qingying_longshot
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_longshot PUBLIC qingying_action qingying_capture)
+if(WIN32)
+  target_link_libraries(qingying_longshot PRIVATE user32)
+endif()
 
 add_library(qingying_command STATIC
   src/command/command_parser.cpp

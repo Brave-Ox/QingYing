@@ -21,7 +21,7 @@ TEST(LongShotEngineTest, InvalidSelectionRequestClearsOutput) {
   EXPECT_TRUE(out.empty());
 }
 
-TEST(LongShotEngineTest, ValidSelectionUsesSelectionDrivenContract) {
+TEST(LongShotEngineTest, InvalidWindowIsUnsupported) {
   CaptureEngine capture;
   LongShotEngine engine(capture);
   LongShotRequest request;
@@ -35,7 +35,7 @@ TEST(LongShotEngineTest, ValidSelectionUsesSelectionDrivenContract) {
   const ActionResult result = engine.captureSelection(request, out);
 
   EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error_code, ErrorCode::kNotImplemented);
+  EXPECT_EQ(result.error_code, ErrorCode::kLongShotUnsupported);
   EXPECT_TRUE(out.empty());
 }
 
