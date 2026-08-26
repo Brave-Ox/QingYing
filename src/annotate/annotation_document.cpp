@@ -20,11 +20,11 @@ bool AnnotationDocument::isValid(const Annotation& annotation) const
   {
     case AnnotationType::Rectangle:
     case AnnotationType::Ellipse:
-    case AnnotationType::Mosaic:
       return hasMinimumSize(annotation.bounds);
     case AnnotationType::Arrow:
       return true;
     case AnnotationType::Pen:
+    case AnnotationType::Mosaic:
       return annotation.points.size() >= MinPenPointCount;
     case AnnotationType::Text:
       return !annotation.text.empty();

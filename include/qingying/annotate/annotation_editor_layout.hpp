@@ -12,7 +12,7 @@ inline constexpr int AnnotationEditorBarPadding = 8;
 inline constexpr int AnnotationEditorDividerGap = 10;
 inline constexpr int AnnotationEditorDividerCount = 2;
 inline constexpr int AnnotationEditorToolButtonCount =
-    6;  // 矩形/椭圆/箭头/画笔/文字/撤销
+    7;  // 矩形/椭圆/箭头/画笔/马赛克/文字/撤销
 inline constexpr int AnnotationEditorActionButtonCount = 2;  // 完成/取消
 inline constexpr int AnnotationEditorFontComboWidth = 52;
 inline constexpr int AnnotationEditorFontComboDropHeight = 200;
@@ -53,6 +53,28 @@ inline int annotationEditorToolbarWidth()
 inline int annotationEditorClientWidth(int imageWidth)
 {
   return (std::max)(imageWidth, annotationEditorToolbarWidth());
+}
+
+// 就地编辑窗口摆放：图片客户区左上角必须等于选区左上角。
+// 工具栏可伸出屏幕外；禁止为塞进屏幕而平移图片（那会造成「框选区 ≠ 编辑区」）。
+struct AnnotationEditorInPlacePlacement
+{
+  int window_x{0};
+  int window_y{0};
+  int window_width{0};
+  int window_height{0};
+};
+
+inline AnnotationEditorInPlacePlacement annotationEditorInPlacePlacement(
+    int screen_x, int screen_y, int image_width, int image_height)
+{
+  AnnotationEditorInPlacePlacement placement{};
+  placement.window_x = screen_x;
+  placement.window_y = screen_y;
+  placement.window_width = annotationEditorClientWidth(image_width);
+  placement.window_height =
+      image_height + annotationEditorToolbarHeight();
+  return placement;
 }
 
 }  // namespace qingying

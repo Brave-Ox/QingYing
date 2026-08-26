@@ -235,19 +235,46 @@ TEST(AnnotationInteractionControllerTest, UndoWhileDrawingCancelsPreviewFirst)
   EXPECT_TRUE(engine.document().empty());
 }
 
-TEST(AnnotationInteractionControllerTest, DeferredToolsCannotBeginStroke)
+TEST(AnnotationInteractionControllerTest, TextToolCannotBeginStroke)
 {
   AnnotationInteractionController controller;
   prepare(controller);
 
-  // 文字走 Overlay 单击输入，不走拖拽起笔；马赛克仍留位。
+  // 文字走 Overlay 单击输入，不走拖拽起笔。
   controller.setTool(AnnotationTool::Text);
   EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
+  EXPECT_FALSE(controller.isDrawing());
+}
+
+TEST(AnnotationInteractionControllerTest, MosaicStrokeCollectsPointsLikePen)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  AnnotationEngine engine;
 
   controller.setTool(AnnotationTool::Mosaic);
-  EXPECT_FALSE(controller.beginStroke(10.0f, 10.0f));
+  ASSERT_TRUE(controller.beginStroke(1.0f, 1.0f));
+  controller.updateStroke(2.0f, 3.0f);
+  controller.updateStroke(4.0f, 5.0f);
+  ASSERT_TRUE(controller.endStroke(engine));
 
-  EXPECT_FALSE(controller.isDrawing());
+  ASSERT_EQ(engine.document().count(), 1u);
+  const Annotation& mosaic = engine.document().items().at(0);
+  EXPECT_EQ(mosaic.type, AnnotationType::Mosaic);
+  ASSERT_EQ(mosaic.points.size(), 3u);
+  EXPECT_EQ(mosaic.mosaic_block_size, DefaultMosaicBlockSize);
+}
+
+TEST(AnnotationInteractionControllerTest, SinglePointMosaicIsRejectedOnEnd)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  AnnotationEngine engine;
+
+  controller.setTool(AnnotationTool::Mosaic);
+  ASSERT_TRUE(controller.beginStroke(1.0f, 1.0f));
+  EXPECT_FALSE(controller.endStroke(engine));
+  EXPECT_TRUE(engine.document().empty());
 }
 
 }  // namespace qingying

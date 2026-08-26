@@ -89,6 +89,38 @@ TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
   EXPECT_LE(last_control_right, client_width);
 }
 
+TEST(AnnotationOverlayTest, InPlacePlacementPinsImageOriginToSelection)
+{
+  constexpr int kSelX = 100;
+  constexpr int kSelY = 200;
+  constexpr int kImgW = 80;
+  constexpr int kImgH = 60;
+
+  const AnnotationEditorInPlacePlacement place =
+      annotationEditorInPlacePlacement(kSelX, kSelY, kImgW, kImgH);
+
+  EXPECT_EQ(place.window_x, kSelX);
+  EXPECT_EQ(place.window_y, kSelY);
+  EXPECT_EQ(place.window_width, annotationEditorClientWidth(kImgW));
+  EXPECT_EQ(place.window_height, kImgH + annotationEditorToolbarHeight());
+}
+
+TEST(AnnotationOverlayTest, InPlacePlacementDoesNotShiftToFitToolbarOnScreen)
+{
+  // 贴近屏幕底部的选区：旧逻辑会为塞下工具栏而上移整个窗口，导致图片错位。
+  constexpr int kSelX = 10;
+  constexpr int kSelY = 1000;
+  constexpr int kImgW = 400;
+  constexpr int kImgH = 200;
+
+  const AnnotationEditorInPlacePlacement place =
+      annotationEditorInPlacePlacement(kSelX, kSelY, kImgW, kImgH);
+
+  EXPECT_EQ(place.window_x, kSelX);
+  EXPECT_EQ(place.window_y, kSelY);
+  EXPECT_GT(place.window_height, kImgH);
+}
+
 // 手工冒烟：会真实弹出编辑器窗口，需要人工操作，因此默认跳过。
 // 运行：
 //   qingying_tests.exe --gtest_also_run_disabled_tests `

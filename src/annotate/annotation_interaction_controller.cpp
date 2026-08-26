@@ -32,7 +32,8 @@ AnnotationType toolToType(AnnotationTool tool)
 bool isDrawableTool(AnnotationTool tool)
 {
   return tool == AnnotationTool::Rectangle || tool == AnnotationTool::Ellipse ||
-         tool == AnnotationTool::Arrow || tool == AnnotationTool::Pen;
+         tool == AnnotationTool::Arrow || tool == AnnotationTool::Pen ||
+         tool == AnnotationTool::Mosaic;
 }
 
 }  // namespace
@@ -114,8 +115,10 @@ void AnnotationInteractionController::rebuildPreview(float x, float y)
       break;
     }
     case AnnotationTool::Pen:
+    case AnnotationTool::Mosaic:
     {
-      if (!m_has_preview || m_preview.type != AnnotationType::Pen)
+      const AnnotationType path_type = toolToType(m_tool);
+      if (!m_has_preview || m_preview.type != path_type)
       {
         annotation.points.clear();
         annotation.points.push_back(PointF{m_start_x, m_start_y});
@@ -123,6 +126,11 @@ void AnnotationInteractionController::rebuildPreview(float x, float y)
       else
       {
         annotation.points = m_preview.points;
+      }
+
+      if (m_tool == AnnotationTool::Mosaic)
+      {
+        annotation.mosaic_block_size = DefaultMosaicBlockSize;
       }
 
       const PointF next{x, y};

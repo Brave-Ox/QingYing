@@ -24,6 +24,7 @@ enum class ToolbarIconKind
   Ellipse,
   Arrow,
   Pen,
+  Mosaic,
   Text,
   Undo,
   Confirm,

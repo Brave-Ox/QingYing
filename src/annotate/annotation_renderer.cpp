@@ -10,12 +10,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace qingying {
 
 namespace {
 
 constexpr int MinStrokeThicknessPx = 1;
+constexpr int MinMosaicBlockSizePx = 1;
 constexpr double Pi = 3.14159265358979323846;
 // 箭头头部：两条从终点向后张开的短线。
 constexpr double ArrowHeadLengthPx = 8.0;
@@ -278,6 +280,175 @@ void drawPen(Image& target, const Annotation& annotation)
   }
 }
 
+int mosaicBlockSize(int block_size)
+{
+  return (std::max)(MinMosaicBlockSizePx, block_size);
+}
+
+void markBrush(std::vector<std::uint8_t>& mask, int width, int height, int x,
+               int y, int thickness)
+{
+  const int back = (thickness - 1) / 2;
+  const int forward = thickness / 2;
+  for (int dy = -back; dy <= forward; ++dy)
+  {
+    for (int dx = -back; dx <= forward; ++dx)
+    {
+      const int px = x + dx;
+      const int py = y + dy;
+      if (px < 0 || py < 0 || px >= width || py >= height)
+      {
+        continue;
+      }
+      const std::size_t index = static_cast<std::size_t>(py) *
+                                    static_cast<std::size_t>(width) +
+                                static_cast<std::size_t>(px);
+      mask.at(index) = 1;
+    }
+  }
+}
+
+void markLine(std::vector<std::uint8_t>& mask, int width, int height, int x0,
+              int y0, int x1, int y1, int thickness)
+{
+  const int dx = std::abs(x1 - x0);
+  const int dy = -std::abs(y1 - y0);
+  const int step_x = x0 < x1 ? 1 : -1;
+  const int step_y = y0 < y1 ? 1 : -1;
+  int error = dx + dy;
+
+  while (true)
+  {
+    markBrush(mask, width, height, x0, y0, thickness);
+    if (x0 == x1 && y0 == y1)
+    {
+      break;
+    }
+
+    const int doubled = 2 * error;
+    if (doubled >= dy)
+    {
+      error += dy;
+      x0 += step_x;
+    }
+    if (doubled <= dx)
+    {
+      error += dx;
+      y0 += step_y;
+    }
+  }
+}
+
+// 画笔式马赛克：折线粗笔刷碰到的格子，用绘制前底图该格均值整格填回。
+void drawMosaic(Image& target, const Annotation& annotation)
+{
+  if (annotation.points.size() < MinPenPointCount || target.empty())
+  {
+    return;
+  }
+
+  const int block = mosaicBlockSize(annotation.mosaic_block_size);
+  const int thickness = strokeThickness(annotation.style.stroke_width);
+  const int width = target.width;
+  const int height = target.height;
+  const std::size_t pixel_count =
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+
+  std::vector<std::uint8_t> mask(pixel_count, 0);
+  for (std::size_t i = 1; i < annotation.points.size(); ++i)
+  {
+    const PointF& previous = annotation.points.at(i - 1);
+    const PointF& current = annotation.points.at(i);
+    markLine(mask, width, height, toPixel(previous.x), toPixel(previous.y),
+             toPixel(current.x), toPixel(current.y), thickness);
+  }
+
+  const int tiles_x = (width + block - 1) / block;
+  const int tiles_y = (height + block - 1) / block;
+  std::vector<std::uint8_t> touched(
+      static_cast<std::size_t>(tiles_x) * static_cast<std::size_t>(tiles_y), 0);
+
+  for (int y = 0; y < height; ++y)
+  {
+    for (int x = 0; x < width; ++x)
+    {
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(width) +
+                                static_cast<std::size_t>(x);
+      if (mask.at(index) == 0)
+      {
+        continue;
+      }
+      const int tile_x = x / block;
+      const int tile_y = y / block;
+      const std::size_t tile_index = static_cast<std::size_t>(tile_y) *
+                                         static_cast<std::size_t>(tiles_x) +
+                                     static_cast<std::size_t>(tile_x);
+      touched.at(tile_index) = 1;
+    }
+  }
+
+  const Image snapshot = target;
+  for (int tile_y = 0; tile_y < tiles_y; ++tile_y)
+  {
+    for (int tile_x = 0; tile_x < tiles_x; ++tile_x)
+    {
+      const std::size_t tile_index = static_cast<std::size_t>(tile_y) *
+                                         static_cast<std::size_t>(tiles_x) +
+                                     static_cast<std::size_t>(tile_x);
+      if (touched.at(tile_index) == 0)
+      {
+        continue;
+      }
+
+      const int left = tile_x * block;
+      const int top = tile_y * block;
+      const int right = (std::min)(left + block, width);
+      const int bottom = (std::min)(top + block, height);
+
+      std::uint64_t sum_b = 0;
+      std::uint64_t sum_g = 0;
+      std::uint64_t sum_r = 0;
+      std::uint64_t sum_a = 0;
+      std::size_t count = 0;
+      for (int y = top; y < bottom; ++y)
+      {
+        for (int x = left; x < right; ++x)
+        {
+          const std::size_t index = static_cast<std::size_t>(y) *
+                                        static_cast<std::size_t>(width) +
+                                    static_cast<std::size_t>(x);
+          const std::uint32_t px = snapshot.pixels.at(index);
+          sum_b += px & 0xFFu;
+          sum_g += (px >> 8) & 0xFFu;
+          sum_r += (px >> 16) & 0xFFu;
+          sum_a += (px >> 24) & 0xFFu;
+          ++count;
+        }
+      }
+
+      if (count == 0)
+      {
+        continue;
+      }
+
+      const std::uint32_t average =
+          (static_cast<std::uint32_t>(sum_a / count) << 24) |
+          (static_cast<std::uint32_t>(sum_r / count) << 16) |
+          (static_cast<std::uint32_t>(sum_g / count) << 8) |
+          static_cast<std::uint32_t>(sum_b / count);
+
+      for (int y = top; y < bottom; ++y)
+      {
+        for (int x = left; x < right; ++x)
+        {
+          setPixel(target, x, y, average);
+        }
+      }
+    }
+  }
+}
+
 class GdiDcGuard
 {
  public:
@@ -404,8 +575,10 @@ void drawAnnotation(Image& target, const Annotation& annotation)
     case AnnotationType::Text:
       drawText(target, annotation);
       break;
+    case AnnotationType::Mosaic:
+      drawMosaic(target, annotation);
+      break;
     default:
-      // Mosaic 仍留位，不改像素。
       break;
   }
 }

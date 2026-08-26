@@ -26,6 +26,7 @@ constexpr UINT kButtonArrowId = 5;
 constexpr UINT kButtonPenId = 6;
 constexpr UINT kButtonTextId = 7;
 constexpr UINT kButtonUndoId = 8;
+constexpr UINT kButtonMosaicId = 9;
 constexpr UINT kFontComboId = 9;
 constexpr UINT kInlineEditId = 10;
 
@@ -41,7 +42,7 @@ constexpr int kTextSelectionPadPx = 3;
 constexpr std::size_t kInvalidAnnotationIndex =
     static_cast<std::size_t>(-1);
 
-constexpr int kToolbarIconItemCount = 8;
+constexpr int kToolbarIconItemCount = 9;
 
 struct EditorToolbarItem
 {
@@ -970,6 +971,9 @@ void paintEditorToolbar(HDC hdc, EditorWindowData* data)
       case kButtonPenId:
         selected = data->controller.tool() == AnnotationTool::Pen;
         break;
+      case kButtonMosaicId:
+        selected = data->controller.tool() == AnnotationTool::Mosaic;
+        break;
       case kButtonTextId:
         selected = data->controller.tool() == AnnotationTool::Text;
         break;
@@ -1014,6 +1018,7 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
       {kButtonEllipseId, ToolbarIconKind::Ellipse, false},
       {kButtonArrowId, ToolbarIconKind::Arrow, false},
       {kButtonPenId, ToolbarIconKind::Pen, false},
+      {kButtonMosaicId, ToolbarIconKind::Mosaic, false},
       {kButtonTextId, ToolbarIconKind::Text, false},
   };
 
@@ -1238,6 +1243,9 @@ void handleToolCommand(EditorWindowData* data, UINT id)
       break;
     case kButtonPenId:
       data->controller.setTool(AnnotationTool::Pen);
+      break;
+    case kButtonMosaicId:
+      data->controller.setTool(AnnotationTool::Mosaic);
       break;
     case kButtonTextId:
       data->controller.setTool(AnnotationTool::Text);
@@ -1550,15 +1558,22 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   const int window_width = data.client_width;
   const int window_height =
       source.height + annotationEditorToolbarHeight();
-  int x = screen_x;
-  int y = screen_y;
-  if (x < 0 || y < 0)
+  int x = 0;
+  int y = 0;
+  if (screen_x < 0 || screen_y < 0)
   {
     x = (std::max)(0, (GetSystemMetrics(SM_CXSCREEN) - window_width) / 2);
     y = (std::max)(0, (GetSystemMetrics(SM_CYSCREEN) - window_height) / 2);
   }
-  x = (std::max)(0, (std::min)(x, GetSystemMetrics(SM_CXSCREEN) - window_width));
-  y = (std::max)(0, (std::min)(y, GetSystemMetrics(SM_CYSCREEN) - window_height));
+  else
+  {
+    // 就地编辑：图片原点钉死在选区左上角，禁止为塞工具栏而夹屏平移。
+    const AnnotationEditorInPlacePlacement place =
+        annotationEditorInPlacePlacement(screen_x, screen_y, source.width,
+                                         source.height);
+    x = place.window_x;
+    y = place.window_y;
+  }
 
   bool done = false;
   data.loop_done = &done;

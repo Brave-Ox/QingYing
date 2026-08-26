@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cwchar>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -58,6 +60,89 @@ void getScreenSize(int& out_width, int& out_height);
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection, int screen_width,
                  int screen_height);
+
+constexpr int kDiagnosticLineMaxChars = 512;
+
+struct WinHandleCloser
+{
+  void operator()(HANDLE handle) const noexcept
+  {
+    if (handle != nullptr && handle != INVALID_HANDLE_VALUE)
+    {
+      CloseHandle(handle);
+    }
+  }
+};
+
+int systemDpi()
+{
+  const HDC screen_dc = GetDC(nullptr);
+  if (screen_dc == nullptr)
+  {
+    return 0;
+  }
+  const int dpi = GetDeviceCaps(screen_dc, LOGPIXELSX);
+  ReleaseDC(nullptr, screen_dc);
+  return dpi;
+}
+
+// 临时诊断：定位「框选区 ≠ 就地编辑区」。根因确认后连同调用一并删除。
+void appendInPlaceDiagnostic(const SelectionResult& selection,
+                             const Image& captured, bool capture_ok)
+{
+  wchar_t dir[MAX_PATH]{};
+  const DWORD dir_len = GetTempPathW(MAX_PATH, dir);
+  if (dir_len == 0 || dir_len >= MAX_PATH)
+  {
+    return;
+  }
+
+  std::wstring path(dir);
+  path += L"qingying_inplace_debug.log";
+
+  wchar_t line[kDiagnosticLineMaxChars]{};
+  const int written = swprintf_s(
+      line, L"selection=(%d,%d,%dx%d) capture_ok=%d image=%dx%d "
+            L"primary=%dx%d virtual=(%d,%d,%dx%d) dpi=%d\r\n",
+      selection.x, selection.y, selection.width, selection.height,
+      capture_ok ? 1 : 0, captured.width, captured.height,
+      GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+      GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+      GetSystemMetrics(SM_CXVIRTUALSCREEN),
+      GetSystemMetrics(SM_CYVIRTUALSCREEN), systemDpi());
+  if (written <= 0)
+  {
+    return;
+  }
+
+  const int utf8_len =
+      WideCharToMultiByte(CP_UTF8, 0, line, written, nullptr, 0, nullptr,
+                          nullptr);
+  if (utf8_len <= 0)
+  {
+    return;
+  }
+
+  std::string utf8(static_cast<std::size_t>(utf8_len), '\0');
+  if (WideCharToMultiByte(CP_UTF8, 0, line, written, utf8.data(), utf8_len,
+                          nullptr, nullptr) <= 0)
+  {
+    return;
+  }
+
+  const std::unique_ptr<void, WinHandleCloser> file(
+      CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                  OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+  if (file.get() == INVALID_HANDLE_VALUE)
+  {
+    return;
+  }
+
+  DWORD bytes_written = 0;
+  // 诊断日志写失败不影响截图主流程，故仅忽略返回值。
+  (void)WriteFile(file.get(), utf8.data(), static_cast<DWORD>(utf8.size()),
+                  &bytes_written, nullptr);
+}
 void beginInPlaceEdit(OverlayWindowData* data);
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -457,16 +542,18 @@ void beginInPlaceEdit(OverlayWindowData* data)
   const ActionResult captured = capture.captureRegion(
       selection.x, selection.y, selection.width, selection.height, image);
 
-  ShowWindow(data->overlay, SW_SHOW);
-  SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+  appendInPlaceDiagnostic(selection, image, captured.ok);
 
+  // 编辑期间保持遮罩隐藏：避免橙框选区与就地编辑窗口叠出「两块不一致区域」。
   int screen_width = 0;
   int screen_height = 0;
   getScreenSize(screen_width, screen_height);
 
   if (!captured.ok || image.empty())
   {
+    ShowWindow(data->overlay, SW_SHOW);
+    SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     (void)showToolbar(data->overlay, data, selection, screen_width,
                       screen_height);
     return;
@@ -483,6 +570,9 @@ void beginInPlaceEdit(OverlayWindowData* data)
 
   if (!shown)
   {
+    ShowWindow(data->overlay, SW_SHOW);
+    SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     (void)showToolbar(data->overlay, data, selection, screen_width,
                       screen_height);
     return;

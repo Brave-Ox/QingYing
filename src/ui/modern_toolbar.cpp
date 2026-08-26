@@ -210,6 +210,16 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
       lineTo(hdc, c.x + 1, c.y + s - 4);
       lineTo(hdc, c.x - s + 1, c.y + s - 2);
       break;
+    case ToolbarIconKind::Mosaic:
+    {
+      // 2x2 小方格，表示像素化打码。
+      const int grid = (std::max)(2, s / 2);
+      Rectangle(hdc, c.x - grid, c.y - grid, c.x, c.y);
+      Rectangle(hdc, c.x, c.y - grid, c.x + grid, c.y);
+      Rectangle(hdc, c.x - grid, c.y, c.x, c.y + grid);
+      Rectangle(hdc, c.x, c.y, c.x + grid, c.y + grid);
+      break;
+    }
     case ToolbarIconKind::Text:
       MoveToEx(hdc, c.x - s + 2, c.y - s + 2, nullptr);
       lineTo(hdc, c.x + s - 2, c.y - s + 2);
@@ -310,6 +320,8 @@ const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
       return L"\x7BAD\x5934";
     case ToolbarIconKind::Pen:
       return L"\x753B\x7B14";
+    case ToolbarIconKind::Mosaic:
+      return L"\x9A6C\x8D5B\x514B";
     case ToolbarIconKind::Text:
       return L"\x6587\x5B57";
     case ToolbarIconKind::Undo:

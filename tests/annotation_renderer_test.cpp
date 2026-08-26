@@ -495,20 +495,102 @@ TEST(AnnotationRendererTest, TextUsesRequestedFontSizeChangingMorePixels)
   EXPECT_NE(small_out.pixels, large_out.pixels);
 }
 
-TEST(AnnotationRendererTest, DeferredTypesDoNotModifyPixels)
+TEST(AnnotationRendererTest, MosaicBrushPixelatesTouchedBlocks)
 {
-  // 马赛克仍留位，入档后栅格化不得改像素。
-  const AnnotationRenderer renderer;
-  AnnotationDocument document;
+  // 24x24 画布、块大小 12：左上块像素各不相同，画笔穿过后整块应变成均值色。
+  constexpr int kSize = 24;
+  constexpr int kBlock = 12;
+  Image source;
+  source.width = kSize;
+  source.height = kSize;
+  source.pixels.resize(static_cast<std::size_t>(kSize) *
+                        static_cast<std::size_t>(kSize));
+  for (int y = 0; y < kSize; ++y)
+  {
+    for (int x = 0; x < kSize; ++x)
+    {
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(kSize) +
+                                static_cast<std::size_t>(x);
+      source.pixels.at(index) =
+          makeBgra(static_cast<std::uint8_t>(x), static_cast<std::uint8_t>(y),
+                   40, 255);
+    }
+  }
 
   Annotation mosaic;
   mosaic.type = AnnotationType::Mosaic;
-  mosaic.bounds = RectF{kRectX, kRectY, kRectWidth, kRectHeight};
+  mosaic.mosaic_block_size = kBlock;
+  mosaic.style.stroke_width = 4.0f;
+  mosaic.points.push_back(PointF{2.0f, 6.0f});
+  mosaic.points.push_back(PointF{10.0f, 6.0f});
+
+  AnnotationDocument document;
   ASSERT_TRUE(document.add(mosaic));
 
-  const Image source = makeCanvas();
+  const AnnotationRenderer renderer;
   Image out;
   ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_NE(out.pixels, source.pixels);
+
+  // 左上块 [0,12)×[0,12) 被笔刷碰到：整块应为源图该块均值，且块内一致。
+  std::uint64_t sum_b = 0;
+  std::uint64_t sum_g = 0;
+  std::uint64_t sum_r = 0;
+  std::uint64_t sum_a = 0;
+  std::size_t count = 0;
+  for (int y = 0; y < kBlock; ++y)
+  {
+    for (int x = 0; x < kBlock; ++x)
+    {
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(kSize) +
+                                static_cast<std::size_t>(x);
+      const std::uint32_t px = source.pixels.at(index);
+      sum_b += px & 0xFFu;
+      sum_g += (px >> 8) & 0xFFu;
+      sum_r += (px >> 16) & 0xFFu;
+      sum_a += (px >> 24) & 0xFFu;
+      ++count;
+    }
+  }
+  const std::uint32_t expected = makeBgra(
+      static_cast<std::uint8_t>(sum_b / count),
+      static_cast<std::uint8_t>(sum_g / count),
+      static_cast<std::uint8_t>(sum_r / count),
+      static_cast<std::uint8_t>(sum_a / count));
+
+  for (int y = 0; y < kBlock; ++y)
+  {
+    for (int x = 0; x < kBlock; ++x)
+    {
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(kSize) +
+                                static_cast<std::size_t>(x);
+      EXPECT_EQ(out.pixels.at(index), expected) << "x=" << x << " y=" << y;
+    }
+  }
+
+  // 右下块未被笔刷碰到，应保持原像素。
+  const std::size_t far_index =
+      static_cast<std::size_t>(20) * static_cast<std::size_t>(kSize) + 20u;
+  EXPECT_EQ(out.pixels.at(far_index), source.pixels.at(far_index));
+}
+
+TEST(AnnotationRendererTest, MosaicWithTooFewPointsDoesNotModifyPixels)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  // 绕过 Document：直接测渲染器对非法点数的容忍。
+  Annotation mosaic;
+  mosaic.type = AnnotationType::Mosaic;
+  mosaic.points.push_back(PointF{5.0f, 5.0f});
+  mosaic.mosaic_block_size = DefaultMosaicBlockSize;
+
+  const Image source = makeCanvas();
+  Image out = source;
+  // 经 preview 路径传入单点马赛克，应不改像素。
+  ASSERT_TRUE(renderer.rasterize(source, document, &mosaic, out));
   EXPECT_EQ(out.pixels, source.pixels);
 }
 

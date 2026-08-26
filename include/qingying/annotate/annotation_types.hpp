@@ -14,7 +14,7 @@ enum class AnnotationType
   Arrow,
   Pen,
   Text,
-  Mosaic,  // 本轮仅留位
+  Mosaic,  // 画笔式：points 折线 + mosaic_block_size
 };
 
 enum class AnnotationTool
@@ -25,7 +25,7 @@ enum class AnnotationTool
   Arrow,
   Pen,
   Text,
-  Mosaic,  // 本轮仅留位，交互层拒绝起笔
+  Mosaic,
 };
 
 inline constexpr float DefaultStrokeWidth = 3.0f;

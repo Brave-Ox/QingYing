@@ -151,6 +151,40 @@ TEST(AnnotationDocumentTest, RejectPenWithFewerThanTwoPoints)
   EXPECT_EQ(document.count(), 0u);
 }
 
+TEST(AnnotationDocumentTest, RejectMosaicWithFewerThanTwoPoints)
+{
+  AnnotationDocument document;
+  Annotation annotation;
+  annotation.type = AnnotationType::Mosaic;
+  annotation.points.push_back(PointF{1.0f, 2.0f});
+  EXPECT_FALSE(document.add(annotation));
+  EXPECT_EQ(document.count(), 0u);
+}
+
+TEST(AnnotationDocumentTest, RejectMosaicThatOnlyHasBounds)
+{
+  // 画笔式马赛克只认 points，旧矩形 bounds 不再入档。
+  AnnotationDocument document;
+  Annotation annotation;
+  annotation.type = AnnotationType::Mosaic;
+  annotation.bounds = RectF{10.0f, 10.0f, 20.0f, 20.0f};
+  EXPECT_FALSE(document.add(annotation));
+  EXPECT_EQ(document.count(), 0u);
+}
+
+TEST(AnnotationDocumentTest, AcceptMosaicWithTwoPoints)
+{
+  AnnotationDocument document;
+  Annotation annotation;
+  annotation.type = AnnotationType::Mosaic;
+  annotation.points.push_back(PointF{1.0f, 2.0f});
+  annotation.points.push_back(PointF{8.0f, 9.0f});
+  annotation.mosaic_block_size = DefaultMosaicBlockSize;
+  ASSERT_TRUE(document.add(annotation));
+  EXPECT_EQ(document.count(), 1u);
+  EXPECT_EQ(document.items().at(0).type, AnnotationType::Mosaic);
+}
+
 TEST(AnnotationDocumentTest, RejectEmptyText)
 {
   AnnotationDocument document;
