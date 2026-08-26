@@ -101,6 +101,38 @@ bool sendOneWheelDown(const LongShotRequest& request,
                              kScrollDispatchTimeoutMs, &message_result) != 0;
 }
 
+ActionResult captureNextFrame(CaptureEngine& capture,
+                              const LongShotRequest& request,
+                              const LongShotProfileResult& before_profile,
+                              Image& frame) {
+  if (!sendOneWheelDown(request, before_profile)) {
+    return makeFailure(ErrorCode::kLongShotUnsupported,
+                       "longshot: scroll target did not accept wheel input");
+  }
+  std::this_thread::sleep_for(kInitialScrollSettleDelay);
+
+  LongShotProfileResult after_profile;
+  ActionResult result = validateRequest(request, after_profile);
+  if (!result.ok) {
+    return result;
+  }
+  if (!sameProfileGeometry(before_profile, after_profile)) {
+    return makeFailure(ErrorCode::kLongShotUnsupported,
+                       "longshot: target moved or resized during capture");
+  }
+
+  result = capture.captureRegion(request.x, request.y, request.width,
+                                 request.height, frame);
+  if (!result.ok) {
+    return result;
+  }
+  if (!imageMatchesRequest(frame, request)) {
+    return makeFailure(ErrorCode::kCaptureFailed,
+                       "longshot: next frame does not match selection");
+  }
+  return makeSuccess();
+}
+
 }  // namespace
 
 struct LongShotEngine::Impl {
@@ -146,6 +178,25 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                        "longshot: failed to stitch initial frames");
   }
 
+  LongShotProfileResult before_third_profile;
+  ActionResult result = validateRequest(request, before_third_profile);
+  if (!result.ok) {
+    return result;
+  }
+
+  Image third_frame;
+  result = captureNextFrame(*impl_->capture, request, before_third_profile,
+                            third_frame);
+  if (!result.ok) {
+    return result;
+  }
+  if (!stitcher.append(stitched, third_frame) ||
+      stitched.width != request.width || stitched.height <= 0 ||
+      stitched.pixels.empty()) {
+    return makeFailure(ErrorCode::kCaptureFailed,
+                       "longshot: failed to stitch third frame");
+  }
+
   out = std::move(stitched);
   return makeSuccess();
 }
@@ -171,31 +222,11 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
                        "longshot: first frame does not match selection");
   }
 
-  if (!sendOneWheelDown(request, before_profile)) {
-    return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: scroll target did not accept wheel input");
-  }
-  std::this_thread::sleep_for(kInitialScrollSettleDelay);
-
-  LongShotProfileResult after_profile;
-  result = validateRequest(request, after_profile);
-  if (!result.ok) {
-    return result;
-  }
-  if (!sameProfileGeometry(before_profile, after_profile)) {
-    return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: target moved or resized during capture");
-  }
-
   Image second_frame;
-  result = impl_->capture->captureRegion(request.x, request.y, request.width,
-                                         request.height, second_frame);
+  result = captureNextFrame(*impl_->capture, request, before_profile,
+                            second_frame);
   if (!result.ok) {
     return result;
-  }
-  if (!imageMatchesRequest(second_frame, request)) {
-    return makeFailure(ErrorCode::kCaptureFailed,
-                       "longshot: second frame does not match selection");
   }
 
   out.first_frame = std::move(first_frame);

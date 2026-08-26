@@ -189,8 +189,8 @@ TEST(NotepadLongShotProfileTest, ChildHandleCannotReplaceRecordedRootWindow) {
 }
 
 TEST(LongShotEngineProfileIntegrationTest,
-     SupportedSelectionStitchesInitialPair) {
-  TestEditorWindow window(kNotepadWindowClass);
+     SupportedSelectionStitchesTwoScrollIntervals) {
+  TestEditorWindow window(kNotepadWindowClass, true);
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
@@ -215,6 +215,7 @@ TEST(LongShotEngineProfileIntegrationTest,
   EXPECT_EQ(out.pixels.size(),
             static_cast<std::size_t>(out.width) *
                 static_cast<std::size_t>(out.height));
+  EXPECT_EQ(window.wheelMessageCount(), 2);
 }
 
 TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
