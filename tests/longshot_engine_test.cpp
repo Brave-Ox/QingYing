@@ -5,6 +5,21 @@
 
 namespace qingying {
 
+TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
+  const LongShotLimits limits;
+
+  EXPECT_TRUE(limits.valid());
+  EXPECT_EQ(limits.max_frames, 30);
+  EXPECT_EQ(limits.max_output_height, 30000);
+}
+
+TEST(LongShotLimitsTest, InitialPairRequiresAtLeastTwoFrames) {
+  LongShotLimits limits;
+  limits.max_frames = 1;
+
+  EXPECT_FALSE(limits.valid());
+}
+
 TEST(LongShotEngineTest, InvalidSelectionRequestClearsOutput) {
   CaptureEngine capture;
   LongShotEngine engine(capture);

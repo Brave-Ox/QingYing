@@ -241,6 +241,33 @@ TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
   EXPECT_TRUE(out.empty());
 }
 
+TEST(LongShotEngineProfileIntegrationTest,
+     SelectionAboveConfiguredOutputHeightIsRejected) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+
+  LongShotLimits limits;
+  limits.max_output_height = profile.content_height - 1;
+  CaptureEngine capture;
+  LongShotEngine engine(capture, limits);
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
+      profile.content_y, profile.content_width, profile.content_height};
+  Image out;
+
+  const ActionResult result = engine.captureSelection(request, out);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kInvalidArgument);
+  EXPECT_TRUE(out.empty());
+  EXPECT_EQ(window.wheelMessageCount(), 0);
+}
+
 TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
   TestEditorWindow window(kNotepadWindowClass, true);
   ASSERT_NE(window.root(), nullptr);

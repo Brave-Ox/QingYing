@@ -136,13 +136,15 @@ ActionResult captureNextFrame(CaptureEngine& capture,
 }  // namespace
 
 struct LongShotEngine::Impl {
-  explicit Impl(CaptureEngine& capture_engine) : capture(&capture_engine) {}
+  explicit Impl(CaptureEngine& capture_engine, LongShotLimits capture_limits)
+      : capture(&capture_engine), limits(capture_limits) {}
 
   CaptureEngine* capture{nullptr};
+  LongShotLimits limits;
 };
 
-LongShotEngine::LongShotEngine(CaptureEngine& capture)
-    : impl_(new Impl(capture)) {}
+LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
+    : impl_(new Impl(capture, limits)) {}
 
 LongShotEngine::~LongShotEngine() {
   delete impl_;
@@ -163,6 +165,19 @@ void LongShotFramePair::clear() {
 ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                                               Image& out) {
   out = Image{};
+  if (!request.valid()) {
+    return makeFailure(ErrorCode::kInvalidArgument,
+                       "longshot: owner window and selection are required");
+  }
+  if (!impl_->limits.valid()) {
+    return makeFailure(ErrorCode::kInvalidArgument,
+                       "longshot: safety limits are invalid");
+  }
+  if (request.height > impl_->limits.max_output_height) {
+    return makeFailure(ErrorCode::kInvalidArgument,
+                       "longshot: selection exceeds maximum output height");
+  }
+
   LongShotFramePair frames;
   const ActionResult capture_result = captureInitialPair(request, frames);
   if (!capture_result.ok) {
@@ -172,6 +187,19 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
   Image stitched = std::move(frames.first_frame);
   ImageStitcher stitcher;
   int second_overlap_rows = 0;
+  if (!stitcher.findOverlap(stitched, frames.second_frame,
+                            second_overlap_rows)) {
+    return makeFailure(ErrorCode::kCaptureFailed,
+                       "longshot: failed to inspect initial overlap");
+  }
+  const std::int64_t second_height =
+      static_cast<std::int64_t>(stitched.height) +
+      static_cast<std::int64_t>(frames.second_frame.height) -
+      static_cast<std::int64_t>(second_overlap_rows);
+  if (second_height > impl_->limits.max_output_height) {
+    out = std::move(stitched);
+    return makeSuccess();
+  }
   if (!stitcher.append(stitched, frames.second_frame, &second_overlap_rows) ||
       stitched.width != request.width || stitched.height <= 0 ||
       stitched.pixels.empty()) {
@@ -186,23 +214,45 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
     return makeSuccess();
   }
 
-  LongShotProfileResult before_third_profile;
-  ActionResult result = validateRequest(request, before_third_profile);
-  if (!result.ok) {
-    return result;
-  }
+  int frame_count = 2;
+  while (frame_count < impl_->limits.max_frames &&
+         stitched.height < impl_->limits.max_output_height) {
+    LongShotProfileResult before_next_profile;
+    ActionResult result = validateRequest(request, before_next_profile);
+    if (!result.ok) {
+      return result;
+    }
 
-  Image third_frame;
-  result = captureNextFrame(*impl_->capture, request, before_third_profile,
-                            third_frame);
-  if (!result.ok) {
-    return result;
-  }
-  if (!stitcher.append(stitched, third_frame) ||
-      stitched.width != request.width || stitched.height <= 0 ||
-      stitched.pixels.empty()) {
-    return makeFailure(ErrorCode::kCaptureFailed,
-                       "longshot: failed to stitch third frame");
+    Image next_frame;
+    result = captureNextFrame(*impl_->capture, request, before_next_profile,
+                              next_frame);
+    if (!result.ok) {
+      return result;
+    }
+
+    int next_overlap_rows = 0;
+    if (!stitcher.findOverlap(stitched, next_frame, next_overlap_rows)) {
+      return makeFailure(ErrorCode::kCaptureFailed,
+                         "longshot: failed to inspect next overlap");
+    }
+    const std::int64_t next_height =
+        static_cast<std::int64_t>(stitched.height) +
+        static_cast<std::int64_t>(next_frame.height) -
+        static_cast<std::int64_t>(next_overlap_rows);
+    if (next_height > impl_->limits.max_output_height) {
+      break;
+    }
+    if (!stitcher.append(stitched, next_frame, &next_overlap_rows) ||
+        stitched.width != request.width || stitched.height <= 0 ||
+        stitched.pixels.empty()) {
+      return makeFailure(ErrorCode::kCaptureFailed,
+                         "longshot: failed to stitch next frame");
+    }
+
+    ++frame_count;
+    if (next_overlap_rows == next_frame.height) {
+      break;
+    }
   }
 
   out = std::move(stitched);

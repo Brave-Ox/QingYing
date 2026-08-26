@@ -24,6 +24,17 @@ struct LongShotRequest {
   }
 };
 
+// Safety limits for one long-shot capture. The initial pair already consumes
+// two frames, so max_frames must be at least two.
+struct LongShotLimits {
+  int max_frames{30};
+  int max_output_height{30000};
+
+  bool valid() const {
+    return max_frames >= 2 && max_output_height > 0;
+  }
+};
+
 // Step-4 raw result: two captures of the exact same screen rectangle, before
 // and after one scroll input. It is not yet the final stitched long image.
 struct LongShotFramePair {
@@ -36,19 +47,19 @@ struct LongShotFramePair {
 
 class LongShotEngine {
  public:
-  explicit LongShotEngine(CaptureEngine& capture);
+  explicit LongShotEngine(CaptureEngine& capture, LongShotLimits limits = {});
   ~LongShotEngine();
 
   LongShotEngine(const LongShotEngine&) = delete;
   LongShotEngine& operator=(const LongShotEngine&) = delete;
 
   // Repeatedly captures exactly request.{x,y,width,height} while scrolling
-  // request.owner_window through an application-specific profile.
+  // request.owner_window through an application-specific profile. The loop
+  // stops on a full-frame overlap or either safety limit.
   ActionResult captureSelection(const LongShotRequest& request, Image& out);
 
-  // Captures exactly two raw frames around one wheel input. This staged API
-  // keeps captureSelection's final-image contract intact until stitching is
-  // connected in the next step.
+  // Captures exactly two raw frames around one wheel input. This staged API is
+  // kept for validating the first scroll independently of the final loop.
   ActionResult captureInitialPair(const LongShotRequest& request,
                                   LongShotFramePair& out);
 
