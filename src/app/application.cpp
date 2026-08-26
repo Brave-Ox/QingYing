@@ -115,6 +115,17 @@ void Application::runCapturePipeline(const SelectionResult& region) {
       return;
     }
     session_.setResult(std::move(image));
+
+    // LongShot produces the same CaptureSession payload as an ordinary
+    // region capture. Reuse the existing Copy handler so the first usable
+    // long-shot result is immediately available to paste elsewhere.
+    ActionRequest copy_request;
+    copy_request.type = ActionType::Copy;
+    const ActionResult copy_result = dispatcher_.dispatch(copy_request);
+    if (!copy_result.ok) {
+      MessageBoxW(tray_.hwnd(), L"Failed to copy the long screenshot.",
+                  L"QingYing", MB_OK | MB_ICONERROR);
+    }
     return;
   }
 

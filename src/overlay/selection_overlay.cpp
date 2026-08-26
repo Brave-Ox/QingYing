@@ -24,6 +24,7 @@ constexpr UINT kToolbarButtonCopy = 1;
 constexpr UINT kToolbarButtonSave = 2;
 constexpr UINT kToolbarButtonEdit = 3;
 constexpr UINT kToolbarButtonPin = 4;
+constexpr UINT kToolbarButtonLongShot = 5;
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
@@ -234,6 +235,7 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
       createButton(L"复制", kToolbarButtonCopy, true);
       createButton(L"下载图片", kToolbarButtonSave, true);
+      createButton(L"长截图", kToolbarButtonLongShot, true);
       createButton(L"编辑", kToolbarButtonEdit, false);
       createButton(L"钉图", kToolbarButtonPin, true);
       return 0;
@@ -248,6 +250,9 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           break;
         case kToolbarButtonSave:
           chooseToolbarAction(data, SelectionAction::Save);
+          break;
+        case kToolbarButtonLongShot:
+          chooseToolbarAction(data, SelectionAction::LongShot);
           break;
         case kToolbarButtonPin:
           chooseToolbarAction(data, SelectionAction::Pin);
@@ -282,7 +287,7 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
     return false;
   }
 
-  const int button_count = 4;
+  const int button_count = 5;
   const int toolbar_width =
       data->toolbar_padding * 2 + button_count * data->toolbar_button_w +
       (button_count - 1) * data->toolbar_button_gap;
