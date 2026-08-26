@@ -41,5 +41,14 @@ inline int clientToScreenY(int client_y, const VirtualScreenRect& screen) {
   return client_y + screen.top;
 }
 
+// 虚拟桌面屏幕坐标 → 覆盖层客户区坐标（减虚拟桌面原点偏移）。
+inline int screenToClientX(int screen_x, const VirtualScreenRect& screen) {
+  return screen_x - screen.left;
+}
+
+inline int screenToClientY(int screen_y, const VirtualScreenRect& screen) {
+  return screen_y - screen.top;
+}
+
 }  // namespace coord
 }  // namespace qingying

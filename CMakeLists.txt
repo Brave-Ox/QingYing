@@ -49,11 +49,15 @@ add_library(qingying_overlay STATIC
   src/overlay/selection_overlay.cpp
   src/overlay/selection_handles.cpp
   src/overlay/coordinate_transform.cpp
+  src/window/window_detector.cpp
 )
 target_include_directories(qingying_overlay
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
+if(WIN32)
+  target_link_libraries(qingying_overlay PUBLIC dwmapi)
+endif()
 
 add_library(qingying_annotate STATIC
   src/annotate/annotation_engine.cpp

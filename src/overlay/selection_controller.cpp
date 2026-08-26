@@ -171,6 +171,22 @@ void SelectionController::setBounds(int width, int height) {
   clampToBounds();
 }
 
+void SelectionController::setSelection(int x, int y, int width, int height) {
+  if (width <= 0 || height <= 0) {
+    cancel();
+    return;
+  }
+  m_selection = SelectionResult{};
+  m_selection.cancelled = false;
+  m_selection.x = x;
+  m_selection.y = y;
+  m_selection.width = width;
+  m_selection.height = height;
+  m_mode = Mode::None;
+  m_handle = SelectionHandle::None;
+  clampToBounds();
+}
+
 SelectionHandle SelectionController::hitTest(int x, int y) const {
   if (m_selection.cancelled || m_selection.width <= 0 ||
       m_selection.height <= 0) {

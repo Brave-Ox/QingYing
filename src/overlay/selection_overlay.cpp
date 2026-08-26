@@ -12,6 +12,7 @@
 #include "qingying/overlay/mask_renderer.hpp"
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"
+#include "qingying/window/window_detector.hpp"
 
 namespace qingying {
 
@@ -28,6 +29,8 @@ constexpr int kToolbarButtonHeight = 30;
 constexpr int kToolbarButtonGap = 4;
 constexpr int kToolbarPadding = 4;
 constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
+constexpr std::uint32_t kHoverPixel = 0xFF00B4FFu;   // 窗口吸附悬停高亮：亮蓝
+constexpr int kHoverThickness = 3;
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
@@ -51,6 +54,9 @@ struct OverlayWindowData {
   int toolbar_button_gap{kToolbarButtonGap};
   int toolbar_padding{kToolbarPadding};
   SelectionHandle active_handle{SelectionHandle::None};
+  WindowDetector window_detector;  // 窗口吸附检测
+  bool has_hover{false};           // 是否悬停在可吸附窗口上
+  SelectionResult hover_rect;      // 悬停窗口矩形（客户区坐标）
 };
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -159,6 +165,29 @@ SelectionResult toScreenSelection(const SelectionResult& client,
   out.x += screen.left;
   out.y += screen.top;
   return out;
+}
+
+// 窗口吸附悬停检测：把鼠标客户区坐标转成屏幕坐标交给 WindowDetector，
+// 找到候选窗口后再转回客户区坐标，保存为悬停矩形。
+void updateHover(OverlayWindowData* data, int client_x, int client_y) {
+  if (data == nullptr) {
+    return;
+  }
+  const int screen_x = coord::clientToScreenX(client_x, data->screen);
+  const int screen_y = coord::clientToScreenY(client_y, data->screen);
+
+  HWND window = nullptr;
+  WindowRect rect;
+  if (data->window_detector.detectAt(screen_x, screen_y, window, rect)) {
+    data->hover_rect.cancelled = false;
+    data->hover_rect.x = coord::screenToClientX(rect.left, data->screen);
+    data->hover_rect.y = coord::screenToClientY(rect.top, data->screen);
+    data->hover_rect.width = rect.width();
+    data->hover_rect.height = rect.height();
+    data->has_hover = true;
+  } else {
+    data->has_hover = false;
+  }
 }
 
 LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -285,11 +314,41 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
   return true;
 }
 
+// 像素缓冲写点（越界跳过）。
+void setOverlayPixel(std::vector<std::uint32_t>& pixels, int width, int height,
+                     int x, int y, std::uint32_t color) {
+  if (x < 0 || y < 0 || x >= width || y >= height) {
+    return;
+  }
+  pixels.at(static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+            static_cast<std::size_t>(x)) = color;
+}
+
+// 绘制窗口吸附悬停高亮边框（矩形轮廓）。
+void drawHoverOutline(std::vector<std::uint32_t>& pixels, int width, int height,
+                      const SelectionResult& rect, std::uint32_t color,
+                      int thickness) {
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+  const int right = rect.x + rect.width - 1;
+  const int bottom = rect.y + rect.height - 1;
+  for (int t = 0; t < thickness; ++t) {
+    for (int i = rect.x; i <= right; ++i) {
+      setOverlayPixel(pixels, width, height, i, rect.y + t, color);
+      setOverlayPixel(pixels, width, height, i, bottom - t, color);
+    }
+    for (int j = rect.y; j <= bottom; ++j) {
+      setOverlayPixel(pixels, width, height, rect.x + t, j, color);
+      setOverlayPixel(pixels, width, height, right - t, j, color);
+    }
+  }
+}
+
 // 重新渲染遮罩到分层窗口。返回 false 表示渲染失败。
-// selection 使用覆盖层客户区坐标（原点 0,0）；draw_handles 为 true 时叠加八点手柄。
-bool updateOverlay(HWND hwnd, const coord::VirtualScreenRect& screen,
-                   const SelectionResult& selection, bool draw_handles,
-                   int handle_radius) {
+bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
+  const coord::VirtualScreenRect& screen = data->screen;
+  const SelectionResult& selection = data->controller.selection();
   const int width = screen.width;
   const int height = screen.height;
   if (width <= 0 || height <= 0) {
@@ -328,10 +387,13 @@ bool updateOverlay(HWND hwnd, const coord::VirtualScreenRect& screen,
   if (pixels.size() != num_pixels) {
     return false;
   }
-  if (draw_handles && !selection.cancelled) {
+  if (data->selection_confirmed && !selection.cancelled) {
     handles::drawHandles(pixels, width, height, selection.x, selection.y,
                          selection.width, selection.height, kHandlePixel,
-                         handle_radius);
+                         data->handle_radius);
+  } else if (data->drag == DragKind::None && data->has_hover) {
+    drawHoverOutline(pixels, width, height, data->hover_rect, kHoverPixel,
+                     kHoverThickness);
   }
   // DIB 与像素缓冲同布局（BGRA，顶向下），直接拷贝。
   std::copy(pixels.begin(), pixels.end(),
@@ -377,9 +439,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data == nullptr) {
         return 0;
       }
-      const SelectionResult& sel = data->controller.selection();
-      if (!updateOverlay(hwnd, data->screen, sel, false,
-                         data->handle_radius)) {
+      if (!updateOverlay(hwnd, data)) {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -410,7 +470,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
 
-      // 已有有效选区：命中测试决定「调整 / 移动 / 重新框选」。
+      // 已有有效选区：清除悬停，命中测试决定「调整 / 移动 / 重新框选」。
+      data->has_hover = false;
       const SelectionHandle handle = data->controller.hitTest(x, y);
       if (handle == SelectionHandle::None) {
         destroyToolbar(data);
@@ -442,7 +503,17 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
       updateOverlayCursor(data, x, y);
-      if (data->drag == DragKind::None || (wparam & MK_LBUTTON) == 0) {
+
+      if (data->drag == DragKind::None) {
+        // 空闲悬停：无按键且未确认选区 → 窗口吸附高亮。
+        if ((wparam & MK_LBUTTON) == 0 && !data->selection_confirmed) {
+          updateHover(data, x, y);
+          updateOverlay(hwnd, data);
+        }
+        return 0;
+      }
+
+      if ((wparam & MK_LBUTTON) == 0) {
         return 0;
       }
       switch (data->drag) {
@@ -458,8 +529,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         default:
           break;
       }
-      updateOverlay(hwnd, data->screen, data->controller.selection(),
-                    data->selection_confirmed, data->handle_radius);
+      updateOverlay(hwnd, data);
       return 0;
     }
     case WM_LBUTTONUP: {
@@ -473,6 +543,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         case DragKind::Create:
           data->controller.update(x, y);
           data->controller.confirm();
+          if (data->controller.selection().cancelled && data->has_hover) {
+            // 纯点击未拖拽 → 吸附悬停窗口。
+            data->controller.setSelection(
+                data->hover_rect.x, data->hover_rect.y, data->hover_rect.width,
+                data->hover_rect.height);
+          }
           break;
         case DragKind::Resize:
           data->controller.updateResize(x, y);
@@ -504,7 +580,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
-      updateOverlay(hwnd, data->screen, selection, true, data->handle_radius);
+      updateOverlay(hwnd, data);
       return 0;
     }
     case WM_RBUTTONDOWN: {

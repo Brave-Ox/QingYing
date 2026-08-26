@@ -61,6 +61,9 @@ class SelectionController {
   // 设置手柄命中半径（逻辑像素）；覆盖层按 DPI 缩放后传入。
   void setHandleRadius(int radius);
 
+  // 直接写入已确认的吸附选区（窗口吸附），不经过鼠标拖拽；宽高 <= 0 则取消。
+  void setSelection(int x, int y, int width, int height);
+
  private:
   enum class Mode { None, Creating, Resizing, Moving };
 

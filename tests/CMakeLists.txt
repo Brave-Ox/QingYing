@@ -13,6 +13,7 @@ add_executable(qingying_tests
   coordinate_transform_test.cpp
   f1_selection_integration_test.cpp
   pin_manager_test.cpp
+  window_detector_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 
