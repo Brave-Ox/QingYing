@@ -97,7 +97,7 @@ TEST(AnnotationOverlayTest, PropertyBarVisibilityDependsOnTool)
   EXPECT_TRUE(annotationEditorShowsPropertyBar(AnnotationTool::Arrow));
   EXPECT_TRUE(annotationEditorShowsPropertyBar(AnnotationTool::Pen));
   EXPECT_TRUE(annotationEditorShowsPropertyBar(AnnotationTool::Text));
-  EXPECT_FALSE(annotationEditorShowsPropertyBar(AnnotationTool::Mosaic));
+  EXPECT_TRUE(annotationEditorShowsPropertyBar(AnnotationTool::Mosaic));
   EXPECT_FALSE(annotationEditorShowsPropertyBar(AnnotationTool::None));
 }
 
@@ -112,14 +112,51 @@ TEST(AnnotationOverlayTest, StrokeToolsShowWidthNotFontOnPropertyBar)
   EXPECT_FALSE(annotationEditorPropertyBarShowsFont(AnnotationTool::Mosaic));
 }
 
-TEST(AnnotationOverlayTest, ChromeHeightAddsPropertyBarExceptMosaic)
+TEST(AnnotationOverlayTest, MosaicPropertyBarShowsSizeNotColorStrokeOrFont)
+{
+  EXPECT_TRUE(annotationEditorPropertyBarShowsMosaicSize(AnnotationTool::Mosaic));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsMosaicSize(AnnotationTool::Pen));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsMosaicSize(AnnotationTool::Text));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsColor(AnnotationTool::Mosaic));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsColor(AnnotationTool::Pen));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsColor(AnnotationTool::Text));
+}
+
+TEST(AnnotationOverlayTest, SizeComboShownForTextAndMosaicOnly)
+{
+  EXPECT_TRUE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Mosaic));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Pen));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Rectangle));
+}
+
+TEST(AnnotationOverlayTest, MosaicSizeComboPresetsIncludeDefaultTwelve)
+{
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptionCount, 4);
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptions[0], 8);
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptions[1], 12);
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptions[2], 16);
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptions[3], 24);
+  EXPECT_EQ(AnnotationEditorMosaicSizeOptions[1], DefaultMosaicBlockSize);
+}
+
+TEST(AnnotationOverlayTest, ChromeHeightAddsPropertyBarForMosaic)
 {
   EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Rectangle),
             annotationEditorToolbarHeight() * 2);
   EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Text),
             annotationEditorToolbarHeight() * 2);
   EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Mosaic),
-            annotationEditorToolbarHeight());
+            annotationEditorToolbarHeight() * 2);
+}
+
+TEST(AnnotationOverlayTest, ClampMosaicBlockSizeKeepsDefaultAndClampsRange)
+{
+  EXPECT_EQ(annotationEditorClampMosaicBlockSize(DefaultMosaicBlockSize),
+            DefaultMosaicBlockSize);
+  EXPECT_EQ(annotationEditorClampMosaicBlockSize(0), 1);
+  EXPECT_EQ(annotationEditorClampMosaicBlockSize(-4), 1);
+  EXPECT_EQ(annotationEditorClampMosaicBlockSize(999), 32);
 }
 
 TEST(AnnotationOverlayTest, InPlacePlacementPinsImageOriginToSelection)
@@ -329,7 +366,8 @@ TEST(AnnotationOverlayTest, HandlePointsSitOnImageEdges)
 // 预期：
 // 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
 // 2. 底部主栏：矩形/椭圆/箭头/画笔/马赛克/文字 | 撤销 | 完成/取消
-//    点工具后下方二级栏：描边工具为色块+线宽；文字为色块+字号；马赛克无二级栏
+//    点工具后下方二级栏：描边工具为色块+线宽；文字为色块+字号；
+//    马赛克为块大小下拉（8/12/16/24，默认 12），无色块
 // 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
 // 4. 文字：空白单击新建；已有文字单击出现黑框+删除；拖过阈值可改位置；
 //    双击进入就地编辑（输入中显示所选颜色，透明底细黑框）；二级栏可改颜色/字号

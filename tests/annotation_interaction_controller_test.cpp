@@ -265,6 +265,39 @@ TEST(AnnotationInteractionControllerTest, MosaicStrokeCollectsPointsLikePen)
   EXPECT_EQ(mosaic.mosaic_block_size, DefaultMosaicBlockSize);
 }
 
+TEST(AnnotationInteractionControllerTest, MosaicBlockSizeDefaultsToTwelve)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  EXPECT_EQ(controller.mosaicBlockSize(), DefaultMosaicBlockSize);
+}
+
+TEST(AnnotationInteractionControllerTest, MosaicStrokeUsesConfiguredBlockSize)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  AnnotationEngine engine;
+
+  controller.setTool(AnnotationTool::Mosaic);
+  controller.setMosaicBlockSize(16);
+  ASSERT_TRUE(controller.beginStroke(1.0f, 1.0f));
+  controller.updateStroke(4.0f, 5.0f);
+  ASSERT_TRUE(controller.endStroke(engine));
+
+  ASSERT_EQ(engine.document().count(), 1u);
+  EXPECT_EQ(engine.document().items().at(0).mosaic_block_size, 16);
+}
+
+TEST(AnnotationInteractionControllerTest, MosaicBlockSizeClampsOutOfRange)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setMosaicBlockSize(0);
+  EXPECT_EQ(controller.mosaicBlockSize(), 1);
+  controller.setMosaicBlockSize(999);
+  EXPECT_EQ(controller.mosaicBlockSize(), 32);
+}
+
 TEST(AnnotationInteractionControllerTest, SinglePointMosaicIsRejectedOnEnd)
 {
   AnnotationInteractionController controller;
@@ -275,6 +308,91 @@ TEST(AnnotationInteractionControllerTest, SinglePointMosaicIsRejectedOnEnd)
   ASSERT_TRUE(controller.beginStroke(1.0f, 1.0f));
   EXPECT_FALSE(controller.endStroke(engine));
   EXPECT_TRUE(engine.document().empty());
+}
+
+TEST(AnnotationInteractionControllerTest, DefaultStyleMatchesAnnotationStyleDefault)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  EXPECT_EQ(controller.style().color.b, AnnotationStyle{}.color.b);
+  EXPECT_EQ(controller.style().color.g, AnnotationStyle{}.color.g);
+  EXPECT_EQ(controller.style().color.r, AnnotationStyle{}.color.r);
+  EXPECT_EQ(controller.style().color.a, AnnotationStyle{}.color.a);
+  EXPECT_FLOAT_EQ(controller.style().stroke_width, DefaultStrokeWidth);
+  EXPECT_EQ(controller.style().font_size, DefaultFontSize);
+}
+
+TEST(AnnotationInteractionControllerTest, SetColorIsUsedByPreviewAndCommittedStroke)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  AnnotationEngine engine;
+
+  const ColorBgra blue = AnnotationStylePresetColors[5];
+  controller.setColor(blue);
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+  EXPECT_EQ(controller.preview().style.color.b, blue.b);
+  EXPECT_EQ(controller.preview().style.color.g, blue.g);
+  EXPECT_EQ(controller.preview().style.color.r, blue.r);
+
+  ASSERT_TRUE(controller.endStroke(engine));
+  ASSERT_EQ(engine.document().count(), 1u);
+  EXPECT_EQ(engine.document().items().at(0).style.color.r, blue.r);
+  EXPECT_EQ(engine.document().items().at(0).style.color.b, blue.b);
+}
+
+TEST(AnnotationInteractionControllerTest, SetStrokeWidthIsUsedByPreview)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  controller.setStrokeWidth(AnnotationStylePresetStrokeWidths[2]);
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+  EXPECT_FLOAT_EQ(controller.preview().style.stroke_width,
+                  AnnotationStylePresetStrokeWidths[2]);
+}
+
+TEST(AnnotationInteractionControllerTest, ColorPersistsWhenSwitchingTools)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  const ColorBgra green = AnnotationStylePresetColors[3];
+  controller.setColor(green);
+  controller.setTool(AnnotationTool::Pen);
+  EXPECT_EQ(controller.style().color.g, green.g);
+  EXPECT_EQ(controller.style().color.r, green.r);
+}
+
+TEST(AnnotationInteractionControllerTest, SetColorWhileDrawingUpdatesPreview)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+  controller.setColor(AnnotationStylePresetColors[1]);
+  EXPECT_TRUE(controller.isDrawing());
+  EXPECT_EQ(controller.preview().style.color.r,
+            AnnotationStylePresetColors[1].r);
+  EXPECT_EQ(controller.preview().style.color.g,
+            AnnotationStylePresetColors[1].g);
+}
+
+TEST(AnnotationInteractionControllerTest, SetStrokeWidthClampsToRange)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  controller.setStrokeWidth(0.0f);
+  EXPECT_FLOAT_EQ(controller.style().stroke_width, MinStrokeWidth);
+
+  controller.setStrokeWidth(100.0f);
+  EXPECT_FLOAT_EQ(controller.style().stroke_width, MaxStrokeWidth);
 }
 
 }  // namespace qingying

@@ -58,6 +58,52 @@ AnnotationTool AnnotationInteractionController::tool() const
   return m_tool;
 }
 
+void AnnotationInteractionController::refreshPreviewStyle()
+{
+  if (m_drawing)
+  {
+    rebuildPreview(m_last_x, m_last_y);
+  }
+}
+
+void AnnotationInteractionController::setColor(const ColorBgra& color)
+{
+  m_style.color = color;
+  refreshPreviewStyle();
+}
+
+void AnnotationInteractionController::setStrokeWidth(float width)
+{
+  m_style.stroke_width =
+      (std::min)((std::max)(width, MinStrokeWidth), MaxStrokeWidth);
+  refreshPreviewStyle();
+}
+
+void AnnotationInteractionController::setFontSize(int font_size)
+{
+  m_style.font_size =
+      (std::min)((std::max)(font_size, MinFontSize), MaxFontSize);
+}
+
+void AnnotationInteractionController::setMosaicBlockSize(int block_size)
+{
+  m_mosaic_block_size = clampMosaicBlockSize(block_size);
+  if (m_drawing && m_tool == AnnotationTool::Mosaic)
+  {
+    rebuildPreview(m_last_x, m_last_y);
+  }
+}
+
+int AnnotationInteractionController::mosaicBlockSize() const
+{
+  return m_mosaic_block_size;
+}
+
+const AnnotationStyle& AnnotationInteractionController::style() const
+{
+  return m_style;
+}
+
 bool AnnotationInteractionController::isInsideCanvas(float x, float y) const
 {
   return x >= 0.0f && y >= 0.0f && x < static_cast<float>(m_canvas_width) &&
@@ -74,6 +120,8 @@ bool AnnotationInteractionController::beginStroke(float x, float y)
   m_drawing = true;
   m_start_x = x;
   m_start_y = y;
+  m_last_x = x;
+  m_last_y = y;
   rebuildPreview(x, y);
   return true;
 }
@@ -84,6 +132,8 @@ void AnnotationInteractionController::updateStroke(float x, float y)
   {
     return;
   }
+  m_last_x = x;
+  m_last_y = y;
   rebuildPreview(x, y);
 }
 
@@ -91,7 +141,7 @@ void AnnotationInteractionController::rebuildPreview(float x, float y)
 {
   Annotation annotation;
   annotation.type = toolToType(m_tool);
-  annotation.style = AnnotationStyle{};
+  annotation.style = m_style;
 
   switch (m_tool)
   {
@@ -130,7 +180,7 @@ void AnnotationInteractionController::rebuildPreview(float x, float y)
 
       if (m_tool == AnnotationTool::Mosaic)
       {
-        annotation.mosaic_block_size = DefaultMosaicBlockSize;
+        annotation.mosaic_block_size = m_mosaic_block_size;
       }
 
       const PointF next{x, y};

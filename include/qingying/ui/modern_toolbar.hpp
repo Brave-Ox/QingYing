@@ -14,6 +14,7 @@
 namespace qingying {
 
 // 框选操作条 / 标注底栏共用：浅灰圆角条 + 深灰方钮 + 白线图标。
+// 条上说明文字必须用 label（深色），禁止复用 icon（白色），否则浅底上看不见。
 enum class ToolbarIconKind
 {
   Copy,
@@ -59,6 +60,7 @@ struct ModernToolbarColors
   COLORREF disabled_fill{RGB(186, 190, 196)};
   COLORREF icon{RGB(255, 255, 255)};
   COLORREF icon_disabled{RGB(232, 234, 237)};
+  COLORREF label{RGB(52, 56, 64)};
   COLORREF divider{RGB(210, 214, 219)};
 };
 

@@ -5,6 +5,8 @@
 #include <string>
 #include <utility>
 
+#include <commctrl.h>
+
 #include "qingying/annotate/annotation_editor_layout.hpp"
 #include "qingying/annotate/annotation_editor_session.hpp"
 #include "qingying/annotate/annotation_interaction_controller.hpp"
@@ -29,6 +31,8 @@ constexpr UINT kButtonUndoId = 8;
 constexpr UINT kButtonMosaicId = 9;
 constexpr UINT kInlineEditId = 10;
 constexpr UINT kFontComboId = 20;
+constexpr int kComboFontPx = 13;
+const wchar_t kUiFontFace[] = L"Microsoft YaHei UI";
 
 constexpr int kInlineTextMaxChars = 256;
 constexpr int kTextDragThresholdPx = 4;
@@ -76,6 +80,8 @@ struct EditorWindowData
   AnnotationCallback callback;
   HWND overlay{nullptr};
   HWND font_combo{nullptr};
+  HFONT combo_font{nullptr};
+  bool size_combo_syncing{false};
   HWND inline_edit{nullptr};
   WNDPROC inline_edit_prev_proc{nullptr};
   HFONT inline_edit_font{nullptr};
@@ -219,6 +225,9 @@ int hitTestEditorToolbar(const EditorWindowData* data, int x, int y);
 void handleToolCommand(EditorWindowData* data, UINT id);
 void handleToolbarItemClick(EditorWindowData* data, UINT id);
 bool createButtons(HWND hwnd, EditorWindowData* data);
+void fillSizeCombo(EditorWindowData* data);
+void syncSizeFromCombo(EditorWindowData* data);
+void bindSizeComboTooltip(EditorWindowData* data);
 void updateTextGesture(EditorWindowData* data, int x, int y);
 void tryPromoteInlineEditToDrag(EditorWindowData* data, int client_x,
                                 int client_y);
@@ -985,16 +994,95 @@ void finishTextGesture(EditorWindowData* data, HWND hwnd, int x, int y)
   selectTextAnnotation(data, hwnd, index, x, y);
 }
 
-void syncFontSizeFromCombo(EditorWindowData* data)
+void fillSizeCombo(EditorWindowData* data)
 {
   if (data == nullptr || data->font_combo == nullptr)
   {
     return;
   }
 
+  const bool mosaic =
+      annotationEditorPropertyBarShowsMosaicSize(data->controller.tool());
+  const int* options = mosaic ? AnnotationEditorMosaicSizeOptions
+                              : AnnotationEditorFontSizeOptions;
+  const int count = mosaic ? AnnotationEditorMosaicSizeOptionCount
+                           : AnnotationEditorFontSizeOptionCount;
+  const int current = mosaic ? data->controller.mosaicBlockSize()
+                             : data->controller.style().font_size;
+
+  data->size_combo_syncing = true;
+  SendMessageW(data->font_combo, CB_RESETCONTENT, 0, 0);
+  int selected = 0;
+  for (int i = 0; i < count; ++i)
+  {
+    wchar_t label[16]{};
+    swprintf_s(label, L"%d", options[i]);
+    SendMessageW(data->font_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(label));
+    if (options[i] == current)
+    {
+      selected = i;
+    }
+  }
+  SendMessageW(data->font_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
+               0);
+  data->size_combo_syncing = false;
+}
+
+void bindSizeComboTooltip(EditorWindowData* data)
+{
+  if (data == nullptr || data->font_combo == nullptr ||
+      data->tooltip == nullptr || data->overlay == nullptr)
+  {
+    return;
+  }
+
+  RECT combo_rect{};
+  GetWindowRect(data->font_combo, &combo_rect);
+  POINT top_left{combo_rect.left, combo_rect.top};
+  POINT bottom_right{combo_rect.right, combo_rect.bottom};
+  ScreenToClient(data->overlay, &top_left);
+  ScreenToClient(data->overlay, &bottom_right);
+  RECT local{top_left.x, top_left.y, bottom_right.x, bottom_right.y};
+  const wchar_t* tip =
+      annotationEditorPropertyBarShowsMosaicSize(data->controller.tool())
+          ? L"\x5757\x5927\x5C0F"
+          : L"\x5B57\x53F7";
+  bindToolbarTooltip(data->tooltip, data->overlay, kFontComboId, local, tip,
+                     data->tooltip_text[kToolbarIconItemCount],
+                     kToolbarTooltipMaxChars);
+}
+
+void syncSizeFromCombo(EditorWindowData* data)
+{
+  if (data == nullptr || data->font_combo == nullptr ||
+      data->size_combo_syncing)
+  {
+    return;
+  }
+
   const LRESULT index = SendMessageW(data->font_combo, CB_GETCURSEL, 0, 0);
-  if (index == CB_ERR || index < 0 ||
-      index >= AnnotationEditorFontSizeOptionCount)
+  if (index == CB_ERR || index < 0)
+  {
+    return;
+  }
+
+  if (annotationEditorPropertyBarShowsMosaicSize(data->controller.tool()))
+  {
+    if (index >= AnnotationEditorMosaicSizeOptionCount)
+    {
+      return;
+    }
+    data->controller.setMosaicBlockSize(
+        AnnotationEditorMosaicSizeOptions[static_cast<std::size_t>(index)]);
+    if (data->controller.isDrawing())
+    {
+      invalidateImageArea(data);
+    }
+    return;
+  }
+
+  if (index >= AnnotationEditorFontSizeOptionCount)
   {
     return;
   }
@@ -1011,7 +1099,7 @@ void syncFontSizeFromCombo(EditorWindowData* data)
     data->inline_edit_font = CreateFontW(
         -data->controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
         FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, kUiFontFace);
     if (data->inline_edit_font != nullptr)
     {
       SendMessageW(data->inline_edit, WM_SETFONT,
@@ -1366,14 +1454,17 @@ void layoutPropertyBar(HWND hwnd, EditorWindowData* data)
   const int swatch_y = y + (AnnotationEditorButtonHeight - swatch) / 2;
   int x = data->image_origin_x + AnnotationEditorBarPadding;
 
-  for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+  if (annotationEditorPropertyBarShowsColor(data->controller.tool()))
   {
-    data->color_swatch_rects[static_cast<std::size_t>(i)] = {
-        x, swatch_y, x + swatch, swatch_y + swatch};
-    x += swatch + AnnotationEditorButtonGap;
+    for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+    {
+      data->color_swatch_rects[static_cast<std::size_t>(i)] = {
+          x, swatch_y, x + swatch, swatch_y + swatch};
+      x += swatch + AnnotationEditorButtonGap;
+    }
+    x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
   }
 
-  x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
   const int stroke_x = x;
   for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
   {
@@ -1402,18 +1493,22 @@ void resizeEditorChrome(EditorWindowData* data)
       annotationEditorWindowHeight(data->session.source().height, tool);
   SetWindowPos(data->overlay, nullptr, 0, 0, data->client_width, height,
                SWP_NOMOVE | SWP_NOZORDER);
+  fillSizeCombo(data);
   if (data->font_combo != nullptr)
   {
     ShowWindow(data->font_combo,
-               annotationEditorPropertyBarShowsFont(tool) ? SW_SHOW : SW_HIDE);
+               annotationEditorPropertyBarShowsSizeCombo(tool) ? SW_SHOW
+                                                               : SW_HIDE);
   }
+  bindSizeComboTooltip(data);
+  layoutPropertyBar(data->overlay, data);
   invalidateToolbar(data);
 }
 
 int hitTestColorSwatch(const EditorWindowData* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorShowsPropertyBar(data->controller.tool()))
+      !annotationEditorPropertyBarShowsColor(data->controller.tool()))
   {
     return -1;
   }
@@ -1532,19 +1627,23 @@ void paintPropertyBar(HDC hdc, EditorWindowData* data)
            bar_top + bar_height - 2};
   drawToolbarBar(hdc, bar);
 
+  const AnnotationTool tool = data->controller.tool();
   const AnnotationStyle& style = data->controller.style();
-  for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+  if (annotationEditorPropertyBarShowsColor(tool))
   {
-    const ColorBgra& preset =
-        AnnotationStylePresetColors[static_cast<std::size_t>(i)];
-    const RECT& cell = data->color_swatch_rects[static_cast<std::size_t>(i)];
-    const bool selected = colorsMatch(style.color, preset);
-    fillRoundRect(hdc, cell, colorBgraToRef(preset),
-                  selected ? kSwatchSelectedBorderColor : kSwatchBorderColor,
-                  kSwatchCornerRadius);
+    for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+    {
+      const ColorBgra& preset =
+          AnnotationStylePresetColors[static_cast<std::size_t>(i)];
+      const RECT& cell = data->color_swatch_rects[static_cast<std::size_t>(i)];
+      const bool selected = colorsMatch(style.color, preset);
+      fillRoundRect(hdc, cell, colorBgraToRef(preset),
+                    selected ? kSwatchSelectedBorderColor : kSwatchBorderColor,
+                    kSwatchCornerRadius);
+    }
   }
 
-  if (!annotationEditorPropertyBarShowsStroke(data->controller.tool()))
+  if (!annotationEditorPropertyBarShowsStroke(tool))
   {
     return;
   }
@@ -1653,6 +1752,11 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
     return false;
   }
 
+  INITCOMMONCONTROLSEX icc{};
+  icc.dwSize = sizeof(icc);
+  icc.dwICC = ICC_WIN95_CLASSES;
+  (void)InitCommonControlsEx(&icc);
+
   const Image& source = data->session.source();
   const int client_width = data->client_width;
   const int y =
@@ -1733,21 +1837,20 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
     return false;
   }
 
-  int default_index = 1;  // 16
-  for (int i = 0; i < AnnotationEditorFontSizeOptionCount; ++i)
+  data->combo_font = CreateFontW(
+      -kComboFontPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, kUiFontFace);
+  if (data->combo_font != nullptr)
   {
-    wchar_t label[16]{};
-    swprintf_s(label, L"%d", AnnotationEditorFontSizeOptions[i]);
-    SendMessageW(data->font_combo, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(label));
-    if (AnnotationEditorFontSizeOptions[i] == DefaultFontSize)
-    {
-      default_index = i;
-    }
+    SendMessageW(data->font_combo, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(data->combo_font), TRUE);
   }
-  SendMessageW(data->font_combo, CB_SETCURSEL,
-               static_cast<WPARAM>(default_index), 0);
+
   data->controller.setFontSize(DefaultFontSize);
+  data->controller.setMosaicBlockSize(DefaultMosaicBlockSize);
+  fillSizeCombo(data);
+
   layoutPropertyBar(hwnd, data);
   resizeEditorChrome(data);
 
@@ -1759,19 +1862,7 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
                        toolbarIconLabel(data->toolbar_items[i].icon),
                        data->tooltip_text[i], kToolbarTooltipMaxChars);
   }
-  if (data->font_combo != nullptr)
-  {
-    RECT combo_rect{};
-    GetWindowRect(data->font_combo, &combo_rect);
-    POINT top_left{combo_rect.left, combo_rect.top};
-    POINT bottom_right{combo_rect.right, combo_rect.bottom};
-    ScreenToClient(hwnd, &top_left);
-    ScreenToClient(hwnd, &bottom_right);
-    RECT local{top_left.x, top_left.y, bottom_right.x, bottom_right.y};
-    bindToolbarTooltip(data->tooltip, hwnd, kFontComboId, local,
-                       L"\x5B57\x53F7", data->tooltip_text[kToolbarIconItemCount],
-                       kToolbarTooltipMaxChars);
-  }
+  bindSizeComboTooltip(data);
 
   return item_index + 1 == kToolbarIconItemCount;
 }
@@ -2151,7 +2242,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const UINT code = HIWORD(wparam);
       if (id == kFontComboId && code == CBN_SELCHANGE)
       {
-        syncFontSizeFromCombo(data);
+        syncSizeFromCombo(data);
         return 0;
       }
       if (id == kInlineEditId && code == EN_CHANGE)
@@ -2216,6 +2307,11 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->tooltip = nullptr;
         }
         destroyInlineEdit(data);
+        if (data->combo_font != nullptr)
+        {
+          DeleteObject(data->combo_font);
+          data->combo_font = nullptr;
+        }
         finishAndNotify(data);
         if (data->loop_done != nullptr)
         {

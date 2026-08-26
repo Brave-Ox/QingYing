@@ -19,6 +19,13 @@ class AnnotationInteractionController
   void setTool(AnnotationTool tool);
   AnnotationTool tool() const;
 
+  void setColor(const ColorBgra& color);
+  void setStrokeWidth(float width);
+  void setFontSize(int font_size);
+  void setMosaicBlockSize(int block_size);
+  int mosaicBlockSize() const;
+  const AnnotationStyle& style() const;
+
   // 开始一笔。工具为 None、或点在画布外时返回 false。
   bool beginStroke(float x, float y);
 
@@ -40,14 +47,19 @@ class AnnotationInteractionController
 
  private:
   void rebuildPreview(float x, float y);
+  void refreshPreviewStyle();
   bool isInsideCanvas(float x, float y) const;
 
   AnnotationTool m_tool{AnnotationTool::Rectangle};
+  AnnotationStyle m_style{};
+  int m_mosaic_block_size{DefaultMosaicBlockSize};
   int m_canvas_width{0};
   int m_canvas_height{0};
   bool m_drawing{false};
   float m_start_x{0.0f};
   float m_start_y{0.0f};
+  float m_last_x{0.0f};
+  float m_last_y{0.0f};
   Annotation m_preview{};
   bool m_has_preview{false};
 };

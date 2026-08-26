@@ -17,7 +17,6 @@ namespace qingying {
 namespace {
 
 constexpr int MinStrokeThicknessPx = 1;
-constexpr int MinMosaicBlockSizePx = 1;
 constexpr double Pi = 3.14159265358979323846;
 // 箭头头部：两条从终点向后张开的短线。
 constexpr double ArrowHeadLengthPx = 8.0;
@@ -282,7 +281,7 @@ void drawPen(Image& target, const Annotation& annotation)
 
 int mosaicBlockSize(int block_size)
 {
-  return (std::max)(MinMosaicBlockSizePx, block_size);
+  return clampMosaicBlockSize(block_size);
 }
 
 void markBrush(std::vector<std::uint8_t>& mask, int width, int height, int x,

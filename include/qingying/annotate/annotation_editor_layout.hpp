@@ -21,6 +21,9 @@ inline constexpr int AnnotationEditorFontComboDropHeight = 200;
 inline constexpr int AnnotationEditorFontSizeOptionCount = 4;
 inline constexpr int AnnotationEditorFontSizeOptions[
     AnnotationEditorFontSizeOptionCount] = {12, 16, 24, 32};
+inline constexpr int AnnotationEditorMosaicSizeOptionCount = 4;
+inline constexpr int AnnotationEditorMosaicSizeOptions[
+    AnnotationEditorMosaicSizeOptionCount] = {8, 12, 16, 24};
 inline constexpr int AnnotationEditorColorSwatchSize = 20;
 inline constexpr int AnnotationEditorFrameBorderPx = 4;
 inline constexpr int AnnotationEditorHandleRadiusPx = 5;
@@ -93,8 +96,8 @@ inline bool annotationEditorShowsPropertyBar(AnnotationTool tool)
     case AnnotationTool::Arrow:
     case AnnotationTool::Pen:
     case AnnotationTool::Text:
-      return true;
     case AnnotationTool::Mosaic:
+      return true;
     case AnnotationTool::None:
     default:
       return false;
@@ -111,6 +114,28 @@ inline bool annotationEditorPropertyBarShowsStroke(AnnotationTool tool)
 inline bool annotationEditorPropertyBarShowsFont(AnnotationTool tool)
 {
   return tool == AnnotationTool::Text;
+}
+
+inline bool annotationEditorPropertyBarShowsMosaicSize(AnnotationTool tool)
+{
+  return tool == AnnotationTool::Mosaic;
+}
+
+inline bool annotationEditorPropertyBarShowsSizeCombo(AnnotationTool tool)
+{
+  return annotationEditorPropertyBarShowsFont(tool) ||
+         annotationEditorPropertyBarShowsMosaicSize(tool);
+}
+
+inline bool annotationEditorPropertyBarShowsColor(AnnotationTool tool)
+{
+  return annotationEditorPropertyBarShowsStroke(tool) ||
+         annotationEditorPropertyBarShowsFont(tool);
+}
+
+inline int annotationEditorClampMosaicBlockSize(int block_size)
+{
+  return clampMosaicBlockSize(block_size);
 }
 
 inline int annotationEditorPropertyBarHeight(AnnotationTool tool)

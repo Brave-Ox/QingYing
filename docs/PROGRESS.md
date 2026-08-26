@@ -2,7 +2,7 @@
 
 > 本文记录**当前开发进度快照**：已完成且可验证 / 进行中 / 待办 / 下一步建议。
 > 功能规划与验收指标见 [轻映-QingYing-开发清单.md](../轻映-QingYing-开发清单.md)（本文与之互补，不重复规划）。
-> 更新日期：2026-08-25
+> 更新日期：2026-08-26
 
 ---
 
@@ -15,7 +15,7 @@
 | P1 标注（第二人 Checkpoint B） | ✅ 模块可交付 | 矩形/椭圆/箭头/画笔/马赛克/文字 + 撤销 + Overlay |
 | 单元测试 | ✅ 全绿 | annotate 相关套件已接入；以本地 `qingying_tests` 为准 |
 
-**一句话**：截图主链路已通；标注模块已到 **Checkpoint B**（第三人可只依赖 `annotation_overlay.hpp` 接线）。椭圆、文字、画笔式马赛克已实现。
+**一句话**：截图主链路已通；标注模块已到 **Checkpoint B**（第三人可只依赖 `annotation_overlay.hpp` 接线）。椭圆、文字、画笔式马赛克、颜色/线宽二级栏已实现。
 
 ---
 
@@ -40,11 +40,12 @@
 | 引擎组装 | `annotation_engine.*` | `annotation_engine_test` |
 | 纯逻辑会话（确认/取消） | `annotation_editor_session.*` | `annotation_editor_session_test` |
 | 拖拽交互（工具/预览/入栈） | `annotation_interaction_controller.*` | `annotation_interaction_controller_test` |
-| 编辑器窗口（完成/取消） | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟；框选后「编辑」为选区上就地无边框标注 |
-| 标注底栏 | `annotation_overlay` + `modern_toolbar` | 同视觉：图标工具 + 字号 + 撤销/完成/取消 |
+| 编辑器窗口（完成/取消） | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟；就地编辑：外侧橙框 + 装饰八点 + 尺寸标签 |
+| 标注底栏 | `annotation_overlay` + `modern_toolbar` | 同视觉：主栏工具 + 随工具弹出的颜色/线宽或字号二级栏 |
 | 椭圆描边 | `annotation_renderer` + Overlay「椭圆」 | 轮廓像素 / 不填充 / 交互归一化 |
-| 文字标注 | `annotation_renderer` + Overlay「文字」 | 就地 EDIT；字号；单击选中+Delete；双击改字；拖拽改位 |
-| 画笔式马赛克 | `annotation_renderer` + Overlay「马赛克」 | 折线笔刷打码；块均值；撤销整笔 |
+| 文字标注 | `annotation_overlay` + renderer | 输入中即显示所选颜色；单击黑框+删除按钮；拖动双缓冲防闪 |
+| 画笔式马赛克 | `annotation_renderer` + Overlay「马赛克」 | 折线笔刷打码；点工具弹出块大小数字框；撤销整笔 |
+| 颜色/线宽二级栏 | `annotation_overlay` + controller/layout | 点工具弹出；马赛克无二级栏；共用颜色 |
 
 **第三人接线**：`#include "qingying/annotate/annotation_overlay.hpp"` → `show(owner, image, callback)`。
 
@@ -66,10 +67,12 @@
 
 - [x] **P1 标注初版（第二人）**：矩形 + 椭圆 + 箭头 + 画笔 + 撤销 + Overlay —— Checkpoint B
 - [x] **P1**：Edit → AnnotationOverlay → 回写 Session → 复制（最小接线）
-- [x] **P1 标注文字**：图上就地输入 + 字号下拉；单击选中 / 双击编辑 / Delete 删除；拖拽改位
+- [x] **P1 标注文字**：图上就地输入 + 字号下拉；输入中实时着色；单击选中 / 双击编辑 / Delete 删除；拖拽改位
 - [x] **P1 画笔式马赛克**：折线笔刷 + 固定块大小；工具条按钮
-- [x] **就地编辑区对齐选区**：禁止夹屏平移图片；编辑期间隐藏遮罩
-- [ ] **P1 标注后续**：颜色/线宽面板；重做 UI；马赛克块大小调节
+- [x] **就地编辑区对齐选区**：禁止夹屏平移图片；图片原点钉在选区左上角
+- [x] **编辑态选区指示**：重显全屏压暗遮罩（冻结框选）；图片外侧橙框/八点/尺寸标签；点压暗区取消编辑
+- [x] **P1 颜色/线宽面板**：主栏只放工具；描边工具二级栏预设色+三档线宽；文字二级栏色块+字号
+- [ ] **P1 标注后续**：重做 UI
 - [ ] **P1**：钉图接线；标注完成后回到完整操作条（Copy/Save/Pin）
 - [ ] **P1**：八点调区 / DPI / 多屏冒烟
 - [ ] **P2**：钉图；长截图
@@ -86,7 +89,7 @@
 
 ## 5. 下一步建议
 
-1. **钉图接线** 或 **颜色/线宽面板** / 重做 UI
+1. **钉图接线** 或 **重做 UI**
 2. **DPI / 多屏冒烟**
 3. **标注完成后回到完整操作条**
 

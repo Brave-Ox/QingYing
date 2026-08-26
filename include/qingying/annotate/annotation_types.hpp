@@ -31,13 +31,30 @@ enum class AnnotationTool
 inline constexpr float DefaultStrokeWidth = 3.0f;
 inline constexpr float MinStrokeWidth = 1.0f;
 inline constexpr float MaxStrokeWidth = 16.0f;
+inline constexpr int AnnotationStylePresetColorCount = 8;
+inline constexpr int AnnotationStylePresetStrokeCount = 3;
 inline constexpr float DefaultOpacity = 1.0f;
 inline constexpr int DefaultFontSize = 16;
 inline constexpr int MinFontSize = 8;
 inline constexpr int MaxFontSize = 72;
 inline constexpr int DefaultMosaicBlockSize = 12;
+inline constexpr int MinMosaicBlockSize = 1;
+inline constexpr int MaxMosaicBlockSize = 32;
 inline constexpr int MinAnnotationSizePx = 2;
 inline constexpr std::size_t MinPenPointCount = 2;
+
+inline int clampMosaicBlockSize(int block_size)
+{
+  if (block_size < MinMosaicBlockSize)
+  {
+    return MinMosaicBlockSize;
+  }
+  if (block_size > MaxMosaicBlockSize)
+  {
+    return MaxMosaicBlockSize;
+  }
+  return block_size;
+}
 
 struct ColorBgra
 {
@@ -46,6 +63,26 @@ struct ColorBgra
   std::uint8_t r{220};
   std::uint8_t a{255};
 };
+
+// Win32 RGB() 同序：0x00BBGGRR，供输入框 WM_CTLCOLOREDIT 使用。
+inline constexpr std::uint32_t annotationColorToRgb(const ColorBgra& color)
+{
+  return static_cast<std::uint32_t>(color.r) |
+         (static_cast<std::uint32_t>(color.g) << 8) |
+         (static_cast<std::uint32_t>(color.b) << 16);
+}
+
+// 红 / 橙 / 黄 / 绿 / 青 / 蓝 / 紫 / 白。首色与 ColorBgra 默认值一致。
+inline constexpr ColorBgra AnnotationStylePresetColors[
+    AnnotationStylePresetColorCount] = {
+    ColorBgra{0, 0, 220, 255},     ColorBgra{0, 140, 255, 255},
+    ColorBgra{0, 220, 255, 255},   ColorBgra{40, 180, 0, 255},
+    ColorBgra{220, 200, 0, 255},   ColorBgra{255, 80, 30, 255},
+    ColorBgra{200, 40, 140, 255},  ColorBgra{255, 255, 255, 255},
+};
+
+inline constexpr float AnnotationStylePresetStrokeWidths[
+    AnnotationStylePresetStrokeCount] = {2.0f, 4.0f, 8.0f};
 
 struct PointF
 {

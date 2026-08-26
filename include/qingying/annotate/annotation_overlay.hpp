@@ -23,7 +23,7 @@ class AnnotationOverlay
   // 或窗口类注册/创建失败。
   bool show(HWND owner, const Image& source, AnnotationCallback callback);
 
-  // 无边框弹层，定位到屏幕 (screen_x, screen_y)，贴在选区上就地编辑。
+  // 就地编辑弹层：图片原点钉在屏幕 (screen_x, screen_y)，外侧绘制选区框。
   // screen_x < 0 时居中（测试/兜底）。
   bool showInPlace(HWND owner, const Image& source, int screen_x, int screen_y,
                    AnnotationCallback callback);

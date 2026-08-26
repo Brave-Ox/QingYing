@@ -4,9 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cwchar>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,6 +27,8 @@ constexpr UINT kToolbarButtonPin = 4;
 constexpr int kSelectionToolbarItemCount = 4;
 constexpr int kCaptureHidePumpRounds = 8;
 constexpr DWORD kCaptureHidePumpSleepMs = 10;
+constexpr UINT kMsgCancelFromBackdrop = WM_APP + 2;
+const wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
 struct ToolbarItem
 {
@@ -54,96 +54,28 @@ struct OverlayWindowData
   HWND tooltip{nullptr};
   wchar_t tooltip_text[kSelectionToolbarItemCount][kToolbarTooltipMaxChars]{};
   Image annotated_image;
+  bool freeze_backdrop{false};
 };
 
 void getScreenSize(int& out_width, int& out_height);
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection, int screen_width,
                  int screen_height);
-
-constexpr int kDiagnosticLineMaxChars = 512;
-
-struct WinHandleCloser
-{
-  void operator()(HANDLE handle) const noexcept
-  {
-    if (handle != nullptr && handle != INVALID_HANDLE_VALUE)
-    {
-      CloseHandle(handle);
-    }
-  }
-};
-
-int systemDpi()
-{
-  const HDC screen_dc = GetDC(nullptr);
-  if (screen_dc == nullptr)
-  {
-    return 0;
-  }
-  const int dpi = GetDeviceCaps(screen_dc, LOGPIXELSX);
-  ReleaseDC(nullptr, screen_dc);
-  return dpi;
-}
-
-// 临时诊断：定位「框选区 ≠ 就地编辑区」。根因确认后连同调用一并删除。
-void appendInPlaceDiagnostic(const SelectionResult& selection,
-                             const Image& captured, bool capture_ok)
-{
-  wchar_t dir[MAX_PATH]{};
-  const DWORD dir_len = GetTempPathW(MAX_PATH, dir);
-  if (dir_len == 0 || dir_len >= MAX_PATH)
-  {
-    return;
-  }
-
-  std::wstring path(dir);
-  path += L"qingying_inplace_debug.log";
-
-  wchar_t line[kDiagnosticLineMaxChars]{};
-  const int written = swprintf_s(
-      line, L"selection=(%d,%d,%dx%d) capture_ok=%d image=%dx%d "
-            L"primary=%dx%d virtual=(%d,%d,%dx%d) dpi=%d\r\n",
-      selection.x, selection.y, selection.width, selection.height,
-      capture_ok ? 1 : 0, captured.width, captured.height,
-      GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
-      GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
-      GetSystemMetrics(SM_CXVIRTUALSCREEN),
-      GetSystemMetrics(SM_CYVIRTUALSCREEN), systemDpi());
-  if (written <= 0)
-  {
-    return;
-  }
-
-  const int utf8_len =
-      WideCharToMultiByte(CP_UTF8, 0, line, written, nullptr, 0, nullptr,
-                          nullptr);
-  if (utf8_len <= 0)
-  {
-    return;
-  }
-
-  std::string utf8(static_cast<std::size_t>(utf8_len), '\0');
-  if (WideCharToMultiByte(CP_UTF8, 0, line, written, utf8.data(), utf8_len,
-                          nullptr, nullptr) <= 0)
-  {
-    return;
-  }
-
-  const std::unique_ptr<void, WinHandleCloser> file(
-      CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-                  OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
-  if (file.get() == INVALID_HANDLE_VALUE)
-  {
-    return;
-  }
-
-  DWORD bytes_written = 0;
-  // 诊断日志写失败不影响截图主流程，故仅忽略返回值。
-  (void)WriteFile(file.get(), utf8.data(), static_cast<DWORD>(utf8.size()),
-                  &bytes_written, nullptr);
-}
 void beginInPlaceEdit(OverlayWindowData* data);
+
+void requestCancelAnnotationFromBackdrop(HWND overlay)
+{
+  if (overlay == nullptr)
+  {
+    return;
+  }
+  const HWND editor =
+      static_cast<HWND>(GetPropW(overlay, kEditorHwndPropName));
+  if (editor != nullptr)
+  {
+    PostMessageW(editor, kMsgCancelFromBackdrop, 0, 0);
+  }
+}
 
 // CreateCompatibleDC RAII：DeleteDC。
 struct CompatibleDcDeleter {
@@ -542,9 +474,6 @@ void beginInPlaceEdit(OverlayWindowData* data)
   const ActionResult captured = capture.captureRegion(
       selection.x, selection.y, selection.width, selection.height, image);
 
-  appendInPlaceDiagnostic(selection, image, captured.ok);
-
-  // 编辑期间保持遮罩隐藏：避免橙框选区与就地编辑窗口叠出「两块不一致区域」。
   int screen_width = 0;
   int screen_height = 0;
   getScreenSize(screen_width, screen_height);
@@ -559,6 +488,13 @@ void beginInPlaceEdit(OverlayWindowData* data)
     return;
   }
 
+  // 编辑时重新显示遮罩并冻结框选：只压暗选区外，点击空白取消编辑。
+  data->freeze_backdrop = true;
+  ShowWindow(data->overlay, SW_SHOW);
+  SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+  (void)updateOverlay(data->overlay, screen_width, screen_height, selection);
+
   AnnotationFinishResult finish;
   AnnotationOverlay editor;
   const bool shown = editor.showInPlace(
@@ -568,11 +504,10 @@ void beginInPlaceEdit(OverlayWindowData* data)
         finish = result;
       });
 
+  data->freeze_backdrop = false;
+
   if (!shown)
   {
-    ShowWindow(data->overlay, SW_SHOW);
-    SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     (void)showToolbar(data->overlay, data, selection, screen_width,
                       screen_height);
     return;
@@ -622,6 +557,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     }
     case WM_LBUTTONDOWN: {
+      if (data != nullptr && data->freeze_backdrop) {
+        requestCancelAnnotationFromBackdrop(hwnd);
+        return 0;
+      }
       if (data == nullptr || data->selection_confirmed) {
         return 0;
       }
@@ -671,6 +610,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     }
     case WM_RBUTTONDOWN: {
+      if (data != nullptr && data->freeze_backdrop) {
+        requestCancelAnnotationFromBackdrop(hwnd);
+        return 0;
+      }
       if (data != nullptr) {
         data->controller.cancel();
         data->action = SelectionAction::None;
@@ -679,6 +622,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     }
     case WM_KEYDOWN: {
+      if (data != nullptr && data->freeze_backdrop && wparam == VK_ESCAPE) {
+        requestCancelAnnotationFromBackdrop(hwnd);
+        return 0;
+      }
       if (data != nullptr && wparam == VK_ESCAPE) {
         data->controller.cancel();
         data->action = SelectionAction::None;

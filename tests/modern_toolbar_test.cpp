@@ -19,6 +19,22 @@ TEST(ModernToolbarTest, DefaultWidthFitsFourSelectionActions)
                        3 * DefaultModernToolbarMetrics.gap);
 }
 
+TEST(ModernToolbarTest, LabelColorContrastsWithLightBar)
+{
+  // 浅灰圆角条上的说明文字不能复用白线图标色，否则「马赛克」会看不见。
+  const ModernToolbarColors colors = DefaultModernToolbarColors;
+  const int label_sum = GetRValue(colors.label) + GetGValue(colors.label) +
+                        GetBValue(colors.label);
+  const int bar_sum = GetRValue(colors.bar_fill) + GetGValue(colors.bar_fill) +
+                      GetBValue(colors.bar_fill);
+  const int icon_sum =
+      GetRValue(colors.icon) + GetGValue(colors.icon) + GetBValue(colors.icon);
+  EXPECT_GT(bar_sum, 600);
+  EXPECT_LT(label_sum, 250);
+  EXPECT_GT(icon_sum, 700);
+  EXPECT_GE(bar_sum - label_sum, 300);
+}
+
 TEST(ModernToolbarTest, IconLabelsAreChineseTooltips)
 {
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Copy), L"\x590D\x5236");
