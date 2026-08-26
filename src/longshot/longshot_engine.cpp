@@ -171,11 +171,19 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
 
   Image stitched = std::move(frames.first_frame);
   ImageStitcher stitcher;
-  if (!stitcher.append(stitched, frames.second_frame) ||
+  int second_overlap_rows = 0;
+  if (!stitcher.append(stitched, frames.second_frame, &second_overlap_rows) ||
       stitched.width != request.width || stitched.height <= 0 ||
       stitched.pixels.empty()) {
     return makeFailure(ErrorCode::kCaptureFailed,
                        "longshot: failed to stitch initial frames");
+  }
+
+  // A complete-frame overlap means the scroll did not reveal any new
+  // content. Stop before sending another wheel input.
+  if (second_overlap_rows == frames.second_frame.height) {
+    out = std::move(stitched);
+    return makeSuccess();
   }
 
   LongShotProfileResult before_third_profile;
