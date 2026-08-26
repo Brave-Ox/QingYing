@@ -42,6 +42,7 @@ class Application {
   HotkeyManager hotkey_;
   ActionDispatcher dispatcher_;
   CaptureEngine capture_;
+  LongShotEngine longshot_;
   ExportService export_service_;
   CaptureSession session_;
   PinManager pin_manager_;

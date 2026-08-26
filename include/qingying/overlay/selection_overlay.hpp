@@ -12,6 +12,7 @@ enum class SelectionAction {
   Save,
   Edit,
   Pin,
+  LongShot,
 };
 
 struct SelectionResult {

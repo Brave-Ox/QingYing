@@ -10,10 +10,12 @@
 
 #include <commdlg.h>
 #include <iterator>
+#include <utility>
 
 namespace qingying {
 
-Application::Application(HINSTANCE instance) : instance_(instance) {}
+Application::Application(HINSTANCE instance)
+    : instance_(instance), longshot_(capture_) {}
 
 Application::~Application() {
   hotkey_.unregisterAll(tray_.hwnd());
@@ -95,6 +97,24 @@ ActionResult Application::saveImage(const Image& image) {
 
 void Application::runCapturePipeline(const SelectionResult& region) {
   if (region.cancelled) {
+    return;
+  }
+
+  if (region.action == SelectionAction::LongShot) {
+    session_.clear();
+    Image image;
+    ActionResult longshot_result;
+    {
+      auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
+      longshot_result = longshot_.captureSelection(pending_longshot_request_,
+                                                   image);
+    }
+    if (!longshot_result.ok) {
+      MessageBoxW(tray_.hwnd(), L"Failed to capture the long screenshot.",
+                  L"QingYing", MB_OK | MB_ICONERROR);
+      return;
+    }
+    session_.setResult(std::move(image));
     return;
   }
 
