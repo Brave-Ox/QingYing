@@ -38,6 +38,16 @@ bool isDesktopShell(HWND hwnd) {
          std::wcscmp(cls, L"#32769") == 0;
 }
 
+// 获取窗口用于吸附的屏幕矩形：优先用 DWM 的扩展边框（不含 Windows 10/11
+// 不可见投影），使吸附框紧贴可见边框；失败回退 GetWindowRect。
+bool getWindowBounds(HWND hwnd, RECT& out_rect) {
+  if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS,
+                                      &out_rect, sizeof(out_rect)))) {
+    return true;
+  }
+  return GetWindowRect(hwnd, &out_rect) != FALSE;
+}
+
 }  // namespace
 
 bool WindowDetector::isSnappable(HWND hwnd) {
@@ -94,7 +104,7 @@ bool WindowDetector::detectAt(int screen_x, int screen_y, HWND& out_window,
     hwnd = GetAncestor(hwnd, GA_ROOT);
     if (isSnappable(hwnd)) {
       RECT r{};
-      if (GetWindowRect(hwnd, &r) && pt.x >= r.left && pt.x < r.right &&
+      if (getWindowBounds(hwnd, r) && pt.x >= r.left && pt.x < r.right &&
           pt.y >= r.top && pt.y < r.bottom) {
         out_window = hwnd;
         out_rect = {r.left, r.top, r.right, r.bottom};
