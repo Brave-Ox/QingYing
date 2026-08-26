@@ -23,4 +23,10 @@ struct LongShotProfileResult {
 bool resolveNotepadProfile(std::uintptr_t owner_window,
                            LongShotProfileResult& out);
 
+// Reads the vertical scroll bar of the resolved target. Returns false when
+// the target does not expose a queryable scroll range; in that case the
+// caller must use another stop condition instead of treating it as bottom.
+bool queryNotepadScrollAtBottom(const LongShotProfileResult& profile,
+                                bool& at_bottom);
+
 }  // namespace qingying

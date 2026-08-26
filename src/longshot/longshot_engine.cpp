@@ -104,7 +104,8 @@ bool sendOneWheelDown(const LongShotRequest& request,
 ActionResult captureNextFrame(CaptureEngine& capture,
                               const LongShotRequest& request,
                               const LongShotProfileResult& before_profile,
-                              Image& frame) {
+                              Image& frame,
+                              LongShotProfileResult* after_profile_out) {
   if (!sendOneWheelDown(request, before_profile)) {
     return makeFailure(ErrorCode::kLongShotUnsupported,
                        "longshot: scroll target did not accept wheel input");
@@ -129,6 +130,9 @@ ActionResult captureNextFrame(CaptureEngine& capture,
   if (!imageMatchesRequest(frame, request)) {
     return makeFailure(ErrorCode::kCaptureFailed,
                        "longshot: next frame does not match selection");
+  }
+  if (after_profile_out != nullptr) {
+    *after_profile_out = after_profile;
   }
   return makeSuccess();
 }
@@ -178,54 +182,37 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                        "longshot: selection exceeds maximum output height");
   }
 
-  LongShotFramePair frames;
-  const ActionResult capture_result = captureInitialPair(request, frames);
-  if (!capture_result.ok) {
-    return capture_result;
+  LongShotProfileResult current_profile;
+  ActionResult result = validateRequest(request, current_profile);
+  if (!result.ok) {
+    return result;
   }
 
-  Image stitched = std::move(frames.first_frame);
+  Image stitched;
+  result = impl_->capture->captureRegion(request.x, request.y, request.width,
+                                         request.height, stitched);
+  if (!result.ok) {
+    return result;
+  }
+  if (!imageMatchesRequest(stitched, request)) {
+    return makeFailure(ErrorCode::kCaptureFailed,
+                       "longshot: first frame does not match selection");
+  }
+
+  bool at_bottom = false;
+  if (queryNotepadScrollAtBottom(current_profile, at_bottom) && at_bottom) {
+    out = std::move(stitched);
+    return makeSuccess();
+  }
+
   ImageStitcher stitcher;
-  int second_overlap_rows = 0;
-  if (!stitcher.findOverlap(stitched, frames.second_frame,
-                            second_overlap_rows)) {
-    return makeFailure(ErrorCode::kCaptureFailed,
-                       "longshot: failed to inspect initial overlap");
-  }
-  const std::int64_t second_height =
-      static_cast<std::int64_t>(stitched.height) +
-      static_cast<std::int64_t>(frames.second_frame.height) -
-      static_cast<std::int64_t>(second_overlap_rows);
-  if (second_height > impl_->limits.max_output_height) {
-    out = std::move(stitched);
-    return makeSuccess();
-  }
-  if (!stitcher.append(stitched, frames.second_frame, &second_overlap_rows) ||
-      stitched.width != request.width || stitched.height <= 0 ||
-      stitched.pixels.empty()) {
-    return makeFailure(ErrorCode::kCaptureFailed,
-                       "longshot: failed to stitch initial frames");
-  }
-
-  // A complete-frame overlap means the scroll did not reveal any new
-  // content. Stop before sending another wheel input.
-  if (second_overlap_rows == frames.second_frame.height) {
-    out = std::move(stitched);
-    return makeSuccess();
-  }
-
-  int frame_count = 2;
+  int frame_count = 1;
   while (frame_count < impl_->limits.max_frames &&
          stitched.height < impl_->limits.max_output_height) {
-    LongShotProfileResult before_next_profile;
-    ActionResult result = validateRequest(request, before_next_profile);
-    if (!result.ok) {
-      return result;
-    }
-
     Image next_frame;
-    result = captureNextFrame(*impl_->capture, request, before_next_profile,
-                              next_frame);
+    LongShotProfileResult after_profile;
+    result = captureNextFrame(*impl_->capture, request, current_profile,
+                              next_frame, &after_profile);
     if (!result.ok) {
       return result;
     }
@@ -251,6 +238,12 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
 
     ++frame_count;
     if (next_overlap_rows == next_frame.height) {
+      break;
+    }
+
+    current_profile = after_profile;
+    if (queryNotepadScrollAtBottom(current_profile, at_bottom) &&
+        at_bottom) {
       break;
     }
   }
@@ -282,7 +275,7 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
 
   Image second_frame;
   result = captureNextFrame(*impl_->capture, request, before_profile,
-                            second_frame);
+                            second_frame, nullptr);
   if (!result.ok) {
     return result;
   }

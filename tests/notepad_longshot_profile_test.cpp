@@ -95,6 +95,18 @@ class TestEditorWindow {
   HWND editor() const { return editor_; }
   int wheelMessageCount() const { return wheel_message_count_; }
 
+  void setVerticalScrollInfo(int minimum, int maximum, UINT page,
+                             int position) {
+    SCROLLINFO info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    info.nMin = minimum;
+    info.nMax = maximum;
+    info.nPage = page;
+    info.nPos = position;
+    SetScrollInfo(editor_, SB_VERT, &info, TRUE);
+  }
+
   RECT editorScreenRect() const {
     RECT rect{};
     GetClientRect(editor_, &rect);
@@ -188,6 +200,36 @@ TEST(NotepadLongShotProfileTest, ChildHandleCannotReplaceRecordedRootWindow) {
   EXPECT_FALSE(profile.valid());
 }
 
+TEST(NotepadLongShotProfileTest, QueriesVerticalScrollPositionAtBottom) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  window.setVerticalScrollInfo(0, 99, 20, 80);
+
+  bool at_bottom = false;
+  EXPECT_TRUE(queryNotepadScrollAtBottom(profile, at_bottom));
+  EXPECT_TRUE(at_bottom);
+}
+
+TEST(NotepadLongShotProfileTest, QueriesVerticalScrollPositionBeforeBottom) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  window.setVerticalScrollInfo(0, 99, 20, 79);
+
+  bool at_bottom = true;
+  EXPECT_TRUE(queryNotepadScrollAtBottom(profile, at_bottom));
+  EXPECT_FALSE(at_bottom);
+}
+
 TEST(LongShotEngineProfileIntegrationTest,
      StopsWhenScrollRevealsNoNewContent) {
   TestEditorWindow window(kNotepadWindowClass, true);
@@ -216,6 +258,32 @@ TEST(LongShotEngineProfileIntegrationTest,
             static_cast<std::size_t>(out.width) *
                 static_cast<std::size_t>(out.height));
   EXPECT_EQ(window.wheelMessageCount(), 1);
+}
+
+TEST(LongShotEngineProfileIntegrationTest,
+     StopsBeforeWheelWhenAlreadyAtBottom) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  window.setVerticalScrollInfo(0, 99, 20, 80);
+
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
+      profile.content_y, profile.content_width, profile.content_height};
+  Image out;
+
+  const ActionResult result = engine.captureSelection(request, out);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kOk);
+  EXPECT_FALSE(out.empty());
+  EXPECT_EQ(window.wheelMessageCount(), 0);
 }
 
 TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {

@@ -210,4 +210,33 @@ bool resolveNotepadProfile(std::uintptr_t owner_window,
   return true;
 }
 
+bool queryNotepadScrollAtBottom(const LongShotProfileResult& profile,
+                                bool& at_bottom) {
+  at_bottom = false;
+  if (!profile.valid()) {
+    return false;
+  }
+
+  const HWND scroll_target = reinterpret_cast<HWND>(profile.scroll_target);
+  if (scroll_target == nullptr || !IsWindow(scroll_target)) {
+    return false;
+  }
+
+  SCROLLINFO scroll_info{};
+  scroll_info.cbSize = sizeof(scroll_info);
+  scroll_info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+  if (!GetScrollInfo(scroll_target, SB_VERT, &scroll_info) ||
+      scroll_info.nPage == 0) {
+    return false;
+  }
+
+  // nMax is inclusive. With a page size, the last legal position is
+  // nMax - nPage + 1. Use 64-bit arithmetic for defensive overflow safety.
+  const std::int64_t last_position =
+      static_cast<std::int64_t>(scroll_info.nMax) -
+      static_cast<std::int64_t>(scroll_info.nPage) + 1;
+  at_bottom = static_cast<std::int64_t>(scroll_info.nPos) >= last_position;
+  return true;
+}
+
 }  // namespace qingying
