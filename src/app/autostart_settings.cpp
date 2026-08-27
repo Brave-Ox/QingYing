@@ -1,4 +1,4 @@
-#include "qingying/app/autostart_settings.hpp"
+﻿#include "qingying/app/autostart_settings.hpp"
 
 #include <Windows.h>
 

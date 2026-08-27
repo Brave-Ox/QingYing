@@ -1,4 +1,4 @@
-#include "qingying/app/capture_session.hpp"
+﻿#include "qingying/app/capture_session.hpp"
 
 #include <gtest/gtest.h>
 

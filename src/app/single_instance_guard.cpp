@@ -1,4 +1,4 @@
-#include "qingying/app/single_instance_guard.hpp"
+﻿#include "qingying/app/single_instance_guard.hpp"
 
 namespace qingying {
 

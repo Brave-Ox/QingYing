@@ -1,4 +1,4 @@
-#include "qingying/capture/capture_engine.hpp"
+﻿#include "qingying/capture/capture_engine.hpp"
 
 #include <Windows.h>  // GetSystemMetrics / SM_CXSCREEN — PIMPL 头文件不带 Windows 依赖
 

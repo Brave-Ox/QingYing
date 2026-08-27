@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/capture_session.hpp"

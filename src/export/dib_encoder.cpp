@@ -1,4 +1,4 @@
-#include "qingying/export/dib_encoder.hpp"
+﻿#include "qingying/export/dib_encoder.hpp"
 
 #include <cstdint>
 #include <cstring>

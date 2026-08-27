@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "qingying/annotate/annotation_engine.hpp"
 #include "qingying/annotate/annotation_types.hpp"

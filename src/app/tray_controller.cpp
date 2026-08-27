@@ -1,4 +1,4 @@
-#include "qingying/app/tray_controller.hpp"
+﻿#include "qingying/app/tray_controller.hpp"
 
 #include "qingying/app/autostart_settings.hpp"
 

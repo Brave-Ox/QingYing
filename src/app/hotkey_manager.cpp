@@ -1,4 +1,4 @@
-#include "qingying/app/hotkey_manager.hpp"
+﻿#include "qingying/app/hotkey_manager.hpp"
 
 #include "qingying/app/app_messages.hpp"
 
