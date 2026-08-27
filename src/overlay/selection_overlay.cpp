@@ -1,4 +1,4 @@
-﻿#include "qingying/overlay/selection_overlay.hpp"
+#include "qingying/overlay/selection_overlay.hpp"
 
 #include <Windows.h>
 
@@ -24,6 +24,9 @@ constexpr UINT kToolbarButtonCopy = 1;
 constexpr UINT kToolbarButtonSave = 2;
 constexpr UINT kToolbarButtonEdit = 3;
 constexpr UINT kToolbarButtonPin = 4;
+// 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
+// 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
+constexpr int kEscapeHotkeyId = 2;
 constexpr int kToolbarButtonWidth = 82;
 constexpr int kToolbarButtonHeight = 30;
 constexpr int kToolbarButtonGap = 4;
@@ -300,17 +303,17 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   const HWND toolbar = CreateWindowExW(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kToolbarClassName, L"",
-      WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, overlay,
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kToolbarClassName,
+      L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, overlay,
       nullptr, instance, data);
   if (toolbar == nullptr) {
     return false;
   }
 
+  // SWP_NOACTIVATE：工具栏弹出也不抢前台激活权，避免原前台窗口及其
+  // 从属浮层因失活而隐藏。按钮点击仍能收到鼠标消息触发 BN_CLICKED。
   SetWindowPos(toolbar, HWND_TOPMOST, x, y, toolbar_width, toolbar_height,
-               SWP_SHOWWINDOW);
-  SetForegroundWindow(toolbar);
-  SetFocus(toolbar);
+               SWP_SHOWWINDOW | SWP_NOACTIVATE);
   return true;
 }
 
@@ -592,6 +595,17 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
+    case WM_HOTKEY: {
+      // 截图期间临时注册的全局 Esc 热键：遮罩不激活（WS_EX_NOACTIVATE），
+      // 键盘消息不会发给遮罩，取消改由这里处理。
+      if (data != nullptr && wparam == kEscapeHotkeyId) {
+        data->controller.cancel();
+        data->action = SelectionAction::None;
+        data->selection_confirmed = false;
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      }
+      return 0;
+    }
     case WM_KEYDOWN: {
       if (data != nullptr && wparam == VK_ESCAPE) {
         data->controller.cancel();
@@ -670,18 +684,21 @@ bool SelectionOverlay::show(SelectionCallback callback) {
   data.controller.setHandleRadius(data.handle_radius);
 
   HWND hwnd = CreateWindowExW(
-      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kOverlayClassName, L"",
-      WS_POPUP | WS_VISIBLE, data.screen.left, data.screen.top,
-      data.screen.width, data.screen.height, nullptr, nullptr, instance,
-      &data);
+      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+      kOverlayClassName, L"", WS_POPUP | WS_VISIBLE, data.screen.left,
+      data.screen.top, data.screen.width, data.screen.height, nullptr, nullptr,
+      instance, &data);
   if (hwnd == nullptr) {
     return false;
   }
 
-  // 抢占前台/焦点：保证尚未点击时按 Esc 也能取消（热键回调后原前台窗口
-  // 未必让位）。随后首帧渲染（UpdateLayeredWindow 需要窗口可见）。
-  SetForegroundWindow(hwnd);
-  SetFocus(hwnd);
+  // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
+  // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
+  // 键盘取消改由临时全局 Esc 热键提供（模态循环退出后注销）。
+  const bool esc_registered =
+      RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE) != FALSE;
+
+  // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, kMsgOverlayReady, 0, 0);
 
   // 模态消息循环：捕获期间阻塞，直到选区确认/取消（WM_DESTROY → PostQuitMessage）。
@@ -689,6 +706,10 @@ bool SelectionOverlay::show(SelectionCallback callback) {
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
+  }
+
+  if (esc_registered) {
+    UnregisterHotKey(hwnd, kEscapeHotkeyId);
   }
 
   return true;
