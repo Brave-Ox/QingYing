@@ -2,7 +2,9 @@
 
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/overlay/coordinate_transform.hpp"
 
 #include "resource.h"
 
@@ -136,9 +138,21 @@ void Application::runCapturePipeline(const SelectionResult& region) {
 }
 
 void Application::beginCaptureFlow() {
-  const bool shown = overlay_.show([this](const SelectionResult& region) {
-    runCapturePipeline(region);
-  });
+  // 先截取虚拟桌面作为遮罩界面背景（排除 Pin 窗口）。遮罩基于截图渲染，
+  // 其它窗口（含从属浮层）在截图里保持可见，不再被实时 topmost 窗口盖住。
+  // 截屏失败时 background 为空，遮罩退回纯半透明遮罩。
+  Image background;
+  {
+    auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
+    const coord::VirtualScreenRect screen = coord::getVirtualScreen();
+    capture_.captureRegion(screen.left, screen.top, screen.width, screen.height,
+                           background);
+  }
+
+  const bool shown = overlay_.show(
+      background, [this](const SelectionResult& region) {
+        runCapturePipeline(region);
+      });
 
   if (!shown) {
     // Overlay not ready yet — keep integration path wired for when UI lands.

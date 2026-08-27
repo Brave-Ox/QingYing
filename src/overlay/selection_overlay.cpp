@@ -60,6 +60,7 @@ struct OverlayWindowData {
   WindowDetector window_detector;  // 窗口吸附检测
   bool has_hover{false};           // 是否悬停在可吸附窗口上
   SelectionResult hover_rect;      // 悬停窗口矩形（客户区坐标）
+  Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
 };
 
 // CreateCompatibleDC RAII：DeleteDC。
@@ -398,6 +399,17 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
     drawHoverOutline(pixels, width, height, data->hover_rect, kHoverPixel,
                      kHoverThickness);
   }
+
+  // 有桌面背景时：遮罩界面 = 背景截图 + 遮罩合成。其它窗口（含从属浮层）
+  // 被包含在截图里，在遮罩界面中保持可见，不再被实时 topmost 窗口物理盖住。
+  // 无背景（截屏失败）时退回纯遮罩，保留原 premultiplied alpha 行为。
+  if (!data->background.empty()) {
+    std::vector<std::uint32_t> composed;
+    if (!mask::composeBackground(data->background, pixels, composed)) {
+      return false;
+    }
+    pixels.swap(composed);
+  }
   // DIB 与像素缓冲同布局（BGRA，顶向下），直接拷贝。
   std::copy(pixels.begin(), pixels.end(),
             reinterpret_cast<std::uint32_t*>(dib_bits));
@@ -642,7 +654,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 }  // namespace
 
-bool SelectionOverlay::show(SelectionCallback callback) {
+bool SelectionOverlay::show(const Image& background,
+                            SelectionCallback callback) {
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
   WNDCLASSEXW wc{};
@@ -669,6 +682,7 @@ bool SelectionOverlay::show(SelectionCallback callback) {
   }
 
   OverlayWindowData data;
+  data.background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
   data.callback = std::move(callback);
   data.screen = coord::getVirtualScreen();
   data.controller.setBounds(data.screen.width, data.screen.height);

@@ -133,5 +133,106 @@ TEST(MaskRendererTest, CancelledSelectionIsFullMask) {
   EXPECT_EQ(px.back(), kMaskPx);
 }
 
+TEST(MaskRendererTest, ComposeBackgroundDimsMaskOutsideSelection) {
+  // 背景 20x20 纯白（不透明）。遮罩：10x10 选区外的遮罩像素为 kMaskPx。
+  Image bg;
+  bg.width = 20;
+  bg.height = 20;
+  bg.pixels.assign(20u * 20u, kMakeBgra(255, 255, 255, 255));
+
+  SelectionResult sel{};
+  sel.cancelled = false;
+  sel.x = 5;
+  sel.y = 5;
+  sel.width = 10;
+  sel.height = 10;
+
+  std::vector<std::uint32_t> mask_px;
+  renderFullscreenMask(20, 20, sel, mask_px);
+  ASSERT_EQ(mask_px.size(), 20u * 20u);
+  ASSERT_EQ(kPxAt(mask_px, 20, 0, 0), kMaskPx);  // 选区外确认
+
+  std::vector<std::uint32_t> out;
+  ASSERT_TRUE(mask::composeBackground(bg, mask_px, out));
+  ASSERT_EQ(out.size(), 20u * 20u);
+
+  // 选区外像素：白 * (1 - 0x59/255) ≈ 白 * 0.65，alpha 恒不透明。
+  const std::uint32_t dimmed =
+      kMakeBgra(static_cast<std::uint8_t>(255u * (255u - 0x59u) / 255u),
+                static_cast<std::uint8_t>(255u * (255u - 0x59u) / 255u),
+                static_cast<std::uint8_t>(255u * (255u - 0x59u) / 255u), 255);
+  EXPECT_EQ(kPxAt(out, 20, 0, 0), dimmed);
+  EXPECT_EQ(kPxAt(out, 20, 19, 19), dimmed);
+  EXPECT_EQ(kPxAt(out, 20, 0, 0) >> 24, 0xFFu);  // 合成输出恒为不透明
+}
+
+TEST(MaskRendererTest, ComposeBackgroundKeepsSelectionInterior) {
+  // 背景 20x20 填充 (B,G,R)=(10,20,30)；选区 5,5,10,10 的内部像素保持原色。
+  Image bg;
+  bg.width = 20;
+  bg.height = 20;
+  bg.pixels.assign(20u * 20u, kMakeBgra(10, 20, 30, 255));
+
+  SelectionResult sel{};
+  sel.cancelled = false;
+  sel.x = 5;
+  sel.y = 5;
+  sel.width = 10;
+  sel.height = 10;
+
+  std::vector<std::uint32_t> mask_px;
+  renderFullscreenMask(20, 20, sel, mask_px);
+  ASSERT_EQ(kPxAt(mask_px, 20, 10, 10), kClearPx);  // 选区内缘像素确认
+
+  std::vector<std::uint32_t> out;
+  ASSERT_TRUE(mask::composeBackground(bg, mask_px, out));
+  // 内部像素 alpha=1：bg * 254/255 + 0 ≈ bg（1/255 舍入内）。
+  const std::uint32_t expected = kMakeBgra(
+      static_cast<std::uint8_t>(10u * 254u / 255u),
+      static_cast<std::uint8_t>(20u * 254u / 255u),
+      static_cast<std::uint8_t>(30u * 254u / 255u), 255);
+  EXPECT_EQ(kPxAt(out, 20, 10, 10), expected);
+  EXPECT_EQ(kPxAt(out, 20, 10, 10) >> 24, 0xFFu);
+}
+
+TEST(MaskRendererTest, ComposeBackgroundBorderIsOpaqueOrange) {
+  // 边框像素（kBorderPx，premultiplied 亮橙）合成后应为纯边框色。
+  Image bg;
+  bg.width = 20;
+  bg.height = 20;
+  bg.pixels.assign(20u * 20u, kMakeBgra(255, 255, 255, 255));
+
+  SelectionResult sel{};
+  sel.cancelled = false;
+  sel.x = 5;
+  sel.y = 5;
+  sel.width = 10;
+  sel.height = 10;
+
+  std::vector<std::uint32_t> mask_px;
+  renderFullscreenMask(20, 20, sel, mask_px);
+  ASSERT_EQ(kPxAt(mask_px, 20, 5, 5), kBorderPx);  // 选区顶点即边框
+
+  std::vector<std::uint32_t> out;
+  ASSERT_TRUE(mask::composeBackground(bg, mask_px, out));
+  // mask alpha=0xFF：bg 权重为 0，输出=边框预乘色（亮橙 0xFFFF8000），alpha 不透明。
+  EXPECT_EQ(kPxAt(out, 20, 5, 5), 0xFFFF8000u);
+}
+
+TEST(MaskRendererTest, ComposeBackgroundRejectsMismatch) {
+  Image bg;
+  bg.width = 2;
+  bg.height = 1;
+  bg.pixels.assign(2, 0xFFFFFFFFu);
+
+  std::vector<std::uint32_t> mask_px(3, 0x59000000u);  // 尺寸不匹配
+  std::vector<std::uint32_t> out(9, 0u);
+  EXPECT_FALSE(mask::composeBackground(bg, mask_px, out));
+  EXPECT_EQ(out.size(), 9u);  // 失败时 out 保持不变
+
+  Image empty_bg;
+  EXPECT_FALSE(mask::composeBackground(empty_bg, {}, out));
+}
+
 }  // namespace mask
 }  // namespace qingying
