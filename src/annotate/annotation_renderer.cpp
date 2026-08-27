@@ -18,6 +18,7 @@ namespace {
 
 constexpr int MinStrokeThicknessPx = 1;
 constexpr double Pi = 3.14159265358979323846;
+constexpr double EllipseOuterPadPx = 0.5;
 // 箭头头部：两条从终点向后张开的短线。
 constexpr double ArrowHeadLengthPx = 8.0;
 constexpr double ArrowHeadHalfAngleRad = Pi / 6.0;  // 30°
@@ -67,6 +68,51 @@ bool isOnStroke(int x, int y, int left, int top, int right, int bottom,
          (y - top) < thickness || (bottom - y) < thickness;
 }
 
+constexpr int kDashOnPx = 6;
+constexpr int kDashOffPx = 4;
+constexpr int kDotOnPx = 2;
+constexpr int kDotOffPx = 3;
+
+bool strokeDashCovers(int distance, AnnotationLineStyle style)
+{
+  if (style == AnnotationLineStyle::Solid)
+  {
+    return true;
+  }
+
+  const int on =
+      (style == AnnotationLineStyle::Dashed) ? kDashOnPx : kDotOnPx;
+  const int off =
+      (style == AnnotationLineStyle::Dashed) ? kDashOffPx : kDotOffPx;
+  const int period = on + off;
+  int phase = distance % period;
+  if (phase < 0)
+  {
+    phase += period;
+  }
+  return phase < on;
+}
+
+int rectangleStrokeDistance(int x, int y, int left, int top, int right,
+                            int bottom, int thickness)
+{
+  const int width = right - left + 1;
+  const int height = bottom - top + 1;
+  if ((y - top) < thickness)
+  {
+    return x - left;
+  }
+  if ((right - x) < thickness)
+  {
+    return width + (y - top);
+  }
+  if ((bottom - y) < thickness)
+  {
+    return width + height + (right - x);
+  }
+  return 2 * width + height + (bottom - y);
+}
+
 void drawRectangle(Image& target, const Annotation& annotation)
 {
   const int left = toPixel(annotation.bounds.x);
@@ -90,7 +136,20 @@ void drawRectangle(Image& target, const Annotation& annotation)
   {
     for (int x = clipped_left; x <= clipped_right; ++x)
     {
-      if (isOnStroke(x, y, left, top, right, bottom, thickness))
+      const bool on_stroke =
+          isOnStroke(x, y, left, top, right, bottom, thickness);
+      if (annotation.style.filled && !on_stroke)
+      {
+        setPixel(target, x, y, color);
+        continue;
+      }
+      if (!on_stroke)
+      {
+        continue;
+      }
+      const int distance = rectangleStrokeDistance(x, y, left, top, right,
+                                                   bottom, thickness);
+      if (strokeDashCovers(distance, annotation.style.line_style))
       {
         setPixel(target, x, y, color);
       }
@@ -116,7 +175,7 @@ double ellipseNormSq(double x, double y, double cx, double cy, double rx,
 bool isOnEllipseStroke(int x, int y, double cx, double cy, double rx,
                        double ry, int thickness)
 {
-  constexpr double HalfPixel = 0.5;
+  constexpr double HalfPixel = EllipseOuterPadPx;
   const double outer_rx = rx + HalfPixel;
   const double outer_ry = ry + HalfPixel;
   const double outer =
@@ -173,7 +232,30 @@ void drawEllipse(Image& target, const Annotation& annotation)
   {
     for (int x = clipped_left; x <= clipped_right; ++x)
     {
-      if (isOnEllipseStroke(x, y, cx, cy, rx, ry, thickness))
+      const bool on_stroke =
+          isOnEllipseStroke(x, y, cx, cy, rx, ry, thickness);
+      const double outer = ellipseNormSq(static_cast<double>(x),
+                                         static_cast<double>(y), cx, cy,
+                                         rx + EllipseOuterPadPx,
+                                         ry + EllipseOuterPadPx);
+      const bool inside = outer <= 1.0;
+      if (annotation.style.filled && inside && !on_stroke)
+      {
+        setPixel(target, x, y, color);
+        continue;
+      }
+      if (!on_stroke)
+      {
+        continue;
+      }
+      double angle = std::atan2(static_cast<double>(y) - cy,
+                                static_cast<double>(x) - cx);
+      if (angle < 0.0)
+      {
+        angle += 2.0 * Pi;
+      }
+      const int distance = toPixel(angle * rx);
+      if (strokeDashCovers(distance, annotation.style.line_style))
       {
         setPixel(target, x, y, color);
       }

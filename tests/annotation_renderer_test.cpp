@@ -186,6 +186,62 @@ TEST(AnnotationRendererTest, RectangleInteriorIsNotFilled)
   EXPECT_EQ(pixelAt(out, 23, 12), kWhitePx);  // 距右 2px
 }
 
+TEST(AnnotationRendererTest, FilledRectanglePaintsInterior)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedRectangle();
+  annotation.style.filled = true;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 17, 12), kRedPx);
+}
+
+TEST(AnnotationRendererTest, DashedRectangleTopEdgeHasGaps)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedRectangle();
+  annotation.style.line_style = AnnotationLineStyle::Dashed;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  int painted = 0;
+  int gaps = 0;
+  for (int x = 10; x <= 25; ++x)
+  {
+    if (pixelAt(out, x, 8) == kRedPx)
+    {
+      ++painted;
+    }
+    else
+    {
+      ++gaps;
+    }
+  }
+  EXPECT_GT(painted, 0);
+  EXPECT_GT(gaps, 0);
+}
+
+TEST(AnnotationRendererTest, FilledEllipsePaintsCenter)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedEllipse();
+  annotation.style.filled = true;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 19, 14), kRedPx);
+}
+
 TEST(AnnotationRendererTest, PixelsOutsideRectangleAreUnchanged)
 {
   const AnnotationRenderer renderer;

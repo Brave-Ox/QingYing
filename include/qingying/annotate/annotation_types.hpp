@@ -41,6 +41,19 @@ inline constexpr int DefaultMosaicBlockSize = 12;
 inline constexpr int MinMosaicBlockSize = 1;
 inline constexpr int MaxMosaicBlockSize = 32;
 inline constexpr int MinAnnotationSizePx = 2;
+
+enum class AnnotationLineStyle
+{
+  Solid,
+  Dashed,
+  Dotted,
+};
+
+inline constexpr int AnnotationLineStyleCount = 3;
+inline constexpr AnnotationLineStyle AnnotationLineStyleOptions[
+    AnnotationLineStyleCount] = {AnnotationLineStyle::Solid,
+                                 AnnotationLineStyle::Dashed,
+                                 AnnotationLineStyle::Dotted};
 inline constexpr std::size_t MinPenPointCount = 2;
 
 inline int clampMosaicBlockSize(int block_size)
@@ -104,6 +117,8 @@ struct AnnotationStyle
   float stroke_width{DefaultStrokeWidth};
   float opacity{DefaultOpacity};
   int font_size{DefaultFontSize};
+  bool filled{false};
+  AnnotationLineStyle line_style{AnnotationLineStyle::Solid};
 };
 
 struct Annotation

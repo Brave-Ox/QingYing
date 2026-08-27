@@ -85,6 +85,18 @@ void AnnotationInteractionController::setFontSize(int font_size)
       (std::min)((std::max)(font_size, MinFontSize), MaxFontSize);
 }
 
+void AnnotationInteractionController::setFilled(bool filled)
+{
+  m_style.filled = filled;
+  refreshPreviewStyle();
+}
+
+void AnnotationInteractionController::setLineStyle(AnnotationLineStyle line_style)
+{
+  m_style.line_style = line_style;
+  refreshPreviewStyle();
+}
+
 void AnnotationInteractionController::setMosaicBlockSize(int block_size)
 {
   m_mosaic_block_size = clampMosaicBlockSize(block_size);

@@ -16,11 +16,11 @@ void prepare(AnnotationInteractionController& controller)
 
 }  // namespace
 
-TEST(AnnotationInteractionControllerTest, DefaultToolIsRectangle)
+TEST(AnnotationInteractionControllerTest, DefaultToolIsNone)
 {
   AnnotationInteractionController controller;
   controller.setCanvasSize(kCanvasWidth, kCanvasHeight);
-  EXPECT_EQ(controller.tool(), AnnotationTool::Rectangle);
+  EXPECT_EQ(controller.tool(), AnnotationTool::None);
 }
 
 TEST(AnnotationInteractionControllerTest, SetToolSwitchesCurrentTool)
@@ -100,6 +100,21 @@ TEST(AnnotationInteractionControllerTest, EllipseStrokeAddsNormalizedBoundsOnEnd
   ASSERT_EQ(engine.document().count(), 1u);
   EXPECT_EQ(engine.document().items().at(0).type, AnnotationType::Ellipse);
   EXPECT_FLOAT_EQ(engine.document().items().at(0).bounds.width, 30.0f);
+}
+
+TEST(AnnotationInteractionControllerTest, SetFilledAndLineStyleCopyIntoPreview)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setFilled(true);
+  controller.setLineStyle(AnnotationLineStyle::Dashed);
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+  ASSERT_TRUE(controller.hasPreview());
+  EXPECT_TRUE(controller.preview().style.filled);
+  EXPECT_EQ(controller.preview().style.line_style, AnnotationLineStyle::Dashed);
+  EXPECT_TRUE(controller.style().filled);
 }
 
 TEST(AnnotationInteractionControllerTest, TinyEllipseIsRejectedOnEnd)

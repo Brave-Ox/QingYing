@@ -196,6 +196,31 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
     case ToolbarIconKind::Ellipse:
       Ellipse(hdc, c.x - s + 1, c.y - s + 2, c.x + s - 1, c.y + s - 2);
       break;
+    case ToolbarIconKind::Geometry:
+      Rectangle(hdc, c.x - s + 1, c.y - s + 2, c.x + s - 3, c.y + s - 2);
+      break;
+    case ToolbarIconKind::Fill:
+      Rectangle(hdc, c.x - s + 2, c.y - s + 3, c.x + s - 2, c.y + s - 3);
+      break;
+    case ToolbarIconKind::LineSolid:
+    case ToolbarIconKind::LineDashed:
+    case ToolbarIconKind::LineDotted:
+    {
+      const int style =
+          (kind == ToolbarIconKind::LineDashed)
+              ? PS_DASH
+              : ((kind == ToolbarIconKind::LineDotted) ? PS_DOT : PS_SOLID);
+      const HPEN dash_pen = CreatePen(style, 1, color);
+      if (dash_pen != nullptr)
+      {
+        const HGDIOBJ old_dash = SelectObject(hdc, dash_pen);
+        MoveToEx(hdc, c.x - s + 1, c.y, nullptr);
+        lineTo(hdc, c.x + s - 1, c.y);
+        SelectObject(hdc, old_dash);
+        DeleteObject(dash_pen);
+      }
+      break;
+    }
     case ToolbarIconKind::Arrow:
       MoveToEx(hdc, c.x - s + 1, c.y + s - 2, nullptr);
       lineTo(hdc, c.x + s - 2, c.y - s + 2);
@@ -252,8 +277,14 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
   SelectObject(hdc, old_brush);
 }
 
+constexpr int kChevronInsetRightPx = 7;
+constexpr int kChevronInsetBottomPx = 6;
+constexpr int kChevronArmPx = 3;
+constexpr int kChevronDropPx = 2;
+
 void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
-                     bool hovered, bool selected, bool enabled, bool accent)
+                     bool hovered, bool selected, bool enabled, bool accent,
+                     bool grouped)
 {
   if (hdc == nullptr)
   {
@@ -280,6 +311,23 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
 
   const COLORREF icon_color = enabled ? colors.icon : colors.icon_disabled;
   drawToolbarIcon(hdc, cell, kind, icon_color);
+
+  if (grouped)
+  {
+    const int chevron_x = cell.right - kChevronInsetRightPx;
+    const int chevron_y = cell.bottom - kChevronInsetBottomPx;
+    const HPEN pen = CreatePen(PS_SOLID, 1, icon_color);
+    if (pen != nullptr)
+    {
+      const HGDIOBJ old_pen = SelectObject(hdc, pen);
+      MoveToEx(hdc, chevron_x, chevron_y, nullptr);
+      LineTo(hdc, chevron_x + kChevronArmPx, chevron_y);
+      LineTo(hdc, chevron_x + kChevronArmPx / 2, chevron_y + kChevronDropPx);
+      LineTo(hdc, chevron_x, chevron_y);
+      SelectObject(hdc, old_pen);
+      DeleteObject(pen);
+    }
+  }
 }
 
 void drawToolbarDivider(HDC hdc, int x, int top, int bottom)
@@ -316,6 +364,16 @@ const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
       return L"\x77E9\x5F62";
     case ToolbarIconKind::Ellipse:
       return L"\x692D\x5706";
+    case ToolbarIconKind::Geometry:
+      return L"\x51E0\x4F55";
+    case ToolbarIconKind::Fill:
+      return L"\x586B\x5145";
+    case ToolbarIconKind::LineSolid:
+      return L"\x5B9E\x7EBF";
+    case ToolbarIconKind::LineDashed:
+      return L"\x865A\x7EBF";
+    case ToolbarIconKind::LineDotted:
+      return L"\x70B9\x7EBF";
     case ToolbarIconKind::Arrow:
       return L"\x7BAD\x5934";
     case ToolbarIconKind::Pen:
@@ -330,6 +388,46 @@ const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
       return L"\x5B8C\x6210";
     case ToolbarIconKind::Cancel:
       return L"\x53D6\x6D88";
+    default:
+      return L"";
+  }
+}
+
+const wchar_t* toolbarStrokePresetLabel(int index)
+{
+  switch (index)
+  {
+    case 0:
+      return L"\x7EC6";
+    case 1:
+      return L"\x4E2D";
+    case 2:
+      return L"\x7C97";
+    default:
+      return L"";
+  }
+}
+
+const wchar_t* toolbarColorPresetLabel(int index)
+{
+  switch (index)
+  {
+    case 0:
+      return L"\x7EA2";
+    case 1:
+      return L"\x6A59";
+    case 2:
+      return L"\x9EC4";
+    case 3:
+      return L"\x7EFF";
+    case 4:
+      return L"\x9752";
+    case 5:
+      return L"\x84DD";
+    case 6:
+      return L"\x7D2B";
+    case 7:
+      return L"\x767D";
     default:
       return L"";
   }
@@ -375,8 +473,6 @@ void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,
     return;
   }
 
-  copyWide(storage, storage_chars, text);
-
   TOOLINFOW info{};
 #ifdef TTTOOLINFOW_V2_SIZE
   info.cbSize = TTTOOLINFOW_V2_SIZE;
@@ -388,6 +484,17 @@ void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,
   info.uId = static_cast<UINT_PTR>(id);
   info.rect = rect;
   info.lpszText = storage;
+
+  const bool hidden = (rect.right <= rect.left) || (rect.bottom <= rect.top);
+  if (hidden || text == nullptr || text[0] == L'\0')
+  {
+    storage[0] = L'\0';
+    SendMessageW(tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+    return;
+  }
+
+  copyWide(storage, storage_chars, text);
+  SendMessageW(tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&info));
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
 }
 

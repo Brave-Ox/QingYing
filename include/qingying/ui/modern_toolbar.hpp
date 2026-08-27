@@ -23,6 +23,11 @@ enum class ToolbarIconKind
   Pin,
   Rectangle,
   Ellipse,
+  Geometry,
+  Fill,
+  LineSolid,
+  LineDashed,
+  LineDotted,
   Arrow,
   Pen,
   Mosaic,
@@ -75,11 +80,14 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
                      COLORREF color);
 
 void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
-                     bool hovered, bool selected, bool enabled, bool accent);
+                     bool hovered, bool selected, bool enabled, bool accent,
+                     bool grouped = false);
 
 void drawToolbarDivider(HDC hdc, int x, int top, int bottom);
 
 const wchar_t* toolbarIconLabel(ToolbarIconKind kind);
+const wchar_t* toolbarStrokePresetLabel(int index);
+const wchar_t* toolbarColorPresetLabel(int index);
 
 HWND createToolbarTooltip(HWND owner);
 void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,

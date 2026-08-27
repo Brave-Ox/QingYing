@@ -22,6 +22,8 @@ class AnnotationInteractionController
   void setColor(const ColorBgra& color);
   void setStrokeWidth(float width);
   void setFontSize(int font_size);
+  void setFilled(bool filled);
+  void setLineStyle(AnnotationLineStyle line_style);
   void setMosaicBlockSize(int block_size);
   int mosaicBlockSize() const;
   const AnnotationStyle& style() const;
@@ -50,7 +52,7 @@ class AnnotationInteractionController
   void refreshPreviewStyle();
   bool isInsideCanvas(float x, float y) const;
 
-  AnnotationTool m_tool{AnnotationTool::Rectangle};
+  AnnotationTool m_tool{AnnotationTool::None};
   AnnotationStyle m_style{};
   int m_mosaic_block_size{DefaultMosaicBlockSize};
   int m_canvas_width{0};

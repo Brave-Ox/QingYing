@@ -47,9 +47,37 @@ TEST(ModernToolbarTest, IconLabelsAreChineseTooltips)
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Pen), L"\x753B\x7B14");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Mosaic), L"\x9A6C\x8D5B\x514B");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Text), L"\x6587\x5B57");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Geometry), L"\x51E0\x4F55");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Fill), L"\x586B\x5145");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LineSolid), L"\x5B9E\x7EBF");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LineDashed), L"\x865A\x7EBF");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LineDotted), L"\x70B9\x7EBF");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Undo), L"\x64A4\x9500");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Confirm), L"\x5B8C\x6210");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Cancel), L"\x53D6\x6D88");
+}
+
+TEST(ModernToolbarTest, StrokePresetLabelsAreChinese)
+{
+  EXPECT_STREQ(toolbarStrokePresetLabel(0), L"\x7EC6");
+  EXPECT_STREQ(toolbarStrokePresetLabel(1), L"\x4E2D");
+  EXPECT_STREQ(toolbarStrokePresetLabel(2), L"\x7C97");
+  EXPECT_STREQ(toolbarStrokePresetLabel(-1), L"");
+  EXPECT_STREQ(toolbarStrokePresetLabel(3), L"");
+}
+
+TEST(ModernToolbarTest, ColorPresetLabelsAreChinese)
+{
+  EXPECT_STREQ(toolbarColorPresetLabel(0), L"\x7EA2");
+  EXPECT_STREQ(toolbarColorPresetLabel(1), L"\x6A59");
+  EXPECT_STREQ(toolbarColorPresetLabel(2), L"\x9EC4");
+  EXPECT_STREQ(toolbarColorPresetLabel(3), L"\x7EFF");
+  EXPECT_STREQ(toolbarColorPresetLabel(4), L"\x9752");
+  EXPECT_STREQ(toolbarColorPresetLabel(5), L"\x84DD");
+  EXPECT_STREQ(toolbarColorPresetLabel(6), L"\x7D2B");
+  EXPECT_STREQ(toolbarColorPresetLabel(7), L"\x767D");
+  EXPECT_STREQ(toolbarColorPresetLabel(-1), L"");
+  EXPECT_STREQ(toolbarColorPresetLabel(8), L"");
 }
 
 }  // namespace qingying

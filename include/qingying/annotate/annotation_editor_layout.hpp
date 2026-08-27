@@ -14,7 +14,7 @@ inline constexpr int AnnotationEditorBarPadding = 8;
 inline constexpr int AnnotationEditorDividerGap = 10;
 inline constexpr int AnnotationEditorDividerCount = 2;
 inline constexpr int AnnotationEditorToolButtonCount =
-    7;  // 矩形/椭圆/箭头/画笔/马赛克/文字/撤销
+    6;  // 几何/箭头/画笔/马赛克/文字/撤销
 inline constexpr int AnnotationEditorActionButtonCount = 2;  // 完成/取消
 inline constexpr int AnnotationEditorFontComboWidth = 52;
 inline constexpr int AnnotationEditorFontComboDropHeight = 200;
@@ -66,18 +66,37 @@ inline int annotationEditorMainToolbarWidth()
          annotationEditorDividerExtra();
 }
 
+inline int annotationEditorButtonsWidth(int count)
+{
+  if (count <= 0)
+  {
+    return 0;
+  }
+  return count * AnnotationEditorButtonWidth +
+         (count - 1) * AnnotationEditorButtonGap;
+}
+
 inline int annotationEditorPropertyBarWidth()
 {
   const int colors_width =
       AnnotationStylePresetColorCount * AnnotationEditorColorSwatchSize +
       (AnnotationStylePresetColorCount - 1) * AnnotationEditorButtonGap;
   const int stroke_width =
-      AnnotationStylePresetStrokeCount * AnnotationEditorButtonWidth +
-      (AnnotationStylePresetStrokeCount - 1) * AnnotationEditorButtonGap;
+      annotationEditorButtonsWidth(AnnotationStylePresetStrokeCount);
+  const int shape_width = annotationEditorButtonsWidth(2);
+  const int fill_width = AnnotationEditorButtonWidth;
+  const int line_style_width =
+      annotationEditorButtonsWidth(AnnotationLineStyleCount);
+  const int geometry_extras = shape_width + fill_width + line_style_width +
+                              AnnotationEditorDividerGap * 3;
   const int after_colors =
       (std::max)(stroke_width, AnnotationEditorFontComboWidth);
-  return AnnotationEditorBarPadding * 2 + colors_width +
-         AnnotationEditorDividerGap + after_colors;
+  const int simple_width = AnnotationEditorBarPadding * 2 + colors_width +
+                           AnnotationEditorDividerGap + after_colors;
+  const int geometry_width = AnnotationEditorBarPadding * 2 + geometry_extras +
+                             stroke_width + AnnotationEditorDividerGap +
+                             colors_width;
+  return (std::max)(simple_width, geometry_width);
 }
 
 // 放下主栏与二级栏所需的最小客户区宽度。
@@ -109,6 +128,26 @@ inline bool annotationEditorPropertyBarShowsStroke(AnnotationTool tool)
   return tool == AnnotationTool::Rectangle ||
          tool == AnnotationTool::Ellipse || tool == AnnotationTool::Arrow ||
          tool == AnnotationTool::Pen;
+}
+
+inline bool annotationEditorIsGeometryTool(AnnotationTool tool)
+{
+  return tool == AnnotationTool::Rectangle || tool == AnnotationTool::Ellipse;
+}
+
+inline bool annotationEditorPropertyBarShowsShapeToggle(AnnotationTool tool)
+{
+  return annotationEditorIsGeometryTool(tool);
+}
+
+inline bool annotationEditorPropertyBarShowsFill(AnnotationTool tool)
+{
+  return annotationEditorIsGeometryTool(tool);
+}
+
+inline bool annotationEditorPropertyBarShowsLineStyle(AnnotationTool tool)
+{
+  return annotationEditorIsGeometryTool(tool);
 }
 
 inline bool annotationEditorPropertyBarShowsFont(AnnotationTool tool)
@@ -340,7 +379,7 @@ struct AnnotationEditorInPlacePlacement
 
 inline AnnotationEditorInPlacePlacement annotationEditorInPlacePlacement(
     int screen_x, int screen_y, int image_width, int image_height,
-    AnnotationTool tool = AnnotationTool::Rectangle)
+    AnnotationTool tool = AnnotationTool::None)
 {
   AnnotationEditorInPlacePlacement placement{};
   placement.image_origin_x = AnnotationEditorFrameInsetPx;

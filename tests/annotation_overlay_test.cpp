@@ -101,6 +101,43 @@ TEST(AnnotationOverlayTest, PropertyBarVisibilityDependsOnTool)
   EXPECT_FALSE(annotationEditorShowsPropertyBar(AnnotationTool::None));
 }
 
+TEST(AnnotationOverlayTest, EnteringEditorHidesPropertyBarUntilToolClick)
+{
+  EXPECT_FALSE(annotationEditorShowsPropertyBar(AnnotationTool::None));
+  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::None),
+            annotationEditorToolbarHeight());
+  EXPECT_LT(annotationEditorWindowHeight(kCanvasHeight, AnnotationTool::None),
+            annotationEditorWindowHeight(kCanvasHeight,
+                                         AnnotationTool::Rectangle));
+}
+
+TEST(AnnotationOverlayTest, GeometryStyleDefaultsToHollowSolidLine)
+{
+  const AnnotationStyle style{};
+  EXPECT_FALSE(style.filled);
+  EXPECT_EQ(style.line_style, AnnotationLineStyle::Solid);
+}
+
+TEST(AnnotationOverlayTest, MainToolbarMergesRectangleAndEllipse)
+{
+  EXPECT_EQ(AnnotationEditorToolButtonCount, 6);
+}
+
+TEST(AnnotationOverlayTest, GeometryPropertyBarShowsShapeFillAndLineStyle)
+{
+  EXPECT_TRUE(annotationEditorIsGeometryTool(AnnotationTool::Rectangle));
+  EXPECT_TRUE(annotationEditorIsGeometryTool(AnnotationTool::Ellipse));
+  EXPECT_FALSE(annotationEditorIsGeometryTool(AnnotationTool::Pen));
+  EXPECT_TRUE(
+      annotationEditorPropertyBarShowsShapeToggle(AnnotationTool::Rectangle));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsFill(AnnotationTool::Ellipse));
+  EXPECT_TRUE(
+      annotationEditorPropertyBarShowsLineStyle(AnnotationTool::Rectangle));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsShapeToggle(AnnotationTool::Pen));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsFill(AnnotationTool::Arrow));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsLineStyle(AnnotationTool::Pen));
+}
+
 TEST(AnnotationOverlayTest, StrokeToolsShowWidthNotFontOnPropertyBar)
 {
   EXPECT_TRUE(annotationEditorPropertyBarShowsStroke(AnnotationTool::Rectangle));
@@ -175,7 +212,7 @@ TEST(AnnotationOverlayTest, InPlacePlacementPinsImageOriginToSelection)
   EXPECT_EQ(place.image_origin_y, annotationEditorTopInset());
   EXPECT_EQ(place.window_width, annotationEditorWindowWidth(kImgW));
   EXPECT_EQ(place.window_height,
-            annotationEditorWindowHeight(kImgH, AnnotationTool::Rectangle));
+            annotationEditorWindowHeight(kImgH, AnnotationTool::None));
 }
 
 TEST(AnnotationOverlayTest, InPlacePlacementDoesNotShiftToFitToolbarOnScreen)
@@ -365,8 +402,8 @@ TEST(AnnotationOverlayTest, HandlePointsSitOnImageEdges)
 //
 // 预期：
 // 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
-// 2. 底部主栏：矩形/椭圆/箭头/画笔/马赛克/文字 | 撤销 | 完成/取消
-//    点工具后下方二级栏：描边工具为色块+线宽；文字为色块+字号；
+// 2. 底部主栏：几何(矩形/椭圆)/箭头/画笔/马赛克/文字 | 撤销 | 完成/取消
+//    点几何后二级栏：形状切换+填充+线型+线宽+色块；文字为色块+字号；
 //    马赛克为块大小下拉（8/12/16/24，默认 12），无色块
 // 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
 // 4. 文字：空白单击新建；已有文字单击出现黑框+删除；拖过阈值可改位置；

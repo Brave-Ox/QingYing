@@ -29,8 +29,15 @@ constexpr UINT kButtonPenId = 6;
 constexpr UINT kButtonTextId = 7;
 constexpr UINT kButtonUndoId = 8;
 constexpr UINT kButtonMosaicId = 9;
+constexpr UINT kButtonGeometryId = 23;
 constexpr UINT kInlineEditId = 10;
 constexpr UINT kFontComboId = 20;
+constexpr UINT kTipShapeRectId = 200;
+constexpr UINT kTipShapeEllipseId = 201;
+constexpr UINT kTipFillId = 202;
+constexpr UINT kTipLineStyleBaseId = 210;
+constexpr UINT kTipStrokeBaseId = 220;
+constexpr UINT kTipColorBaseId = 230;
 constexpr int kComboFontPx = 13;
 const wchar_t kUiFontFace[] = L"Microsoft YaHei UI";
 
@@ -42,7 +49,18 @@ constexpr int kTextMinHitHeightPx = 20;
 constexpr std::size_t kInvalidAnnotationIndex =
     static_cast<std::size_t>(-1);
 
-constexpr int kToolbarIconItemCount = 9;
+constexpr int kToolbarIconItemCount = 8;
+constexpr int kGeometryShapeCount = 2;
+constexpr int kComboTooltipSlot = kToolbarIconItemCount;
+constexpr int kShapeTooltipSlot = kComboTooltipSlot + 1;
+constexpr int kFillTooltipSlot = kShapeTooltipSlot + kGeometryShapeCount;
+constexpr int kLineStyleTooltipSlot = kFillTooltipSlot + 1;
+constexpr int kStrokeTooltipSlot =
+    kLineStyleTooltipSlot + AnnotationLineStyleCount;
+constexpr int kColorTooltipSlot =
+    kStrokeTooltipSlot + AnnotationStylePresetStrokeCount;
+constexpr int kTooltipSlotCount =
+    kColorTooltipSlot + AnnotationStylePresetColorCount;
 constexpr int kStrokePreviewInsetPx = 6;
 constexpr int kSwatchCornerRadius = 4;
 constexpr COLORREF kSwatchBorderColor = RGB(160, 164, 170);
@@ -109,10 +127,14 @@ struct EditorWindowData
   EditorToolbarItem toolbar_items[kToolbarIconItemCount]{};
   RECT color_swatch_rects[AnnotationStylePresetColorCount]{};
   RECT stroke_rects[AnnotationStylePresetStrokeCount]{};
+  RECT shape_rects[kGeometryShapeCount]{};
+  RECT fill_rect{};
+  RECT line_style_rects[AnnotationLineStyleCount]{};
+  AnnotationTool last_geometry_tool{AnnotationTool::Rectangle};
   int toolbar_hover{-1};
   int toolbar_divider_x[AnnotationEditorDividerCount]{};
   HWND tooltip{nullptr};
-  wchar_t tooltip_text[kToolbarIconItemCount + 1][kToolbarTooltipMaxChars]{};
+  wchar_t tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};
   bool confirmed{false};
   int client_width{0};
   bool* loop_done{nullptr};
@@ -214,6 +236,10 @@ void canvasFromClient(const EditorWindowData* data, int x, int y, float& out_x,
 void paintPropertyBar(HDC hdc, EditorWindowData* data);
 void layoutPropertyBar(HWND hwnd, EditorWindowData* data);
 void resizeEditorChrome(EditorWindowData* data);
+void syncGeometryButton(EditorWindowData* data);
+int hitTestShapeToggle(const EditorWindowData* data, int x, int y);
+bool hitTestFill(const EditorWindowData* data, int x, int y);
+int hitTestLineStyle(const EditorWindowData* data, int x, int y);
 void applyLiveTextStyle(EditorWindowData* data);
 void syncStyleFromAnnotation(EditorWindowData* data,
                              const Annotation& annotation);
@@ -228,6 +254,7 @@ bool createButtons(HWND hwnd, EditorWindowData* data);
 void fillSizeCombo(EditorWindowData* data);
 void syncSizeFromCombo(EditorWindowData* data);
 void bindSizeComboTooltip(EditorWindowData* data);
+void bindPropertyBarTooltips(EditorWindowData* data);
 void updateTextGesture(EditorWindowData* data, int x, int y);
 void tryPromoteInlineEditToDrag(EditorWindowData* data, int client_x,
                                 int client_y);
@@ -1031,26 +1058,93 @@ void fillSizeCombo(EditorWindowData* data)
 
 void bindSizeComboTooltip(EditorWindowData* data)
 {
-  if (data == nullptr || data->font_combo == nullptr ||
-      data->tooltip == nullptr || data->overlay == nullptr)
+  if (data == nullptr || data->tooltip == nullptr || data->overlay == nullptr)
   {
     return;
   }
 
-  RECT combo_rect{};
-  GetWindowRect(data->font_combo, &combo_rect);
-  POINT top_left{combo_rect.left, combo_rect.top};
-  POINT bottom_right{combo_rect.right, combo_rect.bottom};
-  ScreenToClient(data->overlay, &top_left);
-  ScreenToClient(data->overlay, &bottom_right);
-  RECT local{top_left.x, top_left.y, bottom_right.x, bottom_right.y};
-  const wchar_t* tip =
-      annotationEditorPropertyBarShowsMosaicSize(data->controller.tool())
-          ? L"\x5757\x5927\x5C0F"
-          : L"\x5B57\x53F7";
+  RECT local{};
+  const bool show_combo =
+      data->font_combo != nullptr &&
+      annotationEditorPropertyBarShowsSizeCombo(data->controller.tool());
+  if (show_combo)
+  {
+    RECT combo_rect{};
+    GetWindowRect(data->font_combo, &combo_rect);
+    POINT top_left{combo_rect.left, combo_rect.top};
+    POINT bottom_right{combo_rect.right, combo_rect.bottom};
+    ScreenToClient(data->overlay, &top_left);
+    ScreenToClient(data->overlay, &bottom_right);
+    local = {top_left.x, top_left.y, bottom_right.x, bottom_right.y};
+  }
+
+  const wchar_t* tip = L"";
+  if (show_combo)
+  {
+    tip = annotationEditorPropertyBarShowsMosaicSize(data->controller.tool())
+              ? L"\x5757\x5927\x5C0F"
+              : L"\x5B57\x53F7";
+  }
   bindToolbarTooltip(data->tooltip, data->overlay, kFontComboId, local, tip,
-                     data->tooltip_text[kToolbarIconItemCount],
+                     data->tooltip_text[kComboTooltipSlot],
                      kToolbarTooltipMaxChars);
+}
+
+void bindPropertyBarTooltips(EditorWindowData* data)
+{
+  if (data == nullptr || data->tooltip == nullptr || data->overlay == nullptr)
+  {
+    return;
+  }
+
+  const HWND overlay = data->overlay;
+  const HWND tooltip = data->tooltip;
+  bindToolbarTooltip(tooltip, overlay, kTipShapeRectId, data->shape_rects[0],
+                     toolbarIconLabel(ToolbarIconKind::Rectangle),
+                     data->tooltip_text[kShapeTooltipSlot],
+                     kToolbarTooltipMaxChars);
+  bindToolbarTooltip(tooltip, overlay, kTipShapeEllipseId, data->shape_rects[1],
+                     toolbarIconLabel(ToolbarIconKind::Ellipse),
+                     data->tooltip_text[kShapeTooltipSlot + 1],
+                     kToolbarTooltipMaxChars);
+  bindToolbarTooltip(tooltip, overlay, kTipFillId, data->fill_rect,
+                     toolbarIconLabel(ToolbarIconKind::Fill),
+                     data->tooltip_text[kFillTooltipSlot],
+                     kToolbarTooltipMaxChars);
+
+  const ToolbarIconKind line_icons[AnnotationLineStyleCount] = {
+      ToolbarIconKind::LineSolid, ToolbarIconKind::LineDashed,
+      ToolbarIconKind::LineDotted};
+  for (int i = 0; i < AnnotationLineStyleCount; ++i)
+  {
+    bindToolbarTooltip(
+        tooltip, overlay, kTipLineStyleBaseId + static_cast<UINT>(i),
+        data->line_style_rects[static_cast<std::size_t>(i)],
+        toolbarIconLabel(line_icons[static_cast<std::size_t>(i)]),
+        data->tooltip_text[kLineStyleTooltipSlot + i],
+        kToolbarTooltipMaxChars);
+  }
+
+  for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
+  {
+    bindToolbarTooltip(tooltip, overlay,
+                       kTipStrokeBaseId + static_cast<UINT>(i),
+                       data->stroke_rects[static_cast<std::size_t>(i)],
+                       toolbarStrokePresetLabel(i),
+                       data->tooltip_text[kStrokeTooltipSlot + i],
+                       kToolbarTooltipMaxChars);
+  }
+
+  for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+  {
+    bindToolbarTooltip(tooltip, overlay, kTipColorBaseId + static_cast<UINT>(i),
+                       data->color_swatch_rects[static_cast<std::size_t>(i)],
+                       toolbarColorPresetLabel(i),
+                       data->tooltip_text[kColorTooltipSlot + i],
+                       kToolbarTooltipMaxChars);
+  }
+
+  bindSizeComboTooltip(data);
 }
 
 void syncSizeFromCombo(EditorWindowData* data)
@@ -1440,6 +1534,62 @@ void applyLiveTextStyle(EditorWindowData* data)
   }
 }
 
+RECT takeToolbarButtonRect(int& x, int y)
+{
+  RECT rect{x, y, x + AnnotationEditorButtonWidth,
+            y + AnnotationEditorButtonHeight};
+  x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+  return rect;
+}
+
+void skipToolbarDivider(int& x)
+{
+  x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
+}
+
+void resetPropertyBarRects(EditorWindowData* data)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  for (int i = 0; i < kGeometryShapeCount; ++i)
+  {
+    data->shape_rects[static_cast<std::size_t>(i)] = {};
+  }
+  data->fill_rect = {};
+  for (int i = 0; i < AnnotationLineStyleCount; ++i)
+  {
+    data->line_style_rects[static_cast<std::size_t>(i)] = {};
+  }
+  for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
+  {
+    data->stroke_rects[static_cast<std::size_t>(i)] = {};
+  }
+  for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
+  {
+    data->color_swatch_rects[static_cast<std::size_t>(i)] = {};
+  }
+}
+
+void syncGeometryButton(EditorWindowData* data)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+  if (annotationEditorIsGeometryTool(data->controller.tool()))
+  {
+    data->last_geometry_tool = data->controller.tool();
+  }
+  data->toolbar_items[0].id = kButtonGeometryId;
+  data->toolbar_items[0].icon =
+      (data->last_geometry_tool == AnnotationTool::Ellipse)
+          ? ToolbarIconKind::Ellipse
+          : ToolbarIconKind::Rectangle;
+}
+
 void layoutPropertyBar(HWND hwnd, EditorWindowData* data)
 {
   if (hwnd == nullptr || data == nullptr)
@@ -1447,14 +1597,50 @@ void layoutPropertyBar(HWND hwnd, EditorWindowData* data)
     return;
   }
 
+  const AnnotationTool tool = data->controller.tool();
   const Image& source = data->session.source();
   const int y = data->image_origin_y + source.height +
                 annotationEditorToolbarHeight() + AnnotationEditorBarPadding;
   const int swatch = AnnotationEditorColorSwatchSize;
   const int swatch_y = y + (AnnotationEditorButtonHeight - swatch) / 2;
   int x = data->image_origin_x + AnnotationEditorBarPadding;
+  const int mosaic_combo_x = x;
+  resetPropertyBarRects(data);
 
-  if (annotationEditorPropertyBarShowsColor(data->controller.tool()))
+  if (annotationEditorPropertyBarShowsShapeToggle(tool))
+  {
+    data->shape_rects[0] = takeToolbarButtonRect(x, y);
+    data->shape_rects[1] = takeToolbarButtonRect(x, y);
+    skipToolbarDivider(x);
+  }
+  if (annotationEditorPropertyBarShowsFill(tool))
+  {
+    data->fill_rect = takeToolbarButtonRect(x, y);
+    skipToolbarDivider(x);
+  }
+  if (annotationEditorPropertyBarShowsLineStyle(tool))
+  {
+    for (int i = 0; i < AnnotationLineStyleCount; ++i)
+    {
+      data->line_style_rects[static_cast<std::size_t>(i)] =
+          takeToolbarButtonRect(x, y);
+    }
+    skipToolbarDivider(x);
+  }
+
+  if (annotationEditorPropertyBarShowsStroke(tool) &&
+      annotationEditorIsGeometryTool(tool))
+  {
+    for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
+    {
+      data->stroke_rects[static_cast<std::size_t>(i)] =
+          takeToolbarButtonRect(x, y);
+    }
+    skipToolbarDivider(x);
+  }
+
+  int combo_x = x;
+  if (annotationEditorPropertyBarShowsColor(tool))
   {
     for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
     {
@@ -1463,22 +1649,31 @@ void layoutPropertyBar(HWND hwnd, EditorWindowData* data)
       x += swatch + AnnotationEditorButtonGap;
     }
     x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
+    combo_x = x;
   }
 
-  const int stroke_x = x;
-  for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
+  if (annotationEditorPropertyBarShowsStroke(tool) &&
+      !annotationEditorIsGeometryTool(tool))
   {
-    data->stroke_rects[static_cast<std::size_t>(i)] = {
-        x, y, x + AnnotationEditorButtonWidth, y + AnnotationEditorButtonHeight};
-    x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+    combo_x = x;
+    for (int i = 0; i < AnnotationStylePresetStrokeCount; ++i)
+    {
+      data->stroke_rects[static_cast<std::size_t>(i)] =
+          takeToolbarButtonRect(x, y);
+    }
   }
 
   if (data->font_combo != nullptr)
   {
-    SetWindowPos(data->font_combo, nullptr, stroke_x, y,
+    const int placed_x =
+        annotationEditorPropertyBarShowsMosaicSize(tool) ? mosaic_combo_x
+                                                         : combo_x;
+    SetWindowPos(data->font_combo, nullptr, placed_x, y,
                  AnnotationEditorFontComboWidth, AnnotationEditorButtonHeight,
                  SWP_NOZORDER | SWP_NOACTIVATE);
   }
+
+  bindPropertyBarTooltips(data);
 }
 
 void resizeEditorChrome(EditorWindowData* data)
@@ -1500,8 +1695,8 @@ void resizeEditorChrome(EditorWindowData* data)
                annotationEditorPropertyBarShowsSizeCombo(tool) ? SW_SHOW
                                                                : SW_HIDE);
   }
-  bindSizeComboTooltip(data);
   layoutPropertyBar(data->overlay, data);
+  syncGeometryButton(data);
   invalidateToolbar(data);
 }
 
@@ -1544,10 +1739,94 @@ int hitTestStrokePreset(const EditorWindowData* data, int x, int y)
   return -1;
 }
 
+int hitTestShapeToggle(const EditorWindowData* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarShowsShapeToggle(data->controller.tool()))
+  {
+    return -1;
+  }
+
+  const POINT pt{x, y};
+  for (int i = 0; i < kGeometryShapeCount; ++i)
+  {
+    if (PtInRect(&data->shape_rects[static_cast<std::size_t>(i)], pt) != FALSE)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+bool hitTestFill(const EditorWindowData* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarShowsFill(data->controller.tool()))
+  {
+    return false;
+  }
+  const POINT pt{x, y};
+  return PtInRect(&data->fill_rect, pt) != FALSE;
+}
+
+int hitTestLineStyle(const EditorWindowData* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarShowsLineStyle(data->controller.tool()))
+  {
+    return -1;
+  }
+
+  const POINT pt{x, y};
+  for (int i = 0; i < AnnotationLineStyleCount; ++i)
+  {
+    if (PtInRect(&data->line_style_rects[static_cast<std::size_t>(i)], pt) !=
+        FALSE)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
 void handlePropertyBarClick(EditorWindowData* data, int x, int y)
 {
   if (data == nullptr)
   {
+    return;
+  }
+
+  const int shape_index = hitTestShapeToggle(data, x, y);
+  if (shape_index >= 0)
+  {
+    data->controller.setTool(shape_index == 0 ? AnnotationTool::Rectangle
+                                              : AnnotationTool::Ellipse);
+    syncGeometryButton(data);
+    resizeEditorChrome(data);
+    return;
+  }
+
+  if (hitTestFill(data, x, y))
+  {
+    data->controller.setFilled(!data->controller.style().filled);
+    if (data->controller.isDrawing())
+    {
+      invalidateImageArea(data);
+    }
+    invalidateToolbar(data);
+    return;
+  }
+
+  const int line_index = hitTestLineStyle(data, x, y);
+  if (line_index >= 0)
+  {
+    data->controller.setLineStyle(
+        AnnotationLineStyleOptions[static_cast<std::size_t>(line_index)]);
+    if (data->controller.isDrawing())
+    {
+      invalidateImageArea(data);
+    }
+    invalidateToolbar(data);
     return;
   }
 
@@ -1598,7 +1877,10 @@ bool pointerHitsStyleChrome(const EditorWindowData* data)
   ScreenToClient(data->overlay, &pt);
   return hitTestEditorToolbar(data, pt.x, pt.y) >= 0 ||
          hitTestColorSwatch(data, pt.x, pt.y) >= 0 ||
-         hitTestStrokePreset(data, pt.x, pt.y) >= 0;
+         hitTestStrokePreset(data, pt.x, pt.y) >= 0 ||
+         hitTestShapeToggle(data, pt.x, pt.y) >= 0 ||
+         hitTestFill(data, pt.x, pt.y) ||
+         hitTestLineStyle(data, pt.x, pt.y) >= 0;
 }
 
 void paintPropertyBar(HDC hdc, EditorWindowData* data)
@@ -1629,6 +1911,35 @@ void paintPropertyBar(HDC hdc, EditorWindowData* data)
 
   const AnnotationTool tool = data->controller.tool();
   const AnnotationStyle& style = data->controller.style();
+
+  if (annotationEditorPropertyBarShowsShapeToggle(tool))
+  {
+    drawToolbarItem(hdc, data->shape_rects[0], ToolbarIconKind::Rectangle,
+                    false, tool == AnnotationTool::Rectangle, true, false);
+    drawToolbarItem(hdc, data->shape_rects[1], ToolbarIconKind::Ellipse, false,
+                    tool == AnnotationTool::Ellipse, true, false);
+  }
+  if (annotationEditorPropertyBarShowsFill(tool))
+  {
+    drawToolbarItem(hdc, data->fill_rect, ToolbarIconKind::Fill, false,
+                    style.filled, true, false);
+  }
+  if (annotationEditorPropertyBarShowsLineStyle(tool))
+  {
+    const ToolbarIconKind line_icons[AnnotationLineStyleCount] = {
+        ToolbarIconKind::LineSolid, ToolbarIconKind::LineDashed,
+        ToolbarIconKind::LineDotted};
+    for (int i = 0; i < AnnotationLineStyleCount; ++i)
+    {
+      const bool selected =
+          style.line_style ==
+          AnnotationLineStyleOptions[static_cast<std::size_t>(i)];
+      drawToolbarItem(hdc, data->line_style_rects[static_cast<std::size_t>(i)],
+                      line_icons[static_cast<std::size_t>(i)], false, selected,
+                      true, false);
+    }
+  }
+
   if (annotationEditorPropertyBarShowsColor(tool))
   {
     for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
@@ -1708,11 +2019,8 @@ void paintEditorToolbar(HDC hdc, EditorWindowData* data)
     bool selected = false;
     switch (item.id)
     {
-      case kButtonRectId:
-        selected = data->controller.tool() == AnnotationTool::Rectangle;
-        break;
-      case kButtonEllipseId:
-        selected = data->controller.tool() == AnnotationTool::Ellipse;
+      case kButtonGeometryId:
+        selected = annotationEditorIsGeometryTool(data->controller.tool());
         break;
       case kButtonArrowId:
         selected = data->controller.tool() == AnnotationTool::Arrow;
@@ -1730,7 +2038,8 @@ void paintEditorToolbar(HDC hdc, EditorWindowData* data)
         break;
     }
     drawToolbarItem(hdc, item.rect, item.icon, i == data->toolbar_hover,
-                    selected, true, item.accent);
+                    selected, true, item.accent,
+                    item.id == kButtonGeometryId);
   }
 
   const int divider_top = bar.top + 8;
@@ -1769,8 +2078,7 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
     ToolbarIconKind icon;
     bool accent;
   } left_items[] = {
-      {kButtonRectId, ToolbarIconKind::Rectangle, false},
-      {kButtonEllipseId, ToolbarIconKind::Ellipse, false},
+      {kButtonGeometryId, ToolbarIconKind::Rectangle, false},
       {kButtonArrowId, ToolbarIconKind::Arrow, false},
       {kButtonPenId, ToolbarIconKind::Pen, false},
       {kButtonMosaicId, ToolbarIconKind::Mosaic, false},
@@ -1857,12 +2165,14 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
   data->tooltip = createToolbarTooltip(hwnd);
   for (int i = 0; i < kToolbarIconItemCount; ++i)
   {
+    const wchar_t* tip = (data->toolbar_items[i].id == kButtonGeometryId)
+                             ? toolbarIconLabel(ToolbarIconKind::Geometry)
+                             : toolbarIconLabel(data->toolbar_items[i].icon);
     bindToolbarTooltip(data->tooltip, hwnd, data->toolbar_items[i].id,
-                       data->toolbar_items[i].rect,
-                       toolbarIconLabel(data->toolbar_items[i].icon),
-                       data->tooltip_text[i], kToolbarTooltipMaxChars);
+                       data->toolbar_items[i].rect, tip, data->tooltip_text[i],
+                       kToolbarTooltipMaxChars);
   }
-  bindSizeComboTooltip(data);
+  bindPropertyBarTooltips(data);
 
   return item_index + 1 == kToolbarIconItemCount;
 }
@@ -1997,11 +2307,8 @@ void handleToolCommand(EditorWindowData* data, UINT id)
 
   switch (id)
   {
-    case kButtonRectId:
-      data->controller.setTool(AnnotationTool::Rectangle);
-      break;
-    case kButtonEllipseId:
-      data->controller.setTool(AnnotationTool::Ellipse);
+    case kButtonGeometryId:
+      data->controller.setTool(data->last_geometry_tool);
       break;
     case kButtonArrowId:
       data->controller.setTool(AnnotationTool::Arrow);
@@ -2028,6 +2335,7 @@ void handleToolCommand(EditorWindowData* data, UINT id)
       break;
   }
   resizeEditorChrome(data);
+  syncGeometryButton(data);
 }
 
 LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -2376,7 +2684,7 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   data.image_origin_x = AnnotationEditorFrameInsetPx;
   data.image_origin_y = annotationEditorTopInset();
   data.controller.setCanvasSize(source.width, source.height);
-  data.controller.setTool(AnnotationTool::Rectangle);
+  data.controller.setTool(AnnotationTool::None);
   data.callback = std::move(callback);
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -2387,7 +2695,7 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
 
   int window_width = data.client_width;
   int window_height =
-      annotationEditorWindowHeight(source.height, AnnotationTool::Rectangle);
+      annotationEditorWindowHeight(source.height, data.controller.tool());
   int x = 0;
   int y = 0;
   if (screen_x < 0 || screen_y < 0)
@@ -2400,7 +2708,8 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
     // 就地编辑：图片原点钉死在选区左上角，外框/手柄占窗口外沿。
     const AnnotationEditorInPlacePlacement place =
         annotationEditorInPlacePlacement(screen_x, screen_y, source.width,
-                                         source.height);
+                                         source.height,
+                                         data.controller.tool());
     x = place.window_x;
     y = place.window_y;
     data.image_origin_x = place.image_origin_x;
