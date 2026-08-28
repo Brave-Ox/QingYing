@@ -70,6 +70,7 @@ struct OverlayWindowData {
   bool longshot_active{false};
   bool longshot_paused{false};
   bool longshot_finishing{false};
+  SelectionAction longshot_pending_action{SelectionAction::None};
   bool capture_passthrough{false};
   HWND longshot_button{nullptr};
   HWND longshot_stop_button{nullptr};
@@ -148,7 +149,10 @@ void setLongShotButtons(OverlayWindowData* data) {
     EnableWindow(data->longshot_stop_button,
                  data->longshot_active && !data->longshot_finishing);
   }
-  const BOOL enabled = data->longshot_active ? FALSE : TRUE;
+  const bool actions_enabled =
+      !data->longshot_active ||
+      (data->longshot_paused && !data->longshot_finishing);
+  const BOOL enabled = actions_enabled ? TRUE : FALSE;
   if (data->copy_button != nullptr) {
     EnableWindow(data->copy_button, enabled);
   }
@@ -191,6 +195,7 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     data->longshot_active = true;
     data->longshot_paused = false;
     data->longshot_finishing = false;
+    data->longshot_pending_action = SelectionAction::None;
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
     data->capture_passthrough = true;
@@ -206,6 +211,10 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     return;
   }
   if (data->longshot_active) {
+    if (data->longshot_paused && !data->longshot_finishing) {
+      data->longshot_pending_action = action;
+      requestLongShotStop(data);
+    }
     return;
   }
   data->action = action;
@@ -698,9 +707,19 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       std::unique_ptr<LongShotFinishedMessage> message(
           reinterpret_cast<LongShotFinishedMessage*>(wparam));
       if (data != nullptr) {
+        const SelectionAction pending_action = data->longshot_pending_action;
+        const bool run_pending_action =
+            message != nullptr && message->success &&
+            pending_action != SelectionAction::None;
         data->longshot_active = false;
         data->longshot_paused = false;
         data->longshot_finishing = false;
+        data->longshot_pending_action = SelectionAction::None;
+        if (run_pending_action) {
+          data->action = pending_action;
+          PostMessageW(hwnd, WM_CLOSE, 0, 0);
+          return 0;
+        }
         setLongShotButtons(data);
         updateOverlay(hwnd, data);
       }
