@@ -25,6 +25,14 @@ struct LongShotCompletion {
   Image image;
 };
 
+const wchar_t* longShotFailureText(int error_code) {
+  if (error_code == ErrorCode::kLongShotUnsupported) {
+    return L"当前窗口或框选区域不支持长截图。\n"
+           L"请在受支持应用的可滚动内容区域内重新框选。";
+  }
+  return L"长截图失败，请重新框选后再试。";
+}
+
 }  // namespace
 
 Application::Application(HINSTANCE instance)
@@ -56,14 +64,29 @@ void Application::installMessageRouter() {
       *result = 0;
       return true;
     }
+    if (msg == WM_DESTROY) {
+      // The tray window owns the process lifetime. Close any nested capture
+      // overlay before TrayController posts WM_QUIT, otherwise the overlay's
+      // modal loop can outlive the tray window.
+      longshot_stop_.store(true);
+      longshot_paused_.store(false);
+      overlay_.hide();
+      return false;
+    }
     if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {
       std::unique_ptr<LongShotCompletion> completion(
           reinterpret_cast<LongShotCompletion*>(lparam));
       finishLongShotOnUiThread();
       if (completion == nullptr) {
+        longshot_result_ready_ = false;
+        pending_overlay_error_ = L"长截图失败，请重新框选后再试。";
+        if (!overlay_.postLongShotFinished(false)) {
+          overlay_.hide();
+        }
         *result = 0;
         return true;
       }
+      bool overlay_success = completion->result.ok;
       if (completion->result.ok) {
         session_.setResult(std::move(completion->image));
         longshot_result_ready_ = true;
@@ -74,14 +97,21 @@ void Application::installMessageRouter() {
         copy_request.type = ActionType::Copy;
         const ActionResult copy_result = dispatcher_.dispatch(copy_request);
         if (!copy_result.ok) {
-          MessageBoxW(tray_.hwnd(), L"Failed to copy the long screenshot.",
-                      L"QingYing", MB_OK | MB_ICONERROR);
+          overlay_success = false;
+          longshot_result_ready_ = false;
+          pending_overlay_error_ = L"长截图已生成，但复制到剪贴板失败。";
         }
       } else {
-        MessageBoxW(tray_.hwnd(), L"Failed to capture the long screenshot.",
-                    L"QingYing", MB_OK | MB_ICONERROR);
+        longshot_result_ready_ = false;
+        pending_overlay_error_ =
+            longShotFailureText(completion->result.error_code);
       }
-      overlay_.postLongShotFinished(completion->result.ok);
+      if (!overlay_.postLongShotFinished(overlay_success)) {
+        if (overlay_success) {
+          longshot_result_ready_ = false;
+        }
+        overlay_.hide();
+      }
       *result = 0;
       return true;
     }
@@ -300,11 +330,20 @@ void Application::beginCaptureFlow() {
       },
       [this](LongShotControl control) { onLongShotControl(control); });
 
+  recorded_owner_window_ = 0;
+  pending_longshot_request_ = LongShotRequest{};
   if (!shown) {
-    // Overlay not ready yet — keep integration path wired for when UI lands.
-    recorded_owner_window_ = 0;
-    pending_longshot_request_ = LongShotRequest{};
+    pending_overlay_error_.clear();
     return;
+  }
+
+  // Never open a modal dialog while the topmost fullscreen overlay exists.
+  // Long-shot failure first closes the overlay; only then is the error shown.
+  std::wstring error = std::move(pending_overlay_error_);
+  pending_overlay_error_.clear();
+  if (!error.empty() && IsWindow(tray_.hwnd())) {
+    MessageBoxW(tray_.hwnd(), error.c_str(), L"轻映 QingYing",
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
   }
 }
 

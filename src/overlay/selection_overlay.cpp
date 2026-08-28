@@ -29,6 +29,7 @@ constexpr UINT kToolbarButtonLongShot = 5;
 constexpr UINT kToolbarButtonLongShotStop = 6;
 constexpr UINT kMsgLongShotPreview = WM_APP + 3;
 constexpr UINT kMsgLongShotFinished = WM_APP + 4;
+constexpr UINT kMsgOverlayAbort = WM_APP + 5;
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
@@ -71,6 +72,7 @@ struct OverlayWindowData {
   bool longshot_paused{false};
   bool longshot_finishing{false};
   SelectionAction longshot_pending_action{SelectionAction::None};
+  bool closed{false};
   bool capture_passthrough{false};
   HWND longshot_button{nullptr};
   HWND longshot_stop_button{nullptr};
@@ -707,14 +709,20 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       std::unique_ptr<LongShotFinishedMessage> message(
           reinterpret_cast<LongShotFinishedMessage*>(wparam));
       if (data != nullptr) {
+        const bool success = message != nullptr && message->success;
         const SelectionAction pending_action = data->longshot_pending_action;
         const bool run_pending_action =
-            message != nullptr && message->success &&
-            pending_action != SelectionAction::None;
+            success && pending_action != SelectionAction::None;
         data->longshot_active = false;
         data->longshot_paused = false;
         data->longshot_finishing = false;
         data->longshot_pending_action = SelectionAction::None;
+        if (!success) {
+          // Failure dialogs are shown by Application only after this topmost
+          // fullscreen window has gone away.
+          PostMessageW(hwnd, WM_CLOSE, 0, 0);
+          return 0;
+        }
         if (run_pending_action) {
           data->action = pending_action;
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -723,6 +731,17 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         setLongShotButtons(data);
         updateOverlay(hwnd, data);
       }
+      return 0;
+    }
+    case kMsgOverlayAbort: {
+      if (data != nullptr) {
+        data->callback = {};
+        data->longshot_control_callback = {};
+        data->controller.cancel();
+        data->action = SelectionAction::None;
+        data->selection_confirmed = false;
+      }
+      PostMessageW(hwnd, WM_CLOSE, 0, 0);
       return 0;
     }
     case WM_SETCURSOR: {
@@ -915,6 +934,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_DESTROY: {
       if (data != nullptr) {
+        data->closed = true;
         destroyToolbar(data);
         SelectionResult result = toScreenSelection(data->controller.selection(),
                                                    data->screen);
@@ -924,7 +944,6 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           callback(result);
         }
       }
-      PostQuitMessage(0);
       return 0;
     }
     default:
@@ -1033,20 +1052,48 @@ bool SelectionOverlay::show(const Image& background,
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, kMsgOverlayReady, 0, 0);
 
-  // 模态消息循环：捕获期间阻塞，直到选区确认/取消（WM_DESTROY → PostQuitMessage）。
+  // 模态消息循环：只以当前 Overlay 的生命周期作为退出条件，不借用线程级
+  // WM_QUIT。若应用正在退出，则销毁 Overlay 后把 WM_QUIT 重新交还外层循环。
+  bool quit_requested = false;
+  bool message_error = false;
+  int quit_code = 0;
   MSG msg{};
-  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+  while (!data.closed) {
+    const BOOL message_result = GetMessageW(&msg, nullptr, 0, 0);
+    if (message_result == -1) {
+      message_error = true;
+      break;
+    }
+    if (message_result == 0) {
+      quit_requested = true;
+      quit_code = static_cast<int>(msg.wParam);
+      break;
+    }
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
 
-  if (esc_registered) {
+  if (esc_registered && IsWindow(hwnd)) {
     UnregisterHotKey(hwnd, kEscapeHotkeyId);
   }
 
   overlay_hwnd_.store(0);
+  if (!data.closed && IsWindow(hwnd)) {
+    if (data.longshot_active && data.longshot_control_callback) {
+      data.longshot_control_callback(LongShotControl::Stop);
+    }
+    // Application shutdown and message-loop errors must not dispatch the
+    // partially selected region through the normal capture callback.
+    data.callback = {};
+    data.longshot_control_callback = {};
+    DestroyWindow(hwnd);
+  }
 
-  return true;
+  if (quit_requested) {
+    PostQuitMessage(quit_code);
+  }
+
+  return !quit_requested && !message_error;
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
@@ -1086,7 +1133,10 @@ bool SelectionOverlay::postLongShotFinished(bool success) {
 }
 
 void SelectionOverlay::hide() {
-  // 遮罩窗口生命周期由 show() 的模态循环管理；hide() 为接口完整性保留。
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  if (hwnd != nullptr && IsWindow(hwnd)) {
+    PostMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+  }
 }
 
 }  // namespace qingying

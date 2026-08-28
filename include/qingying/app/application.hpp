@@ -15,6 +15,7 @@
 
 #include <functional>
 #include <atomic>
+#include <string>
 #include <thread>
 
 namespace qingying {
@@ -59,6 +60,7 @@ class Application {
   std::atomic<bool> longshot_stop_{false};
   std::atomic<bool> longshot_paused_{false};
   bool longshot_result_ready_{false};
+  std::wstring pending_overlay_error_;
 };
 
 }  // namespace qingying
