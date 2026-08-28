@@ -64,3 +64,34 @@ TEST(PinManagerTest, DestructorClosesWindows) {
   EXPECT_EQ(manager.count(), 1);
   manager.closeAll();
 }
+
+TEST(PinManagerTest, NewPinsAreLaidOutWithoutOverlap) {
+  qingying::PinManager manager;
+  const qingying::Image image = makeImage(320, 180);
+
+  // 连续添加多枚钉图：位置靠右依次排列，任意两枚不得重叠。
+  ASSERT_TRUE(manager.show(image));
+  ASSERT_TRUE(manager.show(image));
+  ASSERT_TRUE(manager.show(image));
+  ASSERT_TRUE(manager.show(image));
+  ASSERT_EQ(manager.count(), 4);
+
+  const std::vector<RECT> rects = manager.windowRects();
+  ASSERT_EQ(rects.size(), 4u);
+
+  const auto overlaps = [](const RECT& a, const RECT& b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom &&
+           a.bottom > b.top;
+  };
+  for (std::size_t i = 0; i < rects.size(); ++i) {
+    EXPECT_FALSE(rects[i].right <= rects[i].left ||
+                 rects[i].bottom <= rects[i].top)  // 有效矩形
+        << "pin " << i << " has invalid rect";
+    for (std::size_t j = i + 1; j < rects.size(); ++j) {
+      EXPECT_FALSE(overlaps(rects[i], rects[j]))
+          << "pin " << i << " and pin " << j << " overlap";
+    }
+  }
+
+  manager.closeAll();
+}

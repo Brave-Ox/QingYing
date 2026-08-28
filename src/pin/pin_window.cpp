@@ -36,7 +36,10 @@ bool isValidImage(const Image& image) {
   return image.pixels.size() == width * height;
 }
 
-void calculateInitialClientSize(const Image& image, int& width, int& height) {
+}  // namespace
+
+void PinWindow::computeInitialClientSize(const Image& image, int& width,
+                                         int& height) {
   const double scale_x = static_cast<double>(kMaxClientWidth) /
                          static_cast<double>(image.width);
   const double scale_y = static_cast<double>(kMaxClientHeight) /
@@ -60,8 +63,6 @@ void calculateInitialClientSize(const Image& image, int& width, int& height) {
   width = (std::max)(1, width);
   height = (std::max)(1, height);
 }
-
-}  // namespace
 
 PinWindow::PinWindow(Image image) : image_(std::move(image)) {}
 
@@ -98,7 +99,7 @@ void PinWindow::setActionCallbacks(ImageActionCallback copy_callback,
   save_callback_ = std::move(save_callback);
 }
 
-bool PinWindow::show() {
+bool PinWindow::show(int x, int y) {
   if (hwnd_ != nullptr || !isValidImage(image_) ||
       !registerWindowClass()) {
     return false;
@@ -106,16 +107,12 @@ bool PinWindow::show() {
 
   int client_width = 0;
   int client_height = 0;
-  calculateInitialClientSize(image_, client_width, client_height);
+  computeInitialClientSize(image_, client_width, client_height);
 
   // WM_NCCALCSIZE makes the client area cover the complete popup, so no
   // native caption/frame pixels need to be added to the requested size.
   const int window_width = client_width;
   const int window_height = client_height;
-  const int screen_width = GetSystemMetrics(SM_CXSCREEN);
-  const int screen_height = GetSystemMetrics(SM_CYSCREEN);
-  const int x = (std::max)(0, (screen_width - window_width) / 2);
-  const int y = (std::max)(0, (screen_height - window_height) / 2);
 
   closing_ = true;
   hwnd_ = CreateWindowExW(

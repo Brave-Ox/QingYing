@@ -33,7 +33,14 @@ class PinManager {
                           ImageActionCallback save_callback);
   CaptureGuard temporarilyHideForCapture();
 
+  // 返回所有钉图窗口的屏幕矩形（测试 / 诊断辅助）。
+  std::vector<RECT> windowRects() const;
+
  private:
+  // 为新钉图（宽 width 高 height）计算不与任何已有钉图重叠的初始位置：
+  // 从虚拟桌面右侧开始、从右往左逐列依次排列，排满换行，并避让已有窗口。
+  void computeNextPinPosition(int width, int height, int& out_x,
+                              int& out_y) const;
   void beginCaptureExclusion();
   void endCaptureExclusion();
   void onWindowClosed(PinWindow* window);

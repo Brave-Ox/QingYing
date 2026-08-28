@@ -20,11 +20,16 @@ class PinWindow {
   PinWindow(const PinWindow&) = delete;
   PinWindow& operator=(const PinWindow&) = delete;
 
-  bool show();
+  bool show(int x, int y);
   void close();
 
   HWND hwnd() const { return hwnd_; }
   const Image& image() const { return image_; }
+
+  // 按图片比例计算钉图初始客户区尺寸（max 800x600 / min 160x120，保持宽高比）。
+  // 供 PinManager 在创建前估算窗口尺寸以计算不重叠的摆放位置。
+  static void computeInitialClientSize(const Image& image, int& width,
+                                       int& height);
 
   void setClosedCallback(ClosedCallback callback);
   void setActionCallbacks(ImageActionCallback copy_callback,
