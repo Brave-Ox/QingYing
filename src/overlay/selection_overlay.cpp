@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,9 @@ constexpr UINT kToolbarButtonSave = 2;
 constexpr UINT kToolbarButtonEdit = 3;
 constexpr UINT kToolbarButtonPin = 4;
 constexpr UINT kToolbarButtonLongShot = 5;
+constexpr UINT kToolbarButtonLongShotStop = 6;
+constexpr UINT kMsgLongShotPreview = WM_APP + 3;
+constexpr UINT kMsgLongShotFinished = WM_APP + 4;
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
@@ -62,7 +66,30 @@ struct OverlayWindowData {
   bool has_hover{false};           // 是否悬停在可吸附窗口上
   SelectionResult hover_rect;      // 悬停窗口矩形（客户区坐标）
   Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
+  LongShotControlCallback longshot_control_callback;
+  bool longshot_active{false};
+  bool longshot_paused{false};
+  bool longshot_finishing{false};
+  bool capture_passthrough{false};
+  HWND longshot_button{nullptr};
+  HWND longshot_stop_button{nullptr};
+  HWND copy_button{nullptr};
+  HWND save_button{nullptr};
+  HWND pin_button{nullptr};
+  Image longshot_preview;
 };
+
+struct LongShotPreviewMessage {
+  Image image;
+};
+
+struct LongShotFinishedMessage {
+  bool success{false};
+};
+
+SelectionResult toScreenSelection(const SelectionResult& client,
+                                  const coord::VirtualScreenRect& screen);
+bool updateOverlay(HWND hwnd, OverlayWindowData* data);
 
 // CreateCompatibleDC RAII：DeleteDC。
 struct CompatibleDcDeleter {
@@ -103,8 +130,82 @@ void destroyToolbar(OverlayWindowData* data) {
   DestroyWindow(toolbar);
 }
 
+void setLongShotButtons(OverlayWindowData* data) {
+  if (data == nullptr) {
+    return;
+  }
+  if (data->longshot_button != nullptr) {
+    SetWindowTextW(data->longshot_button,
+                   data->longshot_active
+                       ? (data->longshot_paused ? L"继续" : L"暂停")
+                       : L"长截图");
+    EnableWindow(data->longshot_button,
+                 data->longshot_finishing ? FALSE : TRUE);
+  }
+  if (data->longshot_stop_button != nullptr) {
+    SetWindowTextW(data->longshot_stop_button,
+                   data->longshot_finishing ? L"停止中" : L"停止");
+    EnableWindow(data->longshot_stop_button,
+                 data->longshot_active && !data->longshot_finishing);
+  }
+  const BOOL enabled = data->longshot_active ? FALSE : TRUE;
+  if (data->copy_button != nullptr) {
+    EnableWindow(data->copy_button, enabled);
+  }
+  if (data->save_button != nullptr) {
+    EnableWindow(data->save_button, enabled);
+  }
+  if (data->pin_button != nullptr) {
+    EnableWindow(data->pin_button, enabled);
+  }
+}
+
+void requestLongShotStop(OverlayWindowData* data) {
+  if (data == nullptr || !data->longshot_active ||
+      data->longshot_finishing) {
+    return;
+  }
+  data->longshot_finishing = true;
+  setLongShotButtons(data);
+  if (data->longshot_control_callback) {
+    data->longshot_control_callback(LongShotControl::Stop);
+  }
+}
+
 void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
   if (data == nullptr || data->overlay == nullptr) {
+    return;
+  }
+  if (action == SelectionAction::LongShot) {
+    if (data->longshot_active) {
+      data->longshot_paused = !data->longshot_paused;
+      setLongShotButtons(data);
+      if (data->longshot_control_callback) {
+        data->longshot_control_callback(LongShotControl::TogglePause);
+      }
+      updateOverlay(data->overlay, data);
+      return;
+    }
+
+    data->action = SelectionAction::LongShot;
+    data->longshot_active = true;
+    data->longshot_paused = false;
+    data->longshot_finishing = false;
+    // During capture the selection hole must remain a real transparent hole;
+    // otherwise the static desktop background would be captured repeatedly.
+    data->capture_passthrough = true;
+    setLongShotButtons(data);
+    updateOverlay(data->overlay, data);
+
+    SelectionResult result = toScreenSelection(data->controller.selection(),
+                                               data->screen);
+    result.action = SelectionAction::LongShot;
+    if (data->callback) {
+      data->callback(result);
+    }
+    return;
+  }
+  if (data->longshot_active) {
     return;
   }
   data->action = action;
@@ -233,11 +334,14 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return button;
       };
 
-      createButton(L"复制", kToolbarButtonCopy, true);
-      createButton(L"下载图片", kToolbarButtonSave, true);
-      createButton(L"长截图", kToolbarButtonLongShot, true);
+      data->copy_button = createButton(L"复制", kToolbarButtonCopy, true);
+      data->save_button = createButton(L"下载图片", kToolbarButtonSave, true);
+      data->longshot_button =
+          createButton(L"长截图", kToolbarButtonLongShot, true);
       createButton(L"编辑", kToolbarButtonEdit, false);
-      createButton(L"钉图", kToolbarButtonPin, true);
+      data->pin_button = createButton(L"钉图", kToolbarButtonPin, true);
+      data->longshot_stop_button =
+          createButton(L"停止", kToolbarButtonLongShotStop, false);
       return 0;
     }
     case WM_COMMAND: {
@@ -253,6 +357,9 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           break;
         case kToolbarButtonLongShot:
           chooseToolbarAction(data, SelectionAction::LongShot);
+          break;
+        case kToolbarButtonLongShotStop:
+          requestLongShotStop(data);
           break;
         case kToolbarButtonPin:
           chooseToolbarAction(data, SelectionAction::Pin);
@@ -354,6 +461,101 @@ void drawHoverOutline(std::vector<std::uint32_t>& pixels, int width, int height,
   }
 }
 
+bool rectanglesIntersect(int left_a, int top_a, int right_a, int bottom_a,
+                         int left_b, int top_b, int right_b, int bottom_b) {
+  return left_a < right_b && left_b < right_a && top_a < bottom_b &&
+         top_b < bottom_a;
+}
+
+void drawLongShotPreview(std::vector<std::uint32_t>& pixels, int width,
+                         int height, const SelectionResult& selection,
+                         const Image& preview) {
+  if (preview.empty() || width <= 0 || height <= 0) {
+    return;
+  }
+
+  constexpr int kMaxPreviewWidth = 440;
+  constexpr int kMaxPreviewHeight = 720;
+  constexpr int kPreviewPadding = 6;
+  constexpr int kPreviewGap = 14;
+  constexpr std::uint32_t kPanelPixel = 0xF0222222u;
+  constexpr std::uint32_t kPanelBorder = 0xFFFF8000u;
+
+  const int scale_x = kMaxPreviewWidth / preview.width;
+  const int scale_y = kMaxPreviewHeight / preview.height;
+  const int scale = (std::max)(1, (std::min)(scale_x, scale_y));
+  const int image_width =
+      (std::max)(1, (std::min)(kMaxPreviewWidth, preview.width * scale));
+  const int image_height =
+      (std::max)(1, (std::min)(kMaxPreviewHeight, preview.height * scale));
+  const int panel_width = image_width + kPreviewPadding * 2;
+  const int panel_height = image_height + kPreviewPadding * 2;
+
+  const int selection_left = selection.x;
+  const int selection_top = selection.y;
+  const int selection_right = selection.x + selection.width;
+  const int selection_bottom = selection.y + selection.height;
+
+  struct Candidate {
+    int x;
+    int y;
+  };
+  const Candidate candidates[] = {
+      {selection_right + kPreviewGap, selection_top},
+      {selection_left - panel_width - kPreviewGap, selection_top},
+      {selection_left, selection_bottom + kPreviewGap},
+      {selection_left, selection_top - panel_height - kPreviewGap},
+      {(width - panel_width) / 2, (height - panel_height) / 2},
+  };
+
+  int panel_x = candidates[0].x;
+  int panel_y = candidates[0].y;
+  for (const Candidate& candidate : candidates) {
+    const int right = candidate.x + panel_width;
+    const int bottom = candidate.y + panel_height;
+    if (candidate.x >= 0 && candidate.y >= 0 && right <= width &&
+        bottom <= height &&
+        !rectanglesIntersect(candidate.x, candidate.y, right, bottom,
+                             selection_left, selection_top, selection_right,
+                             selection_bottom)) {
+      panel_x = candidate.x;
+      panel_y = candidate.y;
+      break;
+    }
+  }
+
+  panel_x = (std::max)(0, (std::min)(panel_x, width - panel_width));
+  panel_y = (std::max)(0, (std::min)(panel_y, height - panel_height));
+
+  for (int y = 0; y < panel_height; ++y) {
+    for (int x = 0; x < panel_width; ++x) {
+      const bool border = x == 0 || y == 0 || x == panel_width - 1 ||
+                          y == panel_height - 1;
+      setOverlayPixel(pixels, width, height, panel_x + x, panel_y + y,
+                      border ? kPanelBorder : kPanelPixel);
+    }
+  }
+
+  for (int y = 0; y < image_height; ++y) {
+    const int source_y = (std::min)(
+        preview.height - 1, static_cast<int>(
+                                 static_cast<std::int64_t>(y) * preview.height /
+                                 image_height));
+    for (int x = 0; x < image_width; ++x) {
+      const int source_x = (std::min)(
+          preview.width - 1, static_cast<int>(
+                                 static_cast<std::int64_t>(x) * preview.width /
+                                 image_width));
+      setOverlayPixel(
+          pixels, width, height, panel_x + kPreviewPadding + x,
+          panel_y + kPreviewPadding + y,
+          preview.pixels[static_cast<std::size_t>(source_y) *
+                             static_cast<std::size_t>(preview.width) +
+                         static_cast<std::size_t>(source_x)]);
+    }
+  }
+}
+
 // 重新渲染遮罩到分层窗口。返回 false 表示渲染失败。
 bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   const coord::VirtualScreenRect& screen = data->screen;
@@ -404,11 +606,30 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
     drawHoverOutline(pixels, width, height, data->hover_rect, kHoverPixel,
                      kHoverThickness);
   }
+  // Draw before the capture passthrough clear so an impossible placement
+  // (for example, a selection covering almost the whole screen) is clipped
+  // out of the selected pixels and can never contaminate a captured frame.
+  drawLongShotPreview(pixels, width, height, selection, data->longshot_preview);
+
+  if (data->capture_passthrough && data->selection_confirmed &&
+      !selection.cancelled) {
+    // Remove the border/handles as well as the hole's 1-alpha marker while a
+    // worker captures. This keeps the selected pixels free of overlay UI.
+    const int left = (std::max)(0, selection.x);
+    const int top = (std::max)(0, selection.y);
+    const int right = (std::min)(width, selection.x + selection.width);
+    const int bottom = (std::min)(height, selection.y + selection.height);
+    for (int y = top; y < bottom; ++y) {
+      for (int x = left; x < right; ++x) {
+        setOverlayPixel(pixels, width, height, x, y, 0x00000000u);
+      }
+    }
+  }
 
   // 有桌面背景时：遮罩界面 = 背景截图 + 遮罩合成。其它窗口（含从属浮层）
   // 被包含在截图里，在遮罩界面中保持可见，不再被实时 topmost 窗口物理盖住。
   // 无背景（截屏失败）时退回纯遮罩，保留原 premultiplied alpha 行为。
-  if (!data->background.empty()) {
+  if (!data->capture_passthrough && !data->background.empty()) {
     std::vector<std::uint32_t> composed;
     if (!mask::composeBackground(data->background, pixels, composed)) {
       return false;
@@ -464,6 +685,27 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
+    case kMsgLongShotPreview: {
+      std::unique_ptr<LongShotPreviewMessage> message(
+          reinterpret_cast<LongShotPreviewMessage*>(wparam));
+      if (data != nullptr && message != nullptr) {
+        data->longshot_preview = std::move(message->image);
+        updateOverlay(hwnd, data);
+      }
+      return 0;
+    }
+    case kMsgLongShotFinished: {
+      std::unique_ptr<LongShotFinishedMessage> message(
+          reinterpret_cast<LongShotFinishedMessage*>(wparam));
+      if (data != nullptr) {
+        data->longshot_active = false;
+        data->longshot_paused = false;
+        data->longshot_finishing = false;
+        setLongShotButtons(data);
+        updateOverlay(hwnd, data);
+      }
+      return 0;
+    }
     case WM_SETCURSOR: {
       if (data == nullptr) {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -476,6 +718,9 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_LBUTTONDOWN: {
       if (data == nullptr) {
+        return 0;
+      }
+      if (data->longshot_active || data->longshot_finishing) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
@@ -605,6 +850,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_RBUTTONDOWN: {
       if (data != nullptr) {
+        if (data->longshot_active) {
+          requestLongShotStop(data);
+          return 0;
+        }
         data->controller.cancel();
         data->action = SelectionAction::None;
         data->selection_confirmed = false;
@@ -616,6 +865,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       // 截图期间临时注册的全局 Esc 热键：遮罩不激活（WS_EX_NOACTIVATE），
       // 键盘消息不会发给遮罩，取消改由这里处理。
       if (data != nullptr && wparam == kEscapeHotkeyId) {
+        if (data->longshot_active) {
+          requestLongShotStop(data);
+          return 0;
+        }
         data->controller.cancel();
         data->action = SelectionAction::None;
         data->selection_confirmed = false;
@@ -625,6 +878,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_KEYDOWN: {
       if (data != nullptr && wparam == VK_ESCAPE) {
+        if (data->longshot_active) {
+          requestLongShotStop(data);
+          return 0;
+        }
         data->controller.cancel();
         data->action = SelectionAction::None;
         data->selection_confirmed = false;
@@ -644,7 +901,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                                    data->screen);
         result.action = data->action;
         SelectionCallback callback = data->callback;
-        if (callback) {
+        if (callback && result.action != SelectionAction::LongShot) {
           callback(result);
         }
       }
@@ -657,10 +914,45 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+Image makeLongShotPreviewImage(const Image& source) {
+  if (source.empty()) {
+    return Image{};
+  }
+
+  constexpr int kMaxWidth = 440;
+  constexpr int kMaxHeight = 720;
+  const int divisor = (std::max)(
+      1, (std::max)((source.width + kMaxWidth - 1) / kMaxWidth,
+                    (source.height + kMaxHeight - 1) / kMaxHeight));
+  const int width = (std::max)(1, source.width / divisor);
+  const int height = (std::max)(1, source.height / divisor);
+
+  Image result;
+  result.width = width;
+  result.height = height;
+  result.pixels.resize(static_cast<std::size_t>(width) *
+                       static_cast<std::size_t>(height));
+  for (int y = 0; y < height; ++y) {
+    const int source_y = (std::min)(source.height - 1, y * divisor);
+    for (int x = 0; x < width; ++x) {
+      const int source_x = (std::min)(source.width - 1, x * divisor);
+      result.pixels[static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(width) +
+                    static_cast<std::size_t>(x)] =
+          source.pixels[static_cast<std::size_t>(source_y) *
+                            static_cast<std::size_t>(source.width) +
+                        static_cast<std::size_t>(source_x)];
+    }
+  }
+  return result;
+}
+
 }  // namespace
 
 bool SelectionOverlay::show(const Image& background,
-                            SelectionCallback callback) {
+                             SelectionCallback callback,
+                             LongShotControlCallback
+                                 longshot_control_callback) {
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
   WNDCLASSEXW wc{};
@@ -689,6 +981,7 @@ bool SelectionOverlay::show(const Image& background,
   OverlayWindowData data;
   data.background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
   data.callback = std::move(callback);
+  data.longshot_control_callback = std::move(longshot_control_callback);
   data.screen = coord::getVirtualScreen();
   data.controller.setBounds(data.screen.width, data.screen.height);
 
@@ -710,6 +1003,7 @@ bool SelectionOverlay::show(const Image& background,
   if (hwnd == nullptr) {
     return false;
   }
+  overlay_hwnd_.store(reinterpret_cast<std::uintptr_t>(hwnd));
 
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
@@ -731,6 +1025,44 @@ bool SelectionOverlay::show(const Image& background,
     UnregisterHotKey(hwnd, kEscapeHotkeyId);
   }
 
+  overlay_hwnd_.store(0);
+
+  return true;
+}
+
+bool SelectionOverlay::postLongShotPreview(const Image& image) {
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  if (hwnd == nullptr) {
+    return false;
+  }
+  auto* message = new (std::nothrow) LongShotPreviewMessage;
+  if (message == nullptr) {
+    return false;
+  }
+  message->image = makeLongShotPreviewImage(image);
+  if (!PostMessageW(hwnd, kMsgLongShotPreview, reinterpret_cast<WPARAM>(message),
+                    0)) {
+    delete message;
+    return false;
+  }
+  return true;
+}
+
+bool SelectionOverlay::postLongShotFinished(bool success) {
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  if (hwnd == nullptr) {
+    return false;
+  }
+  auto* message = new (std::nothrow) LongShotFinishedMessage;
+  if (message == nullptr) {
+    return false;
+  }
+  message->success = success;
+  if (!PostMessageW(hwnd, kMsgLongShotFinished,
+                    reinterpret_cast<WPARAM>(message), 0)) {
+    delete message;
+    return false;
+  }
   return true;
 }
 

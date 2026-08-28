@@ -168,6 +168,13 @@ void LongShotFramePair::clear() {
 
 ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                                               Image& out) {
+  return captureSelection(request, out, {}, {});
+}
+
+ActionResult LongShotEngine::captureSelection(
+    const LongShotRequest& request, Image& out,
+    LongShotProgressCallback on_progress,
+    LongShotContinueCallback should_continue) {
   out = Image{};
   if (!request.valid()) {
     return makeFailure(ErrorCode::kInvalidArgument,
@@ -199,6 +206,17 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
                        "longshot: first frame does not match selection");
   }
 
+  if (on_progress) {
+    on_progress(stitched);
+  }
+
+  // A user stop is a clean completion: the frames already accumulated are a
+  // valid long-shot result and should remain available for copy/save/pin.
+  if (should_continue && !should_continue()) {
+    out = std::move(stitched);
+    return makeSuccess();
+  }
+
   bool at_bottom = false;
   if (queryNotepadScrollAtBottom(current_profile, at_bottom) && at_bottom) {
     out = std::move(stitched);
@@ -209,6 +227,9 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
   int frame_count = 1;
   while (frame_count < impl_->limits.max_frames &&
          stitched.height < impl_->limits.max_output_height) {
+    if (should_continue && !should_continue()) {
+      break;
+    }
     Image next_frame;
     LongShotProfileResult after_profile;
     result = captureNextFrame(*impl_->capture, request, current_profile,
@@ -237,6 +258,9 @@ ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
     }
 
     ++frame_count;
+    if (on_progress) {
+      on_progress(stitched);
+    }
     if (next_overlap_rows == next_frame.height) {
       break;
     }

@@ -286,6 +286,38 @@ TEST(LongShotEngineProfileIntegrationTest,
   EXPECT_EQ(window.wheelMessageCount(), 0);
 }
 
+TEST(LongShotEngineProfileIntegrationTest,
+     InteractiveCaptureReportsFirstFrameAndHonorsStop) {
+  TestEditorWindow window(kNotepadWindowClass, true);
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.editor(), nullptr);
+
+  LongShotProfileResult profile;
+  ASSERT_TRUE(resolveNotepadProfile(
+      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
+      profile.content_y, profile.content_width, profile.content_height};
+  Image out;
+  int progress_count = 0;
+
+  const ActionResult result = engine.captureSelection(
+      request, out,
+      [&progress_count](const Image& preview) {
+        ++progress_count;
+        EXPECT_FALSE(preview.empty());
+      },
+      [] { return false; });
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_FALSE(out.empty());
+  EXPECT_EQ(progress_count, 1);
+  EXPECT_EQ(window.wheelMessageCount(), 0);
+}
+
 TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
   TestEditorWindow window(kNotepadWindowClass);
   ASSERT_NE(window.root(), nullptr);

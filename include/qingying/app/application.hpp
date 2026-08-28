@@ -14,6 +14,8 @@
 #include <Windows.h>
 
 #include <functional>
+#include <atomic>
+#include <thread>
 
 namespace qingying {
 
@@ -35,6 +37,10 @@ class Application {
   ActionResult saveImage(const Image& image);
   void beginCaptureFlow();
   void runCapturePipeline(const SelectionResult& region);
+  void startLongShot(const LongShotRequest& request);
+  void onLongShotControl(LongShotControl control);
+  void finishLongShotOnUiThread();
+  void stopLongShotWorker();
 
   HINSTANCE instance_{nullptr};
   SingleInstanceGuard single_instance_;
@@ -49,6 +55,10 @@ class Application {
   SelectionOverlay overlay_;
   std::uintptr_t recorded_owner_window_{0};
   LongShotRequest pending_longshot_request_{};
+  std::thread longshot_thread_;
+  std::atomic<bool> longshot_stop_{false};
+  std::atomic<bool> longshot_paused_{false};
+  bool longshot_result_ready_{false};
 };
 
 }  // namespace qingying

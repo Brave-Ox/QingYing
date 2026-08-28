@@ -9,15 +9,29 @@
 #include "resource.h"
 
 #include <commdlg.h>
+#include <chrono>
 #include <iterator>
+#include <memory>
+#include <new>
+#include <thread>
 #include <utility>
 
 namespace qingying {
+
+namespace {
+
+struct LongShotCompletion {
+  ActionResult result;
+  Image image;
+};
+
+}  // namespace
 
 Application::Application(HINSTANCE instance)
     : instance_(instance), longshot_(capture_) {}
 
 Application::~Application() {
+  stopLongShotWorker();
   hotkey_.unregisterAll(tray_.hwnd());
 }
 
@@ -30,7 +44,7 @@ void Application::registerHandlers() {
 }
 
 void Application::installMessageRouter() {
-  tray_.setMessageFilter([this](UINT msg, WPARAM wparam, LPARAM /*lparam*/,
+  tray_.setMessageFilter([this](UINT msg, WPARAM wparam, LPARAM lparam,
                                 LRESULT* result) -> bool {
     if (msg == WM_HOTKEY && wparam == HotkeyIds::kCapture) {
       onCaptureHotkey();
@@ -39,6 +53,35 @@ void Application::installMessageRouter() {
     }
     if (msg == WM_QINGYING_BEGIN_CAPTURE) {
       beginCaptureFlow();
+      *result = 0;
+      return true;
+    }
+    if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {
+      std::unique_ptr<LongShotCompletion> completion(
+          reinterpret_cast<LongShotCompletion*>(lparam));
+      finishLongShotOnUiThread();
+      if (completion == nullptr) {
+        *result = 0;
+        return true;
+      }
+      if (completion->result.ok) {
+        session_.setResult(std::move(completion->image));
+        longshot_result_ready_ = true;
+
+        // Keep the current behavior: the first completed result is available
+        // immediately, while the overlay remains open for further actions.
+        ActionRequest copy_request;
+        copy_request.type = ActionType::Copy;
+        const ActionResult copy_result = dispatcher_.dispatch(copy_request);
+        if (!copy_result.ok) {
+          MessageBoxW(tray_.hwnd(), L"Failed to copy the long screenshot.",
+                      L"QingYing", MB_OK | MB_ICONERROR);
+        }
+      } else {
+        MessageBoxW(tray_.hwnd(), L"Failed to capture the long screenshot.",
+                    L"QingYing", MB_OK | MB_ICONERROR);
+      }
+      overlay_.postLongShotFinished(completion->result.ok);
       *result = 0;
       return true;
     }
@@ -101,31 +144,30 @@ void Application::runCapturePipeline(const SelectionResult& region) {
   }
 
   if (region.action == SelectionAction::LongShot) {
-    session_.clear();
-    Image image;
-    ActionResult longshot_result;
-    {
-      auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
-      longshot_result = longshot_.captureSelection(pending_longshot_request_,
-                                                   image);
-    }
-    if (!longshot_result.ok) {
-      MessageBoxW(tray_.hwnd(), L"Failed to capture the long screenshot.",
-                  L"QingYing", MB_OK | MB_ICONERROR);
-      return;
-    }
-    session_.setResult(std::move(image));
+    longshot_result_ready_ = false;
+    startLongShot(pending_longshot_request_);
+    return;
+  }
 
-    // LongShot produces the same CaptureSession payload as an ordinary
-    // region capture. Reuse the existing Copy handler so the first usable
-    // long-shot result is immediately available to paste elsewhere.
-    ActionRequest copy_request;
-    copy_request.type = ActionType::Copy;
-    const ActionResult copy_result = dispatcher_.dispatch(copy_request);
-    if (!copy_result.ok) {
-      MessageBoxW(tray_.hwnd(), L"Failed to copy the long screenshot.",
-                  L"QingYing", MB_OK | MB_ICONERROR);
+  // Once an interactive long-shot has completed, the selection toolbar acts
+  // on its accumulated result instead of recapturing the current viewport.
+  if (longshot_result_ready_) {
+    if (region.action == SelectionAction::Save) {
+      saveLastCapture();
+    } else if (region.action == SelectionAction::Pin) {
+      ActionRequest pin_request;
+      pin_request.type = ActionType::Pin;
+      const ActionResult pin_result = dispatcher_.dispatch(pin_request);
+      if (!pin_result.ok) {
+        MessageBoxW(tray_.hwnd(), L"Failed to pin the latest capture.",
+                    L"QingYing", MB_OK | MB_ICONERROR);
+      }
+    } else {
+      ActionRequest copy_request;
+      copy_request.type = ActionType::Copy;
+      dispatcher_.dispatch(copy_request);
     }
+    longshot_result_ready_ = false;
     return;
   }
 
@@ -168,6 +210,63 @@ void Application::runCapturePipeline(const SelectionResult& region) {
   dispatcher_.dispatch(copy_req);
 }
 
+void Application::startLongShot(const LongShotRequest& request) {
+  stopLongShotWorker();
+  longshot_stop_.store(false);
+  longshot_paused_.store(false);
+
+  longshot_thread_ = std::thread([this, request] {
+    Image image;
+    const ActionResult result = longshot_.captureSelection(
+        request, image,
+        [this](const Image& preview) {
+          overlay_.postLongShotPreview(preview);
+        },
+        [this] {
+          while (longshot_paused_.load() && !longshot_stop_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+          }
+          return !longshot_stop_.load();
+        });
+
+    auto* completion = new (std::nothrow) LongShotCompletion;
+    if (completion == nullptr) {
+      overlay_.postLongShotFinished(false);
+      return;
+    }
+    completion->result = result;
+    completion->image = std::move(image);
+    if (!PostMessageW(tray_.hwnd(), WM_QINGYING_LONGSHOT_COMPLETE, 0,
+                      reinterpret_cast<LPARAM>(completion))) {
+      delete completion;
+      overlay_.postLongShotFinished(false);
+    }
+  });
+}
+
+void Application::onLongShotControl(LongShotControl control) {
+  if (control == LongShotControl::TogglePause) {
+    longshot_paused_.store(!longshot_paused_.load());
+  } else if (control == LongShotControl::Stop) {
+    longshot_stop_.store(true);
+    longshot_paused_.store(false);
+  }
+}
+
+void Application::finishLongShotOnUiThread() {
+  if (longshot_thread_.joinable()) {
+    longshot_thread_.join();
+  }
+}
+
+void Application::stopLongShotWorker() {
+  longshot_stop_.store(true);
+  longshot_paused_.store(false);
+  if (longshot_thread_.joinable()) {
+    longshot_thread_.join();
+  }
+}
+
 void Application::beginCaptureFlow() {
   // Capture the original top-level target before any capture/overlay work
   // can change the foreground window. LongShotEngine consumes this recorded
@@ -198,7 +297,8 @@ void Application::beginCaptureFlow() {
         pending_longshot_request_ =
             makeLongShotRequest(recorded_owner_window_, region);
         runCapturePipeline(region);
-      });
+      },
+      [this](LongShotControl control) { onLongShotControl(control); });
 
   if (!shown) {
     // Overlay not ready yet — keep integration path wired for when UI lands.

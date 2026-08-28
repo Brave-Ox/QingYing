@@ -4,6 +4,7 @@
 #include "qingying/action/types.hpp"
 
 #include <cstdint>
+#include <functional>
 
 namespace qingying {
 
@@ -45,6 +46,9 @@ struct LongShotFramePair {
   void clear();
 };
 
+using LongShotProgressCallback = std::function<void(const Image&)>;
+using LongShotContinueCallback = std::function<bool()>;
+
 class LongShotEngine {
  public:
   explicit LongShotEngine(CaptureEngine& capture, LongShotLimits limits = {});
@@ -57,6 +61,12 @@ class LongShotEngine {
   // request.owner_window through an application-specific profile. The loop
   // stops on a full-frame overlap or either safety limit.
   ActionResult captureSelection(const LongShotRequest& request, Image& out);
+
+  // Interactive variant: reports the accumulated image after every frame and
+  // stops cleanly when should_continue returns false.
+  ActionResult captureSelection(const LongShotRequest& request, Image& out,
+                                LongShotProgressCallback on_progress,
+                                LongShotContinueCallback should_continue);
 
   // Captures exactly two raw frames around one wheel input. This staged API is
   // kept for validating the first scroll independently of the final loop.
