@@ -9,8 +9,9 @@ namespace {
 
 // 遮罩层：约 35% 不透明黑（premultiplied alpha：alpha 0x59，RGB 0x00）。
 constexpr std::uint32_t kMaskPixel = 0x59000000u;
-// 选区内部：完全透明，露出桌面。
-constexpr std::uint32_t kClearPixel = 0x00000000u;
+// 选区内部：视觉上透明（alpha=1）以露出桌面，但 alpha 非 0 使分层窗口
+// 在选区内仍可命中鼠标，从而支持「按住选区内部拖动整体移动」。
+constexpr std::uint32_t kClearPixel = 0x01000000u;
 // 选区边框：不透明亮橙，4px（premultiplied：alpha 0xFF，RGB 0xFF8000）。
 constexpr std::uint32_t kBorderPixel = 0xFFFF8000u;
 constexpr int kBorderThickness = 4;
@@ -67,6 +68,37 @@ void renderFullscreenMask(int width, int height,
       }
     }
   }
+}
+
+bool composeBackground(const Image& background,
+                       const std::vector<std::uint32_t>& mask_pixels,
+                       std::vector<std::uint32_t>& out_pixels) {
+  if (background.empty() || mask_pixels.size() != background.pixels.size()) {
+    return false;
+  }
+
+  out_pixels.resize(background.pixels.size());
+  for (std::size_t i = 0; i < background.pixels.size(); ++i) {
+    const std::uint32_t bg = background.pixels.at(i);
+    const std::uint32_t mk = mask_pixels.at(i);
+    // mask 为 premultiplied：alpha 高位，RGB 已乘 alpha。
+    const std::uint32_t mask_alpha = (mk >> 24) & 0xFFu;
+    const std::uint32_t inv_alpha = 255u - mask_alpha;
+
+    const std::uint32_t bg_b = bg & 0xFFu;
+    const std::uint32_t bg_g = (bg >> 8) & 0xFFu;
+    const std::uint32_t bg_r = (bg >> 16) & 0xFFu;
+    const std::uint32_t mk_b = mk & 0xFFu;
+    const std::uint32_t mk_g = (mk >> 8) & 0xFFu;
+    const std::uint32_t mk_r = (mk >> 16) & 0xFFu;
+
+    const std::uint32_t out_b = bg_b * inv_alpha / 255u + mk_b;
+    const std::uint32_t out_g = bg_g * inv_alpha / 255u + mk_g;
+    const std::uint32_t out_r = bg_r * inv_alpha / 255u + mk_r;
+
+    out_pixels.at(i) = 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
+  }
+  return true;
 }
 
 }  // namespace mask

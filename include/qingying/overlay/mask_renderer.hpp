@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "qingying/action/image.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
 
 namespace qingying {
@@ -17,6 +18,14 @@ namespace mask {
 void renderFullscreenMask(int width, int height,
                           const SelectionResult& selection,
                           std::vector<std::uint32_t>& out_pixels);
+
+// 把不透明截图背景（Image，BGRA32）与遮罩像素合成，得到遮罩界面最终帧：
+//   out = background * (1 - mask_alpha/255) + mask（mask RGB 为 premultiplied）
+// 输出不透明（alpha 恒 0xFF）BGRA32，尺寸与 background 一致。
+// background 为空或 mask 尺寸不一致时返回 false，out 保持不变。
+bool composeBackground(const Image& background,
+                       const std::vector<std::uint32_t>& mask_pixels,
+                       std::vector<std::uint32_t>& out_pixels);
 
 }  // namespace mask
 }  // namespace qingying

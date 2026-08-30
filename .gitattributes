@@ -1,0 +1,5 @@
+# WPS 编码规范：文本文件统一 CRLF 行尾；源文件 UTF-8 BOM（BOM 随文件内容存储）
+* text=auto eol=crlf
+*.bat text eol=crlf
+*.pdf binary
+*.ico binary

@@ -13,7 +13,7 @@ enum class ActionType : std::uint32_t {
   Copy = 5,
   Save = 6,
   Pin = 7,
-  LongShotForeground = 8,
+  LongShotRegion = 8,
   SuggestName = 9,
 };
 
@@ -35,11 +35,16 @@ constexpr int kNotImplemented = 100;
 struct ActionRequest {
   ActionType type{ActionType::Status};
 
-  // CaptureRegion / physical pixels
+  // CaptureRegion / LongShotRegion, in physical screen pixels.
   int x{0};
   int y{0};
   int width{0};
   int height{0};
+
+  // LongShotRegion: target window recorded before SelectionOverlay takes
+  // foreground focus. Kept as an integer so this shared header stays free of
+  // Win32 headers.
+  std::uintptr_t window_handle{0};
 
   // CaptureWindow
   std::wstring window_query;

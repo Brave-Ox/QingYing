@@ -1,4 +1,9 @@
-﻿#include "qingying/app/application.hpp"
+// 必须在包含 <Windows.h> 之前定义，确保 DPI 感知相关 API 可用。
+#define WINVER 0x0A00
+#define _WIN32_WINNT 0x0A00
+#define NTDDI_VERSION 0x0A000003  // Windows 10 1703（RS2）
+
+#include "qingying/app/application.hpp"
 
 #include <Windows.h>
 

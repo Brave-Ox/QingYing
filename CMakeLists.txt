@@ -57,12 +57,16 @@ add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
   src/overlay/selection_controller.cpp
   src/overlay/selection_overlay.cpp
+  src/overlay/selection_handles.cpp
+  src/overlay/coordinate_transform.cpp
+  src/window/window_detector.cpp
 )
 target_include_directories(qingying_overlay
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture qingying_ui)
+target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
 if(WIN32)
+  target_link_libraries(qingying_overlay PUBLIC dwmapi)
   target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_annotate)
 endif()
 
@@ -84,19 +88,28 @@ endif()
 
 add_library(qingying_pin STATIC
   src/pin/pin_manager.cpp
+  src/pin/pin_window.cpp
 )
 target_include_directories(qingying_pin
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_pin PUBLIC qingying_action)
+if(WIN32)
+  target_link_libraries(qingying_pin PUBLIC user32 gdi32 dwmapi)
+endif()
 
 add_library(qingying_longshot STATIC
   src/longshot/longshot_engine.cpp
+  src/longshot/image_stitcher.cpp
+  src/longshot/notepad_longshot_profile.cpp
 )
 target_include_directories(qingying_longshot
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(qingying_longshot PUBLIC qingying_action qingying_capture)
+if(WIN32)
+  target_link_libraries(qingying_longshot PRIVATE user32)
+endif()
 
 add_library(qingying_command STATIC
   src/command/command_parser.cpp
@@ -134,6 +147,7 @@ target_link_libraries(qingying PRIVATE
   qingying_export
   qingying_overlay
   qingying_annotate
+  qingying_ui
   qingying_pin
   qingying_longshot
   qingying_command

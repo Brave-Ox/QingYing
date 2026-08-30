@@ -1,332 +1,289 @@
 # 轻映 QingYing — 开发清单与技术要点
 
-> 依据立项文档与架构说明书整理，便于开发落地对照。  
-> 来源：  
-> - [轻映-QingYing（立项）](https://365.kdocs.cn/l/cg3MggX6b0hl)  
-> - [轻映 QingYing《技术选型与架构说明书》](https://365.kdocs.cn/l/cjyNzW0HlWuo)  
-> - 仓库落地架构：[docs/architecture.md](./docs/architecture.md)（方案 B：多 static lib + ActionDispatcher）
+> 依据立项文档、仓库架构和当前代码整理。
+> 当前基线：`master` / `68f0e740`；同步日期：2026-08-30。
+> 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
+
+来源：
+
+- [轻映-QingYing（立项）](https://365.kdocs.cn/l/cg3MggX6b0hl)
+- [轻映 QingYing《技术选型与架构说明书》](https://365.kdocs.cn/l/cjyNzW0HlWuo)
+- [当前架构](./docs/architecture.md)
+- [架构调整方案](./docs/架构如何调整.md)
+- [当前进度](./docs/PROGRESS.md)
 
 ---
 
 ## 1. 一句话目标
 
-用不超过 **20 MB** 的 Windows **绿色单文件**，打通「**框选 → 标注 → 钉图对照 → 长页拼接**」全链路；并支持通过 **自然语言口令** 与 **MCP / Skill**，为 Agent 提供**本地截图能力**。
+用不超过 **20 MB** 的 Windows 绿色单文件，打通“框选 → 标注 → 钉图对照 → 长页拼接”全链路；并通过本地口令与 MCP，为 Agent 提供可控的本地截图能力。
 
 | 项 | 内容 |
 |---|---|
 | 产品名 | 轻映 QingYing（轻 = 可核对的轻量；映 = 钉在桌面对照） |
 | Slogan | 截得轻，钉得住，长页一次成 |
 | 平台 | Windows only |
-| GUI | **不用 Qt / Electron**；C++17 + Win32 原生 |
-| 主路径 | 热键 → 框选/调区 → 标注 → 复制/保存（约 **15 秒**可演示） |
-| 周期参考 | 约 30 天交付可运行绿色程序 |
+| GUI | C++17 + Win32；不用 Qt / Electron |
+| 主路径 | 热键 → 框选 / 调区 → 标注 → 复制 / 保存，目标约 15 秒 |
+| 当前主链路 | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin；标注尚未接入 |
 
 ---
 
-## 2. 硬指标（验收门槛）
+## 2. 硬指标与当前验证
 
-| 指标 | 目标 | 测量方式 |
-|---|---|---|
-| 发布体积 | ≤ **20 MB** | 发布目录单文件（或约定交付包） |
-| 常驻内存 | ≤ **40 MB** | 仅托盘常驻、未打开截图界面时的工作集 |
-| 唤起时延 | ≤ **300 ms** | 热键按下 → 全屏遮罩可见 |
-| 主路径演示 | ≈ 15 s | 热键 → 框选 → 标注 → 复制 |
+| 指标 | 目标 | 当前状态 | 证据 / 下一步 |
+|---|---:|---|---|
+| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-30 Release `qingying.exe` 为 122,368 字节；仍需按最终交付包复测 |
+| 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
+| 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
+| 主路径演示 | 约 15 秒 | 未闭环 | F3 标注未实现，当前只能演示框选后复制 / 保存 / Pin |
+| 自动测试 | 全绿 | 已验证 | 2026-08-30 Release 构建成功，GoogleTest 100/100 通过 |
 
-**约束**：F1～F7 **不依赖网络**；模型不进安装包；主路径本地闭环。
+约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
 ---
 
 ## 3. 功能清单（F1～F9）
 
-| ID | 功能 | 用户价值 | 验收要点 |
-|---|---|---|---|
-| **F1** | 自定义截图区域 | 自由框选 + 八点调区 | 热键唤起后可框选/调区；Esc / 右键取消 |
-| **F2** | 窗口吸附 | 悬停高亮窗口，降低框选偏差 | 常见顶层窗口可吸附；可切回自由框选 |
-| **F3** | 截图标注 | 矩形/椭圆/箭头/画笔/文字/马赛克 + 撤销 | 走通「截取—标注—复制/保存」 |
-| **F4** | 导出 | 剪贴板 + 另存 PNG | 快捷键复制与另存为 |
-| **F5** | 钉图（Pin） | 置顶对照，可拖拽/复制/保存/关闭 | ≥2 枚并存；截图排除自身窗口 |
-| **F6** | 长截图 | 选区自动滚动拼接 | **记事本 / 资源管理器 / Edge** 各至少一次 |
-| **F7** | 托盘与热键 | 托盘常驻 + 全局热键 | 单实例；热键冲突有提示 |
-| **F8** | 口令截图 | 自然语言：中央裁切 / 按名截窗 / 长截 / 命名保存 | 本地口令表可演示；未命中可离线退回框选；云解析可选 |
-| **F9** | Agent / MCP | 标准 Tool 调用本地能力 | 至少：`status`、`capture_window`、`crop_center`、`longshot_foreground`、`save`、`copy`、`pin` |
+| ID | 功能 | 当前状态 | 已实现范围 | 剩余验收 / 开发 |
+|---|---|---|---|---|
+| **F1** | 自定义截图区域 | **代码完成** | 自由框选、反向归一化、八点调区、移动、取消、虚拟桌面与物理像素转换 | 双屏和混合 DPI 人工冒烟 |
+| **F2** | 窗口吸附 | **代码完成，待人工验收** | 悬停检测、高亮、点击吸附、自身 / 工具 / 最小化 / 桌面窗口过滤、DWM 边框修正 | 记事本、资源管理器、Edge 与混合 DPI 实测 |
+| **F3** | 截图标注 | **Stub / 未接线** | `AnnotationEngine::clear()` 桩、操作条“编辑”占位按钮 | 数据模型、撤销重做、渲染、AnnotationOverlay、Application 集成 |
+| **F4** | 导出 | **已实现** | CF_DIB 剪贴板、WIC PNG 保存、输入校验 | UI 错误文案和最终人工回归 |
+| **F5** | 钉图 | **代码基本完成，待人工验收** | 置顶、多 Pin、自动避让、拖动、等比缩放、关闭、独立复制 / 保存、捕获时隐藏恢复 | 多 Pin、缩放、隐藏恢复的视觉体验实测 |
+| **F6** | 长截图 | **记事本路径已接入** | 固定选区、记事本内容区校验、滚轮驱动、重叠拼接、到底 / 无新增 / 上限停止、预览、暂停 / 继续 / 停止、失败清理 | 记事本真实闭环；资源管理器与 Edge profile；三应用验收 |
+| **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
+| **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
+| **F9** | Agent / MCP | **Stub** | `McpBridge` PIMPL 骨架存在 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
 
-### F1～F9 ↔ 技术模块
+### F1～F9 与技术模块
 
-| 功能 | 技术模块 |
+| 功能 | 当前调用链 / 模块 |
 |---|---|
-| F1 | SelectionOverlay + CaptureEngine |
-| F2 | WindowDetector + SelectionOverlay |
-| F3 | AnnotationEngine |
-| F4 | ClipboardManager + FileManager |
-| F5 | PinManager |
-| F6 | LongShotEngine |
-| F7 | TrayController + HotkeyManager |
-| F8 | CommandParser + ActionDispatcher |
-| F9 | MCP Bridge + Named Pipe + ActionDispatcher |
+| F1 | `SelectionOverlay` → `SelectionResult` → `Application` → `ActionDispatcher(CaptureRegion)` → `CaptureEngine` |
+| F2 | `WindowDetector` + `SelectionOverlay` + `SelectionController::setSelection` |
+| F3 | 规划为 `AnnotationDocument / AnnotationEngine / AnnotationRenderer / AnnotationOverlay` |
+| F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `Application` 管理 |
+| F5 | `ActionDispatcher(Pin)` + `CaptureSession` + `PinManager / PinWindow` |
+| F6 | `Application` 工作流 + `SelectionOverlay` + `LongShotEngine` + `CaptureEngine` + `ImageStitcher` |
+| F7 | `Application / TrayController / HotkeyManager / SingleInstanceGuard / AutostartSettings` |
+| F8 | `CommandParser` → `ActionRequest`（待实现） |
+| F9 | `McpBridge` → `ActionDispatcher / Workflow`（待实现） |
 
 ---
 
 ## 4. 范围边界（本期明确不做）
 
-- 屏幕录制 / GIF 产品化  
-- 云同步图床、账号体系、AI 改图  
-- 完整 OCR 产品化；用模型“看屏幕找按钮/弹窗再截”  
-- 跨平台；**Qt / Electron** 等重型 GUI  
-- 整屏或逐帧交给模型查看  
-- 标注/调区等指针操作的 MCP 自动化  
-- DXGI 等内部接口直接暴露给 Agent  
-- **任意应用**长截图；自动点击 / 自动滚动  
-- 自主操作屏幕的“截图 Agent”  
-- 本地大模型打进安装包  
+- 屏幕录制 / GIF 产品化；
+- 云同步图床、账号体系、AI 改图；
+- 完整 OCR 产品化，或让模型读整屏寻找按钮后再截图；
+- 跨平台，以及 Qt / Electron 等重型 GUI；
+- 标注 / 调区等指针操作的 MCP 自动化；
+- 向 Agent 暴露 DXGI / GDI 等内部接口；
+- 任意应用长截图、自动点击和通用 UI 自动化；
+- 本地大模型打入安装包。
 
 ---
 
-## 5. 开发优先级（按架构说明书）
+## 5. 分阶段开发清单
 
-> **重要**：Action Dispatcher 应在 **F1～F4 阶段就建立**，不要等到 MCP 再设计，以便 GUI / 口令 / MCP 共用同一套 Action。
+### P0 — 可演示的“截一下”
 
-```
-P0（主路径骨架）
- ├── 单实例
- ├── 托盘
- ├── 全局热键
- ├── 全屏遮罩
- ├── 框选
- ├── CaptureEngine
- ├── Clipboard
- └── Save
-        ↓
-P1（交互完善）
- ├── 调区
- ├── 标注
- ├── 窗口吸附
- └── DPI / 多屏
-        ↓
-P2（增强能力）
- ├── Pin（钉图）
- └── LongShot（长截图）
-        ↓
-P3（可编程入口）
- ├── Local Command（本地口令）
- ├── Action Dispatcher（统一调度）
- └── MCP Bridge
-        ↓
-P4（可选增强）
- ├── Skill 说明
- └── Cloud LLM fallback（口令未命中 / 建议文件名）
-```
+- [x] CMake / MSVC / C++17 / Release 单 EXE；
+- [x] 9 个 static lib 与 `ActionDispatcher` 骨架；
+- [x] `SingleInstanceGuard`（Named Mutex）；
+- [x] 系统托盘、退出和开机自启开关；
+- [x] `RegisterHotKey` 全局热键及冲突提示；
+- [x] 全虚拟桌面 `SelectionOverlay`；
+- [x] 鼠标拖拽框选、Esc / 右键取消；
+- [x] `CaptureEngine::captureRegion` 的 GDI `BitBlt` 实现；
+- [x] 复制到剪贴板（CF_DIB）；
+- [x] WIC PNG 保存；
+- [x] `CaptureRegion / Copy / Save / Pin / Status` Handler 注册；
+- [ ] DXGI Desktop Duplication；当前只链接 `d3d11/dxgi`，没有实现 DXGI 捕获路径。
 
-### 建议任务拆分 Checklist
+### P1 — 可用的“截—标”
 
-#### P0 — 可演示的「截一下」
-- [ ] 工程骨架：CMake / MSVC，C++17，Release 单 EXE  
-- [ ] `SingleInstanceGuard`（Named Mutex）  
-- [ ] 系统托盘 + 退出/关于  
-- [ ] `RegisterHotKey` 全局热键；冲突提示  
-- [ ] 全屏 `SelectionOverlay`（半透明遮罩）  
-- [ ] 鼠标拖拽框选；Esc / 右键取消  
-- [ ] `CaptureEngine`：DXGI Desktop Duplication 主路径 + GDI fallback  
-- [ ] 复制到剪贴板（PNG/位图）  
-- [x] 另存为 PNG
-- [ ] **埋下** `ActionDispatcher` 空壳与标准 Action 枚举  
+- [x] 八点调区和移动选区；
+- [x] 窗口嗅探、候选过滤、悬停高亮和点击吸附；
+- [x] PMv2 进程感知、虚拟桌面与基础 DPI 坐标转换；
+- [ ] 双屏、125% / 150% / 200% 与混合 DPI 人工冒烟；
+- [ ] 标注对象模型和工具状态；
+- [ ] 矩形、椭圆、箭头、画笔、文字、马赛克；
+- [ ] 撤销 / 重做和离屏栅格化；
+- [ ] `AnnotationOverlay` 与编辑完成回流。
 
-#### P1 — 可用的「截—标」
-- [ ] 八点调区 / 移动选区  
-- [ ] 窗口嗅探与吸附高亮  
-- [ ] 标注：矩形、椭圆、箭头、画笔、文字、马赛克  
-- [ ] 矢量对象列表 + 撤销栈；导出时栅格化  
-- [ ] Per-Monitor DPI：捕获用物理像素，UI 做坐标换算  
-- [ ] 双屏 + 125% / 150% DPI 冒烟  
+### P2 — “钉得住 / 长页一次成”
 
-#### P2 — 「钉得住 / 长页一次成」
-- [ ] 独立钉图窗口：置顶、拖拽、复制、保存、关闭  
-- [ ] 多枚钉图并存；捕获时排除/临时隐藏自身  
-- [ ] 长截图：滚轮投递到正确子窗口 + 帧重叠拼接  
-- [ ] 长截验收限定：**记事本、资源管理器、Edge**  
+- [x] 独立 Pin：置顶、拖动、缩放、复制、保存、关闭；
+- [x] 多 Pin 并存和右侧自动避让排布；
+- [x] 捕获前临时隐藏 Pin，结束或失败后恢复；
+- [x] 记事本长截图代码闭环：固定选区、滚动、拼接、预览、暂停 / 停止；
+- [x] 长截图安全限制：最大 30 帧、最大 30000 像素、到底和无新增停止；
+- [ ] Pin 与记事本长截图真实人工闭环；
+- [ ] 资源管理器长截图 profile；
+- [ ] Edge 长截图 profile；
+- [ ] 三应用各至少一次验收。
 
-#### P3 — 「口令 + Agent」
-- [ ] 本地口令表 → 标准 Action  
-- [ ] Action 与 GUI 共用同一 Dispatch  
-- [ ] Named Pipe：MCP Bridge ↔ 托盘主进程  
-- [ ] 实现 F9 Tool 集（见下节）  
-- [ ] 失败返回明确错误，不自动重试  
+### P3 — “口令 + Agent”
 
-#### P4 — 可选
-- [ ] Skill 文档（场景、参数、失败后改热键框选）  
-- [ ] 云端 LLM：仅解析**一句文本**为 Action（不读屏、不执行截图）  
-- [ ] `suggest_name`：用户确认后才上传当前一张结果图  
+- [x] GUI 主路径已有 `ActionDispatcher`；
+- [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
+- [ ] 本地口令表 → 类型安全 Action；
+- [ ] 明确交互式动作的异步工作流契约；
+- [ ] Named Pipe：MCP Bridge ↔ 托盘主进程；
+- [ ] 实现 F9 Tool 集；
+- [ ] 失败返回明确错误，不自动操作屏幕或无限重试。
+
+### P4 — 可选增强
+
+- [ ] Skill 文档（场景、参数、失败后改用热键框选）；
+- [ ] 云端 LLM 仅把一句文本解析为 Action，不读屏、不执行截图；
+- [ ] `suggest_name`：明确告知并经用户确认后才处理当前图片。
 
 ---
 
-## 6. 技术选型（开发要用的东西）
+## 6. 当前技术选型与规划差异
 
-| 领域 | 选型 | 说明 |
+| 领域 | 当前实现 | 规划 / 说明 |
 |---|---|---|
-| 语言 | **C++17** | 体积 / 性能 / 原生能力 |
-| GUI | **Win32** | 不用 Qt / Electron |
-| 绘制 | Win32 + **Direct2D / GDI** | 遮罩、标注、钉图 |
-| 主捕获 | **DXGI Desktop Duplication** | 高效取帧 |
-| 兼容捕获 | **GDI** | fallback |
-| 多屏 | Win32 Monitor API | 显示器列表 |
-| DPI | **Per-Monitor DPI Awareness** | 125% / 150% |
-| 剪贴板 | Win32 Clipboard | 复制 |
-| 热键 | `RegisterHotKey` | 全局热键 |
-| 单实例 | Named Mutex | 防多开 |
-| IPC | **Named Pipe** | MCP ↔ 主进程 |
-| MCP | 内置 MCP Bridge | 不另装运行时 |
-| JSON | 轻量 JSON 库 | Action / MCP 参数 |
-| 发布 | 单 EXE | 绿色分发 |
+| 语言 / GUI | C++17 + Win32 | 已落地；不用 Qt / Electron |
+| Overlay 绘制 | GDI DIB + `UpdateLayeredWindow` | Direct2D 尚未使用 |
+| 区域捕获 | GDI `BitBlt` | DXGI Desktop Duplication 待实现 |
+| 窗口 / 中央裁切 | 方法存在但返回 `kNotImplemented` | F8/F9 前实现 |
+| 多屏 / DPI | PMv2 + Virtual Screen + 坐标工具 | 混合 DPI 人工验收待完成 |
+| 剪贴板 | Win32 Clipboard / CF_DIB | 已实现 |
+| PNG | WIC | 已实现 |
+| 热键 / 单实例 | `RegisterHotKey` / Named Mutex | 已实现 |
+| 长截图 | Win32 滚轮消息 + GDI 区域帧 + 像素重叠 | 当前仅记事本 profile |
+| IPC / MCP | 仅骨架 | Named Pipe 和协议未实现 |
+| JSON | 未引入 | 等 MCP 参数结构确定后再选型 |
+| 发布 | 单 EXE | 最终包、运行库依赖仍需交付验收 |
 
-### 建议核心类 / 模块
+---
 
-| 模块 | 职责 |
-|---|---|
-| Application / TrayController | 启动、托盘、生命周期 |
-| HotkeyManager | 全局热键 |
-| SingleInstanceGuard | 单实例 |
-| CaptureEngine | 全屏/显示器/窗口/区域捕获 |
-| SelectionOverlay | 遮罩、框选、调区、吸附、工具栏（显式状态机） |
-| AnnotationEngine | 矢量标注 + 撤销 |
-| PinManager | 多钉图窗口 |
-| LongShotEngine | 滚动拼接（三应用） |
-| ClipboardManager / FileManager | 复制与保存 |
-| CommandParser | 本地口令表 |
-| ActionDispatcher | 统一执行入口 |
-| McpBridge | 本机 MCP Tool ↔ ActionRequest |
+## 7. Action 与交互工作流
 
-### Action Dispatch（统一执行层）
+当前已经注册的 Action：
 
-三条入口汇入同一层：
-
-```
-GUI / 热键鼠标 ─┐
-自然语言口令   ─┼→ Action Dispatch → Capture / Crop / LongShot / Save / Copy / Pin / Status
-MCP Tool       ─┘
+```text
+Status / CaptureRegion / Copy / Save / Pin
 ```
 
-原则：
+枚举存在但尚未注册或实现的 Action：
 
-1. **主路径本地优先** — AI 不得绑架主截图流程  
-2. **模型只理解、不执行** — 不读屏、不截图、不拼接  
-3. **Agent 调用已有能力** — MCP 不再实现第二套截图引擎  
-4. **模块化但不引入重型框架**  
+```text
+CaptureWindow / CropCenter / LongShotRegion / SuggestName
+```
+
+当前真实调用关系：
+
+```text
+GUI 热键
+  → Application 交互工作流
+  → SelectionOverlay
+  → dispatch(CaptureRegion)
+  → CaptureSession
+  → dispatch(Copy / Pin)
+
+交互式长截图
+  → Application 启动 worker
+  → LongShotEngine
+  → 完成消息回 UI 线程
+  → CaptureSession
+  → dispatch(Copy)
+```
+
+架构原则调整为：
+
+1. 外部入口（口令 / MCP）不得直接调用引擎；
+2. 单步业务命令统一走 `ActionDispatcher`；
+3. 选区、标注、交互式长截图属于多步工作流，由 `Application` 或后续 `CaptureWorkflow` 编排；
+4. UI 预览快照等表现层基础设施必须明确标注例外，不得假装已经经过 Dispatcher；
+5. 具体整改顺序见 [架构如何调整](./docs/架构如何调整.md)。
 
 ---
 
-## 7. MCP / Skill 封装清单
+## 8. MCP / Skill 规划清单
 
-### 定位
-
-| | 含义 |
-|---|---|
-| **MCP** | 标准 Tool：一次调用一项动作；参数结构化；与口令共用本地 Dispatch；仅本机连接 |
-| **Skill** | Agent 使用说明：场景、参数、失败后改热键框选；**本身不截屏、不拼图** |
-
-### Tool 一览
-
-| Tool | 作用 | 依赖云 |
+| Tool | 作用 | 当前状态 |
 |---|---|---|
-| `status()` | 查询托盘是否运行 | 否 |
-| `capture_window(query)` | 按窗口名截取；多匹配返回歧义 | 否 |
-| `crop_center(width, height)` | 裁取画面中央 | 否 |
-| `longshot_foreground()` | 前台页长截（仅三应用） | 否 |
-| `save(path, name)` | 按名保存 | 否 |
-| `copy()` / `pin()` | 复制 / 钉住当前结果 | 否 |
-| `suggest_name()` | 建议文件名（需确认） | **是，可选** |
+| `status()` | 查询托盘是否运行 | Handler 已有；MCP 未接 |
+| `capture_window(query)` | 按窗口名截取，多匹配返回歧义 | Capture 方法为桩 |
+| `crop_center(width, height)` | 裁取画面中央 | Capture 方法为桩 |
+| `longshot_select()` | 打开长截图选框，由用户确认区域 | GUI 记事本路径已有；MCP 工作流未设计 |
+| `save(path, name)` | 按名保存当前结果 | Save Handler 已有；MCP 未接 |
+| `copy()` / `pin()` | 操作当前结果 | Handler 已有；MCP 未接 |
+| `suggest_name()` | 建议文件名 | 未实现，可选云能力 |
 
-### 不纳入 MCP
-
-- 整屏/逐帧给模型看  
-- 标注与调区等指针操作  
-- DXGI 等内部接口  
-- 任意应用长截  
-- 自动点击或自动滚动  
-
-### 调用前提
-
-轻映已在本机托盘运行；MCP **仅本机**，不接受远程网络调用。
+MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接访问 DXGI/GDI 或模拟任意鼠标键盘操作。
 
 ---
 
-## 8. 关键验收用例（评审可演示）
+## 9. 关键验收用例
 
-- [ ] 主路径：热键 → 框选/调区 → 标注 → 复制，约 15 秒  
-- [ ] 轻量：体积 ≤20 MB；常驻 ≤40 MB；热键→遮罩 ≤300 ms  
-- [ ] 双屏 + 125%/150% DPI：选区与成像无明显偏移  
-- [ ] 钉图：≥2 枚并存、可拖拽对照；新截图不含自身钉图窗  
-- [ ] 长截：记事本 / 资源管理器 / Edge 各 ≥1 次自动拼接  
-- [ ] 本地口令：现场 ≥2 类（如按名截窗、指定尺寸/命名保存）；无密钥/无网不影响 F1～F7  
-- [ ] MCP：至少成功调用 **2** 项标准 Tool，或返回明确错误  
-- [ ] 交付物：可运行绿色 EXE + 架构说明 + Skill/MCP 接口说明 + 立项计划书  
+- [ ] 主路径：热键 → 框选 / 调区 → 标注 → 复制，约 15 秒；
+- [ ] 常驻内存 ≤ 40 MB，热键到 Overlay 首帧 ≤ 300 ms；
+- [ ] 双屏 + 125% / 150% / 200% 与混合 DPI 无明显偏移；
+- [ ] F2：记事本、资源管理器、Edge 的吸附边界与最终截图一致；
+- [ ] F5：至少 2 枚 Pin 不重叠、可拖拽缩放，且新截图不含 Pin；
+- [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
+- [ ] F8：现场演示至少两类本地口令；
+- [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
+- [x] Release 构建和 100 个 GoogleTest 用例通过；
+- [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
 
-## 9. 技术风险与应对
+## 10. 风险与应对
 
-| 风险 | 等级 | 应对 |
-|---|---|---|
-| DPI 坐标错误 | 高 | 统一物理像素 + DPI 转换层 |
-| 长截图拼接失败 | 高 | 限定三类应用 |
-| 自身钉图被截入 | 中 | 捕获前排除 / 临时隐藏 |
-| Win32 自绘复杂 | 中 | 模块化控件 + 显式状态机 |
-| MCP ↔ 主进程通信 | 中 | Named Pipe |
-| MCP 参数异常 | 中 | Schema + Action Validation |
-| 云端不可用 | 低 | 本地口令 fallback |
-| 体积/内存超标 | 中 | 禁重型框架与模型；Bitmap 按需分配 |
+| 风险 | 当前等级 | 当前措施 | 下一步 |
+|---|---|---|---|
+| 混合 DPI 坐标错误 | 高 | 物理像素契约、PMv2、坐标单测 | 真实多屏冒烟；必要时按显示器管理 Overlay |
+| 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
+| Overlay 状态膨胀 | 高 | 纯逻辑 SelectionController 已抽出 | 抽 Toolbar / Renderer，引入显式 `OverlayPhase` |
+| 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
+| Dispatcher 与工作流边界不清 | 中 | 单步动作已有 Handler | 引入 `CaptureWorkflow`，修正文档与依赖 |
+| PIMPL 裸指针 | 中 | 析构中显式释放 | 改为 `std::unique_ptr<Impl>` |
+| MCP ↔ 主进程通信 | 中 | 尚未实现 | 本机 Named Pipe、主线程投递、参数校验 |
+| 云端不可用 | 低 | F1～F7 全本地 | F8 本地口令作为默认路径 |
 
-### 降级策略摘要
+---
 
-| 场景 | 行为 |
+## 11. Git 实现证据
+
+| 能力 | 代表提交 |
 |---|---|
-| 无网络 / 无云密钥 | F1～F7 正常；F8 仅本地口令 |
-| MCP 未启动 | `status` → NotRunning；提示先启动托盘 |
-| 长截不支持的应用 | 返回 `LONGSHOT_UNSUPPORTED`，不盲目尝试 |
+| P0 主链路、图片契约与导出 | `141d9707`、`5d5a3f5a`、`22f807cb`、`0d42a1c6`、`9c12c132` |
+| F1 调区与 DPI 修复 | `c40de0da`、`252f451d`、`4137175e` |
+| F2 窗口吸附与边框修正 | `d1316dda`、`5de31936` |
+| 桌面快照遮罩与浮层兼容 | `615c2f2a`、`1c9ac4d0` |
+| F5 Pin、捕获排除、独立导出和自动排布 | `726e8528`、`6f927b01`、`68e69337`、`0a5ad00e`、`d8998e02` |
+| F6 基础、profile、拼接、接线与交互控制 | `b1ee85bf`～`9607c013`、`7b66b2ae`、`1aeb4f3a`、`68f0e740` |
 
----
-
-## 10. 性能设计要点
-
-**≤300 ms 热键路径只做**：唤醒 → 创建 Overlay → 显示遮罩。  
-**不要**在该路径上做：云请求、图片压缩、长截初始化、MCP 初始化、模型加载。
-
-托盘常驻只保留：Tray / Hotkey / ActionDispatcher / CaptureManager 等轻量对象；大 Bitmap **按需分配、用完释放**。
-
-体积控制：不用 Qt/Electron/Python Runtime/本地模型；少第三方库；优先系统 API；Release；去掉无关资源。
-
----
-
-## 11. 目标用户与场景（开发时别跑偏）
-
-| 类型 | 说明 |
-|---|---|
-| 主用户 | 高频截图的办公/产研；需要在 Agent 工作流里调本地截图的人 |
-| 非目标 | 要云同步、录屏剪辑、跨平台统一客户端的人（本期不做） |
-| 日常办公 | 框选复制进文档/IM；口令截窗或命名保存 |
-| 研发测试 | 钉图做缺陷/UI 对照；MCP 调截图免写临时脚本 |
-| 文档 | 步骤标注；三应用长页一次截 |
+提交标题用于定位，最终完成度以当前源码和测试结果为准。
 
 ---
 
 ## 12. 交付物清单
 
-- [ ] 可运行绿色单文件 EXE（满足体积/内存/时延）  
-- [ ] 架构说明（可引用本仓库对本说明书的落地实现）  
-- [ ] Skill / MCP 接口说明（Tool、参数、错误码）  
-- [ ] 立项计划书 / Demo 脚本（15 秒主路径 + 钉图 + 长截 + 口令/MCP）  
+- [x] 当前可运行 Release EXE；
+- [x] 当前架构、进度、耦合分析和架构调整文档；
+- [ ] F3 标注后的完整 15 秒 Demo；
+- [ ] F5 / F6 / DPI 人工验收记录；
+- [ ] Skill / MCP 接口说明；
+- [ ] 最终绿色交付包及体积 / 内存 / 时延报告；
+- [ ] 立项计划书和完整 Demo 脚本。
 
 ---
 
 ## 13. 架构一句话
 
+```text
+入口适配（热键 GUI / 本地口令 / MCP）
+        → CaptureWorkflow（多步交互）或 ActionDispatcher（单步命令）
+        → 本地能力模块（Capture / Annotation / Pin / LongShot / Export）
 ```
-输入适配层（热键GUI / 口令 / MCP）
-        → Action Dispatch
-        → 本地能力引擎（Capture / Annotation / Pin / LongShot / Clipboard / File）
-```
 
-Agent **不直接操控屏幕**，只通过 MCP 调用轻映已具备的本地截图能力。
-
----
-
-*整理日期：2026-08-23*
-)
+Agent 不直接操控屏幕，只通过青影公开的本地 Action / Workflow 使用已有能力。
