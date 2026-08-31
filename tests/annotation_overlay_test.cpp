@@ -314,6 +314,94 @@ TEST(AnnotationOverlayTest, SizeComboShownForTextAndMosaicOnly)
   EXPECT_FALSE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Rectangle));
 }
 
+TEST(AnnotationOverlayTest, TextSizeComboStillPaintsWhenStrokeHidden)
+{
+  // 文字栏没有描边芯片；若 paint 在「无描边」处直接 return，字号芯片永远不会画到 overlay。
+  EXPECT_FALSE(annotationEditorPropertyBarShowsStroke(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorPropertyBarPaintsSizeCombo(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorPropertyBarPaintsSizeCombo(AnnotationTool::Mosaic));
+  EXPECT_FALSE(annotationEditorPropertyBarPaintsSizeCombo(AnnotationTool::Pen));
+}
+
+TEST(AnnotationOverlayTest, FontSizeOptionLookupMapsPresetTable)
+{
+  EXPECT_EQ(annotationEditorLookupSizeOptionIndex(
+                AnnotationEditorFontSizeOptions,
+                AnnotationEditorFontSizeOptionCount, 12),
+            0);
+  EXPECT_EQ(annotationEditorLookupSizeOptionIndex(
+                AnnotationEditorFontSizeOptions,
+                AnnotationEditorFontSizeOptionCount, 24),
+            2);
+  EXPECT_EQ(annotationEditorLookupSizeOptionIndex(
+                AnnotationEditorFontSizeOptions,
+                AnnotationEditorFontSizeOptionCount, 99),
+            -1);
+  EXPECT_EQ(annotationEditorSizeOptionAt(AnnotationEditorFontSizeOptions,
+                                         AnnotationEditorFontSizeOptionCount, 2,
+                                         DefaultFontSize),
+            24);
+  EXPECT_EQ(annotationEditorSizeOptionAt(AnnotationEditorFontSizeOptions,
+                                         AnnotationEditorFontSizeOptionCount, -1,
+                                         DefaultFontSize),
+            DefaultFontSize);
+}
+
+TEST(AnnotationOverlayTest, SizeMenuCommandMapsBackToOptionIndex)
+{
+  constexpr UINT kBase = 400;
+  EXPECT_EQ(annotationEditorSizeMenuCommandToIndex(kBase, kBase,
+                                                   AnnotationEditorFontSizeOptionCount),
+            0);
+  EXPECT_EQ(annotationEditorSizeMenuCommandToIndex(
+                kBase + 3, kBase, AnnotationEditorFontSizeOptionCount),
+            3);
+  EXPECT_EQ(annotationEditorSizeMenuCommandToIndex(
+                kBase + 4, kBase, AnnotationEditorFontSizeOptionCount),
+            -1);
+  EXPECT_EQ(annotationEditorSizeMenuCommandToIndex(
+                kBase - 1, kBase, AnnotationEditorFontSizeOptionCount),
+            -1);
+}
+
+TEST(AnnotationOverlayTest, WheelDeltaConvertsToAtLeastOneStep)
+{
+  EXPECT_EQ(annotationEditorWheelDeltaToSteps(AnnotationEditorWheelDeltaUnit),
+            1);
+  EXPECT_EQ(annotationEditorWheelDeltaToSteps(-AnnotationEditorWheelDeltaUnit),
+            -1);
+  EXPECT_EQ(annotationEditorWheelDeltaToSteps(AnnotationEditorWheelDeltaUnit * 2),
+            2);
+  EXPECT_EQ(annotationEditorWheelDeltaToSteps(
+                AnnotationEditorWheelDeltaUnit / 2),
+            1);
+  EXPECT_EQ(annotationEditorWheelDeltaToSteps(-1), -1);
+}
+
+TEST(AnnotationOverlayTest, StepFontSizeStaysInRangeLikeStroke)
+{
+  EXPECT_EQ(annotationEditorStepFontSize(DefaultFontSize, 1),
+            DefaultFontSize + 1);
+  EXPECT_EQ(annotationEditorStepFontSize(MinFontSize, -1), MinFontSize);
+  EXPECT_EQ(annotationEditorStepFontSize(MaxFontSize, 1), MaxFontSize);
+  EXPECT_EQ(annotationEditorStepMosaicBlockSize(DefaultMosaicBlockSize, 1),
+            DefaultMosaicBlockSize + 1);
+  EXPECT_EQ(annotationEditorStepMosaicBlockSize(MinMosaicBlockSize, -1),
+            MinMosaicBlockSize);
+}
+
+TEST(AnnotationOverlayTest, TextToolWheelAdjustsSizeWithoutStrokeChip)
+{
+  // 文字栏没有描边芯片；滚轮必须走字号，而不是被 handleStrokeChipWheel 直接丢掉。
+  EXPECT_FALSE(annotationEditorPropertyBarShowsStroke(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorWheelAdjustsSize(AnnotationTool::Text, false));
+  EXPECT_TRUE(annotationEditorWheelAdjustsSize(AnnotationTool::Text, true));
+  EXPECT_TRUE(annotationEditorWheelAdjustsSize(AnnotationTool::Mosaic, true));
+  EXPECT_FALSE(annotationEditorWheelAdjustsSize(AnnotationTool::Mosaic, false));
+  EXPECT_FALSE(annotationEditorWheelAdjustsSize(AnnotationTool::Pen, false));
+  EXPECT_FALSE(annotationEditorWheelAdjustsSize(AnnotationTool::Pen, true));
+}
+
 TEST(AnnotationOverlayTest, MosaicSizeComboPresetsIncludeDefaultTwelve)
 {
   EXPECT_EQ(AnnotationEditorMosaicSizeOptionCount, 4);
@@ -470,10 +558,38 @@ TEST(AnnotationOverlayTest, InlineEditHeightTracksFontSize)
             32 + AnnotationEditorInlineEditHeightPad);
 }
 
+TEST(AnnotationOverlayTest, TextStyleTargetUsesSelectionOrEditingIndex)
+{
+  constexpr std::size_t kInvalid = AnnotationEditorInvalidIndex;
+  EXPECT_EQ(annotationEditorTextStyleTargetIndex(1, 0, 3), 1u);
+  EXPECT_EQ(annotationEditorTextStyleTargetIndex(kInvalid, 2, 3), 2u);
+  EXPECT_EQ(annotationEditorTextStyleTargetIndex(kInvalid, kInvalid, 3),
+            kInvalid);
+  EXPECT_EQ(annotationEditorTextStyleTargetIndex(5, 1, 3), 1u);
+  EXPECT_EQ(annotationEditorTextStyleTargetIndex(0, 2, 0), kInvalid);
+}
+
+TEST(AnnotationOverlayTest, TextAnnotationUsesPreMergeMicrosoftYaHeiUi)
+{
+  EXPECT_STREQ(AnnotationTextFontFace, L"Microsoft YaHei UI");
+}
+
+TEST(AnnotationOverlayTest, InlineEditMinWidthHugsCaretInsteadOfWhiteSlab)
+{
+  // PixPin 默认无白底填充；空输入只留插入符宽度，不再铺 80px 白板。
+  EXPECT_LT(AnnotationEditorInlineEditMinWidth, 80);
+  EXPECT_EQ(AnnotationEditorInlineEditMinWidth,
+            annotationEditorInlineEditPaddedExtent(0));
+  EXPECT_FALSE(AnnotationEditorInlineEditOpaqueFill);
+  EXPECT_NE(AnnotationEditorInlineEditColorKeyRgb, 0x00FFFFFFu);
+}
+
 TEST(AnnotationOverlayTest, InlineEditWidthGrowsWithTextThenClampsToRemain)
 {
-  EXPECT_EQ(annotationEditorInlineEditWidth(10, 400),
+  EXPECT_EQ(annotationEditorInlineEditWidth(0, 400),
             AnnotationEditorInlineEditMinWidth);
+  EXPECT_EQ(annotationEditorInlineEditWidth(10, 400),
+            annotationEditorInlineEditPaddedExtent(10));
   const int mid = 120 + AnnotationEditorInlineEditTextPadX * 2 +
                   AnnotationEditorInlineEditCaretPadPx +
                   AnnotationEditorInlineEditGlyphPadPx;

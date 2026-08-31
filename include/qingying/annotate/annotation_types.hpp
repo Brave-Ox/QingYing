@@ -37,6 +37,8 @@ inline constexpr float DefaultOpacity = 1.0f;
 inline constexpr int DefaultFontSize = 16;
 inline constexpr int MinFontSize = 8;
 inline constexpr int MaxFontSize = 72;
+// 合并前本地文字标注用的字体；编辑态预览与栅格化必须同一张脸，避免系统默认点阵字。
+inline constexpr wchar_t AnnotationTextFontFace[] = L"Microsoft YaHei UI";
 inline constexpr int DefaultMosaicBlockSize = 12;
 inline constexpr int MinMosaicBlockSize = 1;
 inline constexpr int MaxMosaicBlockSize = 32;

@@ -613,7 +613,7 @@ void drawText(Image& target, const Annotation& annotation)
   const GdiObjectGuard font(CreateFontW(
       -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI"));
+      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
   const HGDIOBJ old_font =
       font.get() != nullptr ? SelectObject(mem_dc.get(), font.get()) : nullptr;
 

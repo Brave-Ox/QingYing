@@ -52,12 +52,21 @@ inline constexpr int AnnotationEditorFrameInsetPx = 6;
 inline constexpr int AnnotationEditorSizeLabelHeightPx = 18;
 inline constexpr int AnnotationEditorSizeLabelGapPx = 2;
 inline constexpr int AnnotationEditorHandleCount = 8;
-inline constexpr int AnnotationEditorInlineEditMinWidth = 80;
 inline constexpr int AnnotationEditorInlineEditHeightPad = 10;
 inline constexpr int AnnotationEditorInlineEditTextPadX = 8;
 inline constexpr int AnnotationEditorInlineEditCaretPadPx = 8;
 inline constexpr int AnnotationEditorInlineEditGlyphPadPx = 8;
 inline constexpr int AnnotationEditorInlineEditBorderPx = 1;
+// 空输入只留插入符与字形余量，避免 80px 白板。
+inline constexpr int AnnotationEditorInlineEditMinWidth =
+    AnnotationEditorInlineEditTextPadX * 2 +
+    AnnotationEditorInlineEditCaretPadPx +
+    AnnotationEditorInlineEditGlyphPadPx;
+// PixPin 默认关闭「文本背景」：输入框不铺不透明白底。
+inline constexpr bool AnnotationEditorInlineEditOpaqueFill = false;
+// Win32 RGB 0x00BBGGRR，与工具栏洋红 color-key 同值，用于分层打孔。
+inline constexpr std::uint32_t AnnotationEditorInlineEditColorKeyRgb =
+    255u | (255u << 16);
 inline constexpr int AnnotationEditorTextChromePadPx = 4;
 inline constexpr int AnnotationEditorTextDeleteButtonPx = 16;
 
@@ -186,6 +195,107 @@ inline bool annotationEditorPropertyBarShowsSizeCombo(AnnotationTool tool)
 {
   return annotationEditorPropertyBarShowsFont(tool) ||
          annotationEditorPropertyBarShowsMosaicSize(tool);
+}
+
+// 字号画在 overlay 上，不能跟描边芯片绑在一起；文字栏没有描边也必须继续画。
+inline bool annotationEditorPropertyBarPaintsSizeCombo(AnnotationTool tool)
+{
+  return annotationEditorPropertyBarShowsSizeCombo(tool);
+}
+
+inline int annotationEditorLookupSizeOptionIndex(const int* options, int count,
+                                                 int value)
+{
+  if (options == nullptr || count <= 0)
+  {
+    return -1;
+  }
+  for (int i = 0; i < count; ++i)
+  {
+    if (options[i] == value)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+inline int annotationEditorSizeOptionAt(const int* options, int count, int index,
+                                        int fallback)
+{
+  if (options == nullptr || index < 0 || index >= count)
+  {
+    return fallback;
+  }
+  return options[index];
+}
+
+inline int annotationEditorSizeMenuCommandToIndex(unsigned int cmd,
+                                                  unsigned int base_id,
+                                                  int count)
+{
+  if (count <= 0 || cmd < base_id)
+  {
+    return -1;
+  }
+  const unsigned int offset = cmd - base_id;
+  if (offset >= static_cast<unsigned int>(count))
+  {
+    return -1;
+  }
+  return static_cast<int>(offset);
+}
+
+// 与 Win32 WHEEL_DELTA 同值，避免本头依赖 Windows.h。
+inline constexpr int AnnotationEditorWheelDeltaUnit = 120;
+
+inline int annotationEditorWheelDeltaToSteps(int delta)
+{
+  if (delta == 0)
+  {
+    return 0;
+  }
+  int steps = delta / AnnotationEditorWheelDeltaUnit;
+  if (steps == 0)
+  {
+    steps = (delta > 0) ? 1 : -1;
+  }
+  return steps;
+}
+
+inline int annotationEditorClampFontSize(int font_size)
+{
+  if (font_size < MinFontSize)
+  {
+    return MinFontSize;
+  }
+  if (font_size > MaxFontSize)
+  {
+    return MaxFontSize;
+  }
+  return font_size;
+}
+
+inline int annotationEditorStepFontSize(int current, int steps)
+{
+  return annotationEditorClampFontSize(current + steps);
+}
+
+inline int annotationEditorStepMosaicBlockSize(int current, int steps)
+{
+  return clampMosaicBlockSize(current + steps);
+}
+
+// 文字工具：滚轮直接改字号（不必悬停芯片）。马赛克只在悬停块大小芯片时生效。
+inline bool annotationEditorWheelAdjustsSize(AnnotationTool tool,
+                                             bool hovering_size_combo)
+{
+  if (annotationEditorPropertyBarShowsFont(tool))
+  {
+    return true;
+  }
+  return hovering_size_combo &&
+         annotationEditorPropertyBarPaintsSizeCombo(tool);
 }
 
 inline bool annotationEditorPropertyBarShowsColor(AnnotationTool tool)
@@ -414,6 +524,24 @@ inline int annotationEditorInlineEditWidth(int text_extent_px, int remain_width)
                          annotationEditorInlineEditPaddedExtent(text_extent_px));
   width = (std::min)(width, remain_width);
   return (std::max)(1, width);
+}
+
+inline constexpr std::size_t AnnotationEditorInvalidIndex =
+    static_cast<std::size_t>(-1);
+
+// 选中态优先；就地编辑中若选中被清掉，仍把颜色/字号打到正在编的那条。
+inline std::size_t annotationEditorTextStyleTargetIndex(
+    std::size_t selected_index, std::size_t editing_index, std::size_t count)
+{
+  if (selected_index != AnnotationEditorInvalidIndex && selected_index < count)
+  {
+    return selected_index;
+  }
+  if (editing_index != AnnotationEditorInvalidIndex && editing_index < count)
+  {
+    return editing_index;
+  }
+  return AnnotationEditorInvalidIndex;
 }
 
 enum class AnnotationEditorTextHit

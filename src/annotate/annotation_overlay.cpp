@@ -22,6 +22,7 @@ namespace {
 
 const wchar_t kOverlayClassName[] = L"QingYingAnnotationOverlay";
 const wchar_t kStrokePopupClassName[] = L"QingYingStrokePopup";
+const wchar_t kInlineEditHostClassName[] = L"QingYingInlineEditHost";
 
 constexpr UINT kButtonConfirmId = 1;
 constexpr UINT kButtonCancelId = 2;
@@ -37,6 +38,7 @@ constexpr UINT kButtonMoveId = 24;
 constexpr UINT kInlineEditId = 10;
 constexpr UINT kFontComboId = 20;
 constexpr UINT kStrokePopupEditId = 21;
+constexpr UINT kSizeMenuBaseId = 400;
 constexpr UINT kTipShapeRectId = 200;
 constexpr UINT kTipShapeEllipseId = 201;
 constexpr UINT kTipFillId = 202;
@@ -44,7 +46,6 @@ constexpr UINT kTipLineStyleBaseId = 210;
 constexpr UINT kTipStrokeId = 220;
 constexpr UINT kTipColorBaseId = 230;
 constexpr int kComboFontPx = 13;
-const wchar_t kUiFontFace[] = L"Microsoft YaHei UI";
 
 constexpr int kInlineTextMaxChars = 256;
 constexpr int kTextDragThresholdPx = 4;
@@ -76,7 +77,10 @@ constexpr COLORREF kFrameBorderColor = RGB(255, 128, 0);
 constexpr COLORREF kHandleFillColor = RGB(255, 255, 255);
 constexpr COLORREF kSizeLabelFillColor = RGB(60, 64, 70);
 constexpr COLORREF kSizeLabelTextColor = RGB(255, 255, 255);
-constexpr COLORREF kInlineEditBorderColor = RGB(0, 0, 0);
+constexpr COLORREF kInlineEditBorderColor = RGB(255, 255, 255);
+static_assert(static_cast<COLORREF>(AnnotationEditorInlineEditColorKeyRgb) ==
+                  kToolbarColorKey,
+              "inline edit color-key must match toolbar punch-through key");
 constexpr COLORREF kTextChromeBorderColor = RGB(0, 0, 0);
 constexpr COLORREF kTextDeleteFillColor = RGB(220, 56, 48);
 constexpr COLORREF kTextDeleteGlyphColor = RGB(255, 255, 255);
@@ -86,6 +90,7 @@ constexpr int kSizeLabelFontPx = 12;
 constexpr int kSizeLabelPadX = 6;
 constexpr int kSizeLabelPadY = 2;
 constexpr int kChromeInvalidateExtraPadPx = 2;
+constexpr int kInlineCaretWidthPx = 1;
 constexpr UINT kMsgCancelFromBackdrop = WM_APP + 2;
 const wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
@@ -107,9 +112,12 @@ struct EditorWindowData
   HWND font_combo{nullptr};
   HFONT combo_font{nullptr};
   bool size_combo_syncing{false};
+  RECT size_combo_rect{};
   HWND inline_edit{nullptr};
+  HWND inline_edit_host{nullptr};
   WNDPROC inline_edit_prev_proc{nullptr};
   HFONT inline_edit_font{nullptr};
+  HBRUSH inline_edit_key_brush{nullptr};
   float text_anchor_x{0.0f};
   float text_anchor_y{0.0f};
   std::size_t editing_text_index{kInvalidAnnotationIndex};
@@ -252,11 +260,17 @@ void paintEditor(EditorWindowData* data, HDC hdc, bool draw_bar_shells = true,
                  bool draw_bar_items = true);
 void paintEditorBuffered(EditorWindowData* data, HDC hdc);
 void paintInlineEditFrame(HDC hdc, EditorWindowData* data);
+void paintLiveInlineText(HDC hdc, EditorWindowData* data);
 void placeInlineEditCaret(HWND edit, int caret, bool scroll_to_caret);
 void layoutInlineEdit(EditorWindowData* data);
 void positionOwnedPopup(HWND popup, HWND owner, int client_x, int client_y,
                         int width, int height);
 void applyInlineEditVisual(EditorWindowData* data);
+bool registerInlineEditHostClass(HINSTANCE instance);
+LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
+                                       LPARAM lparam);
+HBRUSH ensureInlineEditKeyBrush(EditorWindowData* data);
+COLORREF colorBgraToRef(const ColorBgra& color);
 void paintEditorToolbar(HDC hdc, EditorWindowData* data, bool draw_shell);
 void canvasFromClient(const EditorWindowData* data, int x, int y, float& out_x,
                       float& out_y);
@@ -277,6 +291,10 @@ void applyLiveTextStyle(EditorWindowData* data);
 void syncStyleFromAnnotation(EditorWindowData* data,
                              const Annotation& annotation);
 int hitTestColorSwatch(const EditorWindowData* data, int x, int y);
+bool hitTestSizeCombo(const EditorWindowData* data, int x, int y);
+void applyPickedSizeValue(EditorWindowData* data, bool mosaic, int value);
+void pickSizeFromOverlayMenu(EditorWindowData* data);
+bool handleSizeComboWheel(EditorWindowData* data, int delta);
 bool hitTestStrokeChip(const EditorWindowData* data, int x, int y);
 void hideStrokePopup(EditorWindowData* data);
 void destroyStrokePopup(EditorWindowData* data);
@@ -297,6 +315,19 @@ void updateTextGesture(EditorWindowData* data, int x, int y);
 void tryPromoteInlineEditToDrag(EditorWindowData* data, int client_x,
                                 int client_y);
 
+HBRUSH ensureInlineEditKeyBrush(EditorWindowData* data)
+{
+  if (data == nullptr)
+  {
+    return nullptr;
+  }
+  if (data->inline_edit_key_brush == nullptr)
+  {
+    data->inline_edit_key_brush = CreateSolidBrush(kToolbarColorKey);
+  }
+  return data->inline_edit_key_brush;
+}
+
 void destroyInlineEdit(EditorWindowData* data)
 {
   if (data == nullptr)
@@ -306,22 +337,28 @@ void destroyInlineEdit(EditorWindowData* data)
 
   data->inline_edit_pressing = false;
 
-  if (data->inline_edit != nullptr)
+  const HWND edit = data->inline_edit;
+  const HWND host = data->inline_edit_host;
+  // 必须先断开成员：DestroyWindow 会同步派发 EN_KILLFOCUS，
+  // 否则 commitInlineText 会再次 add 同一条新文字。
+  data->inline_edit = nullptr;
+  data->inline_edit_host = nullptr;
+  if (edit != nullptr && GetCapture() == edit)
   {
-    const HWND edit = data->inline_edit;
-    // 必须先断开成员：DestroyWindow 会同步派发 EN_KILLFOCUS，
-    // 否则 commitInlineText 会再次 add 同一条新文字。
-    data->inline_edit = nullptr;
-    if (GetCapture() == edit)
-    {
-      ReleaseCapture();
-    }
-    if (data->inline_edit_prev_proc != nullptr)
-    {
-      SetWindowLongPtrW(edit, GWLP_WNDPROC,
-                        reinterpret_cast<LONG_PTR>(data->inline_edit_prev_proc));
-      data->inline_edit_prev_proc = nullptr;
-    }
+    ReleaseCapture();
+  }
+  if (edit != nullptr && data->inline_edit_prev_proc != nullptr)
+  {
+    SetWindowLongPtrW(edit, GWLP_WNDPROC,
+                      reinterpret_cast<LONG_PTR>(data->inline_edit_prev_proc));
+    data->inline_edit_prev_proc = nullptr;
+  }
+  if (host != nullptr)
+  {
+    DestroyWindow(host);
+  }
+  else if (edit != nullptr)
+  {
     DestroyWindow(edit);
   }
 
@@ -329,6 +366,11 @@ void destroyInlineEdit(EditorWindowData* data)
   {
     DeleteObject(data->inline_edit_font);
     data->inline_edit_font = nullptr;
+  }
+  if (data->inline_edit_key_brush != nullptr)
+  {
+    DeleteObject(data->inline_edit_key_brush);
+    data->inline_edit_key_brush = nullptr;
   }
 }
 
@@ -404,6 +446,19 @@ void commitInlineText(EditorWindowData* data)
 
   if (ok)
   {
+    std::size_t index = edit_index;
+    if (index == kInvalidAnnotationIndex)
+    {
+      const std::size_t count = data->session.engine().document().count();
+      if (count > 0)
+      {
+        index = count - 1;
+      }
+    }
+    if (overlay != nullptr && index != kInvalidAnnotationIndex)
+    {
+      selectTextAnnotation(data, overlay, index, 0, 0);
+    }
     invalidateImageArea(data);
   }
 }
@@ -451,6 +506,8 @@ void selectTextAnnotation(EditorWindowData* data, HWND hwnd, std::size_t index,
   data->last_text_click_tick = GetTickCount();
   data->last_text_click_x = click_x;
   data->last_text_click_y = click_y;
+  data->controller.setTool(AnnotationTool::Text);
+  resizeEditorChrome(data);
   if (index < data->session.engine().document().count())
   {
     syncStyleFromAnnotation(
@@ -519,14 +576,17 @@ void selectFontSizeInCombo(EditorWindowData* data, int font_size)
     return;
   }
 
+  data->size_combo_syncing = true;
   for (int i = 0; i < AnnotationEditorFontSizeOptionCount; ++i)
   {
     if (AnnotationEditorFontSizeOptions[i] == font_size)
     {
       SendMessageW(data->font_combo, CB_SETCURSEL, static_cast<WPARAM>(i), 0);
+      data->size_combo_syncing = false;
       return;
     }
   }
+  data->size_combo_syncing = false;
 }
 
 bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size)
@@ -543,7 +603,7 @@ bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size
   HFONT font = CreateFontW(
       -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
   if (font == nullptr)
   {
     return false;
@@ -736,7 +796,21 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     else if (msg == WM_ERASEBKGND)
     {
+      const HDC hdc = reinterpret_cast<HDC>(wparam);
+      RECT client{};
+      GetClientRect(hwnd, &client);
+      const HBRUSH brush = ensureInlineEditKeyBrush(data);
+      if (hdc != nullptr && brush != nullptr)
+      {
+        FillRect(hdc, &client, brush);
+      }
       return 1;
+    }
+    else if (msg == WM_MOUSEWHEEL)
+    {
+      (void)handleSizeComboWheel(
+          data, static_cast<int>(static_cast<short>(HIWORD(wparam))));
+      return 0;
     }
     else if (msg == WM_KEYDOWN)
     {
@@ -755,7 +829,16 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
 
   if (prev != nullptr)
   {
-    return CallWindowProcW(prev, hwnd, msg, wparam, lparam);
+    const LRESULT result = CallWindowProcW(prev, hwnd, msg, wparam, lparam);
+    if (msg == WM_SETFOCUS || msg == WM_PAINT)
+    {
+      HideCaret(hwnd);
+    }
+    return result;
+  }
+  if (msg == WM_SETFOCUS)
+  {
+    HideCaret(hwnd);
   }
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -859,13 +942,20 @@ void layoutInlineEdit(EditorWindowData* data)
   const int width = annotationEditorInlineEditWidth(text_extent, remain_width);
   const int height =
       annotationEditorInlineEditHeight(data->controller.style().font_size);
-  positionOwnedPopup(data->inline_edit, data->overlay,
-                     data->image_origin_x + canvas_x,
+  const HWND host = data->inline_edit_host != nullptr ? data->inline_edit_host
+                                                      : data->inline_edit;
+  positionOwnedPopup(host, data->overlay, data->image_origin_x + canvas_x,
                      data->image_origin_y + canvas_y, width, height);
+  if (data->inline_edit_host != nullptr)
+  {
+    SetWindowPos(data->inline_edit, nullptr, 0, 0, width, height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  }
   placeInlineEditCaret(
       data->inline_edit, lstrlenW(buffer),
       annotationEditorInlineEditNeedsHScroll(text_extent, remain_width));
   invalidateInlineEditRegion(data);
+  invalidateImageArea(data);
 }
 
 void applyInlineEditVisual(EditorWindowData* data)
@@ -876,6 +966,80 @@ void applyInlineEditVisual(EditorWindowData* data)
   }
   InvalidateRect(data->inline_edit, nullptr, TRUE);
   layoutInlineEdit(data);
+}
+
+void paintLiveInlineText(HDC hdc, EditorWindowData* data)
+{
+  if (hdc == nullptr || data == nullptr || data->inline_edit == nullptr)
+  {
+    return;
+  }
+
+  wchar_t buffer[kInlineTextMaxChars]{};
+  GetWindowTextW(data->inline_edit, buffer, kInlineTextMaxChars);
+  const int text_len = lstrlenW(buffer);
+  const int font_px =
+      (std::min)((std::max)(data->controller.style().font_size, MinFontSize),
+                 MaxFontSize);
+  HFONT font = CreateFontW(
+      -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
+  if (font == nullptr)
+  {
+    return;
+  }
+
+  const HGDIOBJ old_font = SelectObject(hdc, font);
+  const COLORREF color = colorBgraToRef(data->controller.style().color);
+  SetTextColor(hdc, color);
+  SetBkMode(hdc, TRANSPARENT);
+
+  const int origin_x =
+      data->image_origin_x + static_cast<int>(data->text_anchor_x);
+  const int origin_y =
+      data->image_origin_y + static_cast<int>(data->text_anchor_y);
+  if (text_len > 0)
+  {
+    RECT text_rect{origin_x, origin_y, origin_x + data->session.source().width,
+                   origin_y + font_px + AnnotationEditorInlineEditHeightPad};
+    DrawTextW(hdc, buffer, text_len, &text_rect,
+              DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE);
+  }
+
+  DWORD sel_start = 0;
+  DWORD sel_end = 0;
+  (void)SendMessageW(data->inline_edit, EM_GETSEL,
+                     reinterpret_cast<WPARAM>(&sel_start),
+                     reinterpret_cast<LPARAM>(&sel_end));
+  int caret = static_cast<int>(sel_start);
+  if (caret < 0)
+  {
+    caret = 0;
+  }
+  if (caret > text_len)
+  {
+    caret = text_len;
+  }
+
+  SIZE prefix{};
+  if (caret > 0)
+  {
+    (void)GetTextExtentPoint32W(hdc, buffer, caret, &prefix);
+  }
+  const int caret_x = origin_x + static_cast<int>(prefix.cx);
+  const HPEN pen = CreatePen(PS_SOLID, kInlineCaretWidthPx, color);
+  if (pen != nullptr)
+  {
+    const HGDIOBJ old_pen = SelectObject(hdc, pen);
+    MoveToEx(hdc, caret_x, origin_y, nullptr);
+    LineTo(hdc, caret_x, origin_y + font_px);
+    SelectObject(hdc, old_pen);
+    DeleteObject(pen);
+  }
+
+  SelectObject(hdc, old_font);
+  DeleteObject(font);
 }
 
 void paintInlineEditFrame(HDC hdc, EditorWindowData* data)
@@ -907,6 +1071,82 @@ void paintInlineEditFrame(HDC hdc, EditorWindowData* data)
   DeleteObject(pen);
 }
 
+LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
+                                       LPARAM lparam)
+{
+  EditorWindowData* data = reinterpret_cast<EditorWindowData*>(
+      GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+  switch (msg)
+  {
+    case WM_NCCREATE:
+    {
+      const CREATESTRUCTW* cs = reinterpret_cast<const CREATESTRUCTW*>(lparam);
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                        reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+      return TRUE;
+    }
+    case WM_ERASEBKGND:
+    {
+      const HDC hdc = reinterpret_cast<HDC>(wparam);
+      RECT client{};
+      GetClientRect(hwnd, &client);
+      const HBRUSH brush = ensureInlineEditKeyBrush(data);
+      if (hdc != nullptr && brush != nullptr)
+      {
+        FillRect(hdc, &client, brush);
+      }
+      return 1;
+    }
+    case WM_CTLCOLOREDIT:
+    {
+      if (data == nullptr || data->inline_edit == nullptr ||
+          reinterpret_cast<HWND>(lparam) != data->inline_edit)
+      {
+        break;
+      }
+      const HDC hdc = reinterpret_cast<HDC>(wparam);
+      SetTextColor(hdc, kToolbarColorKey);
+      SetBkColor(hdc, kToolbarColorKey);
+      const HBRUSH brush = ensureInlineEditKeyBrush(data);
+      if (brush != nullptr)
+      {
+        return reinterpret_cast<LRESULT>(brush);
+      }
+      break;
+    }
+    case WM_MOUSEWHEEL:
+      if (data != nullptr)
+      {
+        (void)handleSizeComboWheel(
+            data, static_cast<int>(static_cast<short>(HIWORD(wparam))));
+      }
+      return 0;
+    case WM_COMMAND:
+      if (data != nullptr && data->overlay != nullptr)
+      {
+        return SendMessageW(data->overlay, WM_COMMAND, wparam, lparam);
+      }
+      return 0;
+    default:
+      break;
+  }
+  return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+bool registerInlineEditHostClass(HINSTANCE instance)
+{
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(WNDCLASSEXW);
+  wc.lpfnWndProc = inlineEditHostWndProc;
+  wc.hInstance = instance;
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+  wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+  wc.lpszClassName = kInlineEditHostClassName;
+  return RegisterClassExW(&wc) != 0 ||
+         GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
 void beginInlineText(EditorWindowData* data, HWND hwnd, int x, int y,
                      std::size_t edit_index)
 {
@@ -917,7 +1157,14 @@ void beginInlineText(EditorWindowData* data, HWND hwnd, int x, int y,
 
   commitInlineText(data);
   resetTextGesture(data);
-  clearTextSelection(data);
+  if (edit_index == kInvalidAnnotationIndex)
+  {
+    clearTextSelection(data);
+  }
+  else
+  {
+    data->selected_text_index = edit_index;
+  }
 
   const Image& source = data->session.source();
   std::wstring initial_text;
@@ -947,25 +1194,46 @@ void beginInlineText(EditorWindowData* data, HWND hwnd, int x, int y,
   const int edit_height =
       annotationEditorInlineEditHeight(data->controller.style().font_size);
 
-  // 必须带 ES_AUTOHSCROLL，否则单行 EDIT 在旧宽度内会丢弃新字符，EN_CHANGE
-  // 不会触发，输入框也就无法随文字变宽。布局后再清掉水平滚动残留。
-  data->inline_edit = CreateWindowExW(
-      WS_EX_TOOLWINDOW, L"EDIT", initial_text.c_str(),
-      WS_POPUP | WS_VISIBLE | ES_AUTOHSCROLL | ES_LEFT, 0, 0, edit_width,
-      edit_height, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
-  if (data->inline_edit == nullptr)
+  const HINSTANCE instance = GetModuleHandleW(nullptr);
+  if (!registerInlineEditHostClass(instance) ||
+      ensureInlineEditKeyBrush(data) == nullptr)
   {
     data->editing_text_index = kInvalidAnnotationIndex;
     return;
   }
-  SetWindowLongPtrW(data->inline_edit, GWLP_ID,
-                    static_cast<LONG_PTR>(kInlineEditId));
 
+  // 分层宿主打孔透出截图；子 EDIT 继续承接 IME。系统 EDIT 不能直接做 overlay 子窗。
+  data->inline_edit_host = CreateWindowExW(
+      WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kInlineEditHostClassName,
+      L"", WS_POPUP | WS_CLIPCHILDREN, 0, 0, edit_width, edit_height, hwnd,
+      nullptr, instance, data);
+  if (data->inline_edit_host == nullptr)
+  {
+    data->editing_text_index = kInvalidAnnotationIndex;
+    return;
+  }
+  applyToolbarColorKey(data->inline_edit_host);
+
+  // 必须带 ES_AUTOHSCROLL，否则单行 EDIT 在旧宽度内会丢弃新字符，EN_CHANGE
+  // 不会触发，输入框也就无法随文字变宽。布局后再清掉水平滚动残留。
+  data->inline_edit = CreateWindowExW(
+      0, L"EDIT", initial_text.c_str(),
+      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_LEFT, 0, 0, edit_width,
+      edit_height, data->inline_edit_host,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kInlineEditId)),
+      instance, nullptr);
+  if (data->inline_edit == nullptr)
+  {
+    DestroyWindow(data->inline_edit_host);
+    data->inline_edit_host = nullptr;
+    data->editing_text_index = kInvalidAnnotationIndex;
+    return;
+  }
   SendMessageW(data->inline_edit, EM_SETLIMITTEXT, kInlineTextMaxChars - 1, 0);
   data->inline_edit_font = CreateFontW(
       -data->controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
       FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
   if (data->inline_edit_font != nullptr)
   {
     SendMessageW(data->inline_edit, WM_SETFONT,
@@ -980,6 +1248,7 @@ void beginInlineText(EditorWindowData* data, HWND hwnd, int x, int y,
   const int text_len = static_cast<int>(initial_text.size());
   SendMessageW(data->inline_edit, EM_SETSEL, text_len, text_len);
   layoutInlineEdit(data);
+  ShowWindow(data->inline_edit_host, SW_SHOWNOACTIVATE);
   SetFocus(data->inline_edit);
   invalidateImageArea(data);
 }
@@ -1141,20 +1410,10 @@ void bindSizeComboTooltip(EditorWindowData* data)
     return;
   }
 
-  RECT local{};
+  RECT local = data->size_combo_rect;
   const bool show_combo =
-      data->font_combo != nullptr &&
-      annotationEditorPropertyBarShowsSizeCombo(data->controller.tool());
-  if (show_combo)
-  {
-    RECT combo_rect{};
-    GetWindowRect(data->font_combo, &combo_rect);
-    POINT top_left{combo_rect.left, combo_rect.top};
-    POINT bottom_right{combo_rect.right, combo_rect.bottom};
-    ScreenToClient(data->overlay, &top_left);
-    ScreenToClient(data->overlay, &bottom_right);
-    local = {top_left.x, top_left.y, bottom_right.x, bottom_right.y};
-  }
+      annotationEditorPropertyBarPaintsSizeCombo(data->controller.tool()) &&
+      local.right > local.left;
 
   const wchar_t* tip = L"";
   if (show_combo)
@@ -1266,7 +1525,7 @@ void syncSizeFromCombo(EditorWindowData* data)
     data->inline_edit_font = CreateFontW(
         -data->controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
         FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, kUiFontFace);
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
     if (data->inline_edit_font != nullptr)
     {
       SendMessageW(data->inline_edit, WM_SETFONT,
@@ -1346,7 +1605,7 @@ void paintEditorFrame(HDC hdc, EditorWindowData* data)
   HFONT font = CreateFontW(
       -kSizeLabelFontPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
   if (font == nullptr)
   {
     return;
@@ -1439,6 +1698,7 @@ void paintEditor(EditorWindowData* data, HDC hdc, bool draw_bar_shells,
   }
 
   blitImage(hdc, composed, data->image_origin_x, data->image_origin_y);
+  paintLiveInlineText(hdc, data);
   paintEditorFrame(hdc, data);
   paintInlineEditFrame(hdc, data);
   drawTextSelectionFrame(hdc, data);
@@ -1599,13 +1859,10 @@ void applyLiveTextStyle(EditorWindowData* data)
 
   applyInlineEditVisual(data);
 
-  const std::size_t index = data->selected_text_index;
-  if (index == kInvalidAnnotationIndex ||
-      index >= data->session.engine().document().count())
-  {
-    return;
-  }
-  if (data->inline_edit != nullptr && data->editing_text_index == index)
+  const std::size_t index = annotationEditorTextStyleTargetIndex(
+      data->selected_text_index, data->editing_text_index,
+      data->session.engine().document().count());
+  if (index == AnnotationEditorInvalidIndex)
   {
     return;
   }
@@ -1691,11 +1948,7 @@ bool handleStrokeChipWheel(EditorWindowData* data, int delta)
     return false;
   }
 
-  int steps = delta / WHEEL_DELTA;
-  if (steps == 0)
-  {
-    steps = (delta > 0) ? 1 : -1;
-  }
+  const int steps = annotationEditorWheelDeltaToSteps(delta);
   applyEditorStrokeWidth(
       data, annotationEditorStepStrokeWidth(currentStrokeWidthPx(data), steps));
   syncStrokePopupEdit(data);
@@ -2086,6 +2339,7 @@ void resetPropertyBarRects(EditorWindowData* data)
     data->line_style_rects[static_cast<std::size_t>(i)] = {};
   }
   data->stroke_chip_rect = {};
+  data->size_combo_rect = {};
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
     data->color_swatch_rects[static_cast<std::size_t>(i)] = {};
@@ -2309,19 +2563,21 @@ void layoutPropertyBar(HWND hwnd, EditorWindowData* data)
         takeToolbarSizedRect(x, y, AnnotationEditorStrokeChipWidth);
   }
 
-  if (data->font_combo != nullptr)
+  data->size_combo_rect = {};
+  if (annotationEditorPropertyBarShowsSizeCombo(tool))
   {
     const int placed_x =
         annotationEditorPropertyBarShowsMosaicSize(tool) ? mosaic_combo_x
                                                          : combo_x;
-    positionOwnedPopup(data->font_combo, hwnd, placed_x, y,
-                       AnnotationEditorFontComboWidth,
-                       AnnotationEditorButtonHeight);
-    if (annotationEditorPropertyBarShowsSizeCombo(tool))
-    {
-      x = (std::max)(x, placed_x + AnnotationEditorFontComboWidth +
-                            AnnotationEditorButtonGap);
-    }
+    data->size_combo_rect = {placed_x, y,
+                             placed_x + AnnotationEditorFontComboWidth,
+                             y + AnnotationEditorButtonHeight};
+    x = (std::max)(x, placed_x + AnnotationEditorFontComboWidth +
+                          AnnotationEditorButtonGap);
+  }
+  if (data->font_combo != nullptr)
+  {
+    ShowWindow(data->font_combo, SW_HIDE);
   }
 
   const int content_right =
@@ -2350,9 +2606,8 @@ void resizeEditorChrome(EditorWindowData* data)
   }
   if (data->font_combo != nullptr)
   {
-    ShowWindow(data->font_combo,
-               annotationEditorPropertyBarShowsSizeCombo(tool) ? SW_SHOW
-                                                               : SW_HIDE);
+    // 全屏 UpdateLayeredWindow 会盖住 WS_POPUP ComboBox；字号改由 overlay 绘制/命中。
+    ShowWindow(data->font_combo, SW_HIDE);
   }
   layoutEditorChrome(data->overlay, data);
   invalidateToolbar(data);
@@ -2376,6 +2631,152 @@ int hitTestColorSwatch(const EditorWindowData* data, int x, int y)
     }
   }
   return -1;
+}
+
+bool hitTestSizeCombo(const EditorWindowData* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarPaintsSizeCombo(data->controller.tool()))
+  {
+    return false;
+  }
+
+  const POINT pt{x, y};
+  return PtInRect(&data->size_combo_rect, pt) != FALSE;
+}
+
+void refreshInlineEditFont(EditorWindowData* data)
+{
+  if (data == nullptr || data->inline_edit == nullptr)
+  {
+    return;
+  }
+  if (data->inline_edit_font != nullptr)
+  {
+    DeleteObject(data->inline_edit_font);
+    data->inline_edit_font = nullptr;
+  }
+  data->inline_edit_font = CreateFontW(
+      -data->controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
+  if (data->inline_edit_font != nullptr)
+  {
+    SendMessageW(data->inline_edit, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(data->inline_edit_font), TRUE);
+  }
+  applyInlineEditVisual(data);
+  SetFocus(data->inline_edit);
+}
+
+void applyPickedSizeValue(EditorWindowData* data, bool mosaic, int value)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+  if (mosaic)
+  {
+    data->controller.setMosaicBlockSize(value);
+    if (data->controller.isDrawing())
+    {
+      invalidateImageArea(data);
+    }
+    invalidateToolbar(data);
+    return;
+  }
+
+  selectFontSizeInCombo(data, value);
+  refreshInlineEditFont(data);
+  applyLiveTextStyle(data);
+  invalidateToolbar(data);
+}
+
+bool handleSizeComboWheel(EditorWindowData* data, int delta)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarPaintsSizeCombo(data->controller.tool()))
+  {
+    return false;
+  }
+
+  const bool mosaic =
+      annotationEditorPropertyBarShowsMosaicSize(data->controller.tool());
+  const int current = mosaic ? data->controller.mosaicBlockSize()
+                             : data->controller.style().font_size;
+  const int steps = annotationEditorWheelDeltaToSteps(delta);
+  const int next = mosaic ? annotationEditorStepMosaicBlockSize(current, steps)
+                          : annotationEditorStepFontSize(current, steps);
+  applyPickedSizeValue(data, mosaic, next);
+  return true;
+}
+
+void pickSizeFromOverlayMenu(EditorWindowData* data)
+{
+  if (data == nullptr || data->overlay == nullptr)
+  {
+    return;
+  }
+
+  const bool mosaic =
+      annotationEditorPropertyBarShowsMosaicSize(data->controller.tool());
+  const int* options = mosaic ? AnnotationEditorMosaicSizeOptions
+                              : AnnotationEditorFontSizeOptions;
+  const int count = mosaic ? AnnotationEditorMosaicSizeOptionCount
+                           : AnnotationEditorFontSizeOptionCount;
+  const int current = mosaic ? data->controller.mosaicBlockSize()
+                             : data->controller.style().font_size;
+  const int current_index =
+      annotationEditorLookupSizeOptionIndex(options, count, current);
+  const int next_index =
+      (current_index < 0) ? 0 : ((current_index + 1) % count);
+  const int value =
+      annotationEditorSizeOptionAt(options, count, next_index, current);
+
+  const HMENU menu = CreatePopupMenu();
+  if (menu == nullptr)
+  {
+    applyPickedSizeValue(data, mosaic, value);
+    return;
+  }
+
+  for (int i = 0; i < count; ++i)
+  {
+    wchar_t label[16]{};
+    (void)swprintf_s(label, L"%d", options[i]);
+    UINT flags = MF_STRING;
+    if (options[i] == current)
+    {
+      flags |= MF_CHECKED;
+    }
+    if (AppendMenuW(menu, flags, kSizeMenuBaseId + static_cast<UINT>(i),
+                    label) == FALSE)
+    {
+      DestroyMenu(menu);
+      applyPickedSizeValue(data, mosaic, value);
+      return;
+    }
+  }
+
+  POINT origin{data->size_combo_rect.left, data->size_combo_rect.bottom};
+  ClientToScreen(data->overlay, &origin);
+  (void)SetForegroundWindow(data->overlay);
+  const UINT cmd = TrackPopupMenu(
+      menu,
+      TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_NONOTIFY |
+          TPM_RETURNCMD,
+      origin.x, origin.y, 0, data->overlay, nullptr);
+  DestroyMenu(menu);
+
+  const int index =
+      annotationEditorSizeMenuCommandToIndex(cmd, kSizeMenuBaseId, count);
+  if (index < 0)
+  {
+    return;
+  }
+  const int picked =
+      annotationEditorSizeOptionAt(options, count, index, current);
+  applyPickedSizeValue(data, mosaic, picked);
 }
 
 bool hitTestStrokeChip(const EditorWindowData* data, int x, int y)
@@ -2499,6 +2900,12 @@ void handlePropertyBarClick(EditorWindowData* data, int x, int y)
     return;
   }
 
+  if (hitTestSizeCombo(data, x, y))
+  {
+    pickSizeFromOverlayMenu(data);
+    return;
+  }
+
   if (hitTestStrokeChip(data, x, y))
   {
     if (data->stroke_popup != nullptr &&
@@ -2529,6 +2936,7 @@ bool pointerHitsStyleChrome(const EditorWindowData* data)
   return hitTestEditorToolbar(data, pt.x, pt.y) >= 0 ||
          hitTestChromeBar(data, pt.x, pt.y) ||
          hitTestColorSwatch(data, pt.x, pt.y) >= 0 ||
+         hitTestSizeCombo(data, pt.x, pt.y) ||
          hitTestStrokeChip(data, pt.x, pt.y) ||
          hitTestShapeToggle(data, pt.x, pt.y) >= 0 ||
          hitTestFill(data, pt.x, pt.y) ||
@@ -2596,6 +3004,32 @@ void paintPropertyBar(HDC hdc, EditorWindowData* data, bool draw_shell)
       fillRoundRect(hdc, cell, colorBgraToRef(preset),
                     selected ? kSwatchSelectedBorderColor : kSwatchBorderColor,
                     kSwatchCornerRadius);
+    }
+  }
+
+  if (annotationEditorPropertyBarPaintsSizeCombo(tool) &&
+      data->size_combo_rect.right > data->size_combo_rect.left)
+  {
+    const RECT& chip = data->size_combo_rect;
+    fillRoundRect(hdc, chip, colors.selected_fill, kSwatchBorderColor,
+                  DefaultModernToolbarMetrics.hover_radius);
+    const bool mosaic =
+        annotationEditorPropertyBarShowsMosaicSize(tool);
+    const int value = mosaic ? data->controller.mosaicBlockSize()
+                             : style.font_size;
+    wchar_t value_text[8]{};
+    (void)swprintf_s(value_text, L"%d", value);
+    RECT text_rect = chip;
+    const HGDIOBJ old_font =
+        (data->combo_font != nullptr) ? SelectObject(hdc, data->combo_font)
+                                      : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, colors.label);
+    DrawTextW(hdc, value_text, -1, &text_rect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (old_font != nullptr)
+    {
+      SelectObject(hdc, old_font);
     }
   }
 
@@ -2736,7 +3170,7 @@ bool createButtons(HWND hwnd, EditorWindowData* data)
   data->combo_font = CreateFontW(
       -kComboFontPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, kUiFontFace);
+      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
   if (data->combo_font != nullptr)
   {
     SendMessageW(data->font_combo, WM_SETFONT,
@@ -3111,9 +3545,14 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         break;
       }
       const HDC hdc = reinterpret_cast<HDC>(wparam);
-      SetTextColor(hdc, colorBgraToRef(data->controller.style().color));
-      SetBkMode(hdc, TRANSPARENT);
-      return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+      SetTextColor(hdc, kToolbarColorKey);
+      SetBkColor(hdc, kToolbarColorKey);
+      const HBRUSH brush = ensureInlineEditKeyBrush(data);
+      if (brush != nullptr)
+      {
+        return reinterpret_cast<LRESULT>(brush);
+      }
+      break;
     }
     case WM_LBUTTONDOWN:
     {
@@ -3143,9 +3582,10 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         handlePropertyBarClick(data, x, y);
         return 0;
       }
-      if (data->controller.tool() == AnnotationTool::Text &&
-          hitTestTextAnnotation(data, x, y) != kInvalidAnnotationIndex)
+      if (hitTestTextAnnotation(data, x, y) != kInvalidAnnotationIndex)
       {
+        data->controller.setTool(AnnotationTool::Text);
+        resizeEditorChrome(data);
         beginOrEditTextAt(data, hwnd, x, y);
         return 0;
       }
@@ -3177,8 +3617,12 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      if (data->controller.tool() != AnnotationTool::Text ||
-          !pointInImageArea(data, x, y))
+      if (data->controller.tool() != AnnotationTool::Text &&
+          hitTestTextAnnotation(data, x, y) == kInvalidAnnotationIndex)
+      {
+        return 0;
+      }
+      if (!pointInImageArea(data, x, y))
       {
         return 0;
       }
@@ -3188,6 +3632,8 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const std::size_t hit = hitTestTextAnnotation(data, x, y);
       if (hit != kInvalidAnnotationIndex)
       {
+        data->controller.setTool(AnnotationTool::Text);
+        resizeEditorChrome(data);
         beginInlineText(data, hwnd, x, y, hit);
       }
       return 0;
@@ -3265,12 +3711,19 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       pt.x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       pt.y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
       ScreenToClient(hwnd, &pt);
+      const int delta =
+          static_cast<int>(static_cast<short>(HIWORD(wparam)));
       if (hitTestStrokeChip(data, pt.x, pt.y) ||
           (data->stroke_popup != nullptr &&
            IsWindowVisible(data->stroke_popup) != FALSE))
       {
-        (void)handleStrokeChipWheel(
-            data, static_cast<int>(static_cast<short>(HIWORD(wparam))));
+        (void)handleStrokeChipWheel(data, delta);
+        return 0;
+      }
+      if (annotationEditorWheelAdjustsSize(
+              data->controller.tool(), hitTestSizeCombo(data, pt.x, pt.y)))
+      {
+        (void)handleSizeComboWheel(data, delta);
         return 0;
       }
       break;
@@ -3315,7 +3768,9 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
       const UINT id = LOWORD(wparam);
       const UINT code = HIWORD(wparam);
-      if (id == kFontComboId && code == CBN_SELCHANGE)
+      const HWND combo = reinterpret_cast<HWND>(lparam);
+      if ((id == kFontComboId || combo == data->font_combo) &&
+          (code == CBN_SELCHANGE || code == CBN_SELENDOK))
       {
         syncSizeFromCombo(data);
         return 0;

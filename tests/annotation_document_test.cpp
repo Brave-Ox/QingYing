@@ -215,6 +215,27 @@ TEST(AnnotationDocumentTest, ReplaceAtUpdatesExistingText)
   EXPECT_FLOAT_EQ(document.items().at(0).start.y, 16.0f);
 }
 
+TEST(AnnotationDocumentTest, ReplaceAtUpdatesTextColorAndFontSize)
+{
+  AnnotationDocument document;
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{5.0f, 6.0f};
+  text.text = L"label";
+  text.style.color = AnnotationStylePresetColors[0];
+  text.style.font_size = 16;
+  ASSERT_TRUE(document.add(text));
+
+  Annotation updated = document.items().at(0);
+  updated.style.color = AnnotationStylePresetColors[2];
+  updated.style.font_size = 32;
+  ASSERT_TRUE(document.replaceAt(0, updated));
+  EXPECT_EQ(document.items().at(0).style.color.r,
+            AnnotationStylePresetColors[2].r);
+  EXPECT_EQ(document.items().at(0).style.font_size, 32);
+  EXPECT_EQ(document.items().at(0).text, L"label");
+}
+
 TEST(AnnotationDocumentTest, ReplaceAtRejectsInvalidIndexOrEmptyText)
 {
   AnnotationDocument document;
