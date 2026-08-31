@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前基线：本地标注 15 提交与远端 F1/钉图/长截图 33 提交合并后
-> 更新日期：2026-08-30
+> 当前基线：`master` / `b91dbe21`（本地标注与远端 F1/钉图/长截图已合并）
+> 更新日期：2026-08-31
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
 功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
@@ -12,18 +12,18 @@
 
 | 范围 | 状态 | 当前结论 |
 |---|---|---|
-| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + static lib（含 ui / annotate / pin / longshot） |
+| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + 10 个 static lib（含 ui / annotate / pin / longshot） |
 | 普通截图主链路 | **基本闭环** | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin |
 | F1 自定义区域 | **代码完成** | 自由框选、八点调整、移动、取消、虚拟桌面、物理像素转换 |
 | F2 窗口吸附 | **代码完成，待人工验收** | 候选过滤、悬停高亮、点击吸附、DWM 边框修正 |
-| F3 标注 | **模块已接线** | 矩形/椭圆/箭头/画笔/马赛克/文字 + 撤销；选区「编辑」就地标注后复制 |
+| F3 标注 | **代码已接线，最小闭环** | 矩形/椭圆/箭头/画笔/马赛克/文字、样式二级栏、撤销；选区「编辑」就地标注后回写并复制 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
 | F6 长截图 | **记事本代码路径已接入** | 固定选区拼接、预览、暂停 / 继续 / 停止、失败清理；另两应用未实现 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
 
-一句话：普通截图、窗口吸附、Pin、记事本长截图与标注就地编辑已经形成代码链路；下一步是双端功能的真实环境验收，以及标注完成后回到完整操作条。
+一句话：普通截图、窗口吸附、Pin、记事本长截图与标注就地编辑已经形成代码链路；下一步是双端功能的真实环境验收，以及标注完成后回到完整 Save / Pin 操作条。
 
 ---
 
@@ -36,7 +36,8 @@
 - 全局热键 `Ctrl+Shift+Q` 与冲突提示；
 - `WM_QINGYING_BEGIN_CAPTURE` 将热键处理延后到 UI 消息流；
 - `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；
-- 共享 `Image` 与 `CaptureSession` 已打通区域截图、导出、Pin 与标注回写；
+- `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
+- 共享 `Image` 与 `CaptureSession` 已打通区域截图、导出、Pin 与标注结果回写；
 - 应用退出时停止长截图 worker、关闭 Overlay 并回收线程。
 
 ### 2.2 F1 区域选择与桌面遮罩
@@ -71,8 +72,8 @@
 | 引擎组装 | `annotation_engine.*` | `annotation_engine_test` |
 | 纯逻辑会话（确认/取消） | `annotation_editor_session.*` | `annotation_editor_session_test` |
 | 拖拽交互（工具/预览/入栈） | `annotation_interaction_controller.*` | `annotation_interaction_controller_test` |
-| 就地编辑 Overlay | `annotation_overlay.*` | 自动分支 + `DISABLED_` 手工冒烟 |
-| 标注工具条 | `modern_toolbar` | 主栏工具 + 颜色/线宽或字号二级栏 |
+| 就地编辑 Overlay | `annotation_overlay.*` | 自动布局 / 交互逻辑 + 1 个 `DISABLED_` 窗口冒烟 |
+| 标注工具条 | `modern_toolbar` | 主栏工具 + 颜色/线宽或字号二级栏；SVG 图标 |
 
 第三人接线：选区操作条「编辑」→ `AnnotationOverlay::showInPlace` → 合成图写入 `SelectionResult::annotated_image` → Application 回写 Session 并复制。
 
@@ -119,9 +120,9 @@
 
 ## 3. 未实现或仍为 Stub
 
-### F3 标注后续
+### F3 标注后续（不是 Stub）
 
-- 标注完成后尚未回到完整操作条（Copy / Save / Pin）；
+- 标注完成后当前回写 Session 并自动 Copy，尚未回到完整操作条（Save / Pin）；
 - 重做 UI 仍待补；
 - 就地标注与八点调区 / 多屏的组合冒烟待验收。
 
@@ -140,13 +141,14 @@
 
 ## 4. 自动验证基线
 
-合并后需重新执行：
+当前基线命令：
 
 ```bat
 build.bat Release test
 ```
 
-远端合并前基线（2026-08-30）：GoogleTest **100/100**。本地标注套件另含 document / engine / overlay / renderer / toolbar 用例。合并后以本地 `qingying_tests` 全绿为准。
+2026-08-31 Release 结果：CTest 发现 **252** 个用例，实际执行 **251** 个且全部通过；
+`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。24 个测试源文件已纳入构建。
 
 自动测试不能替代：
 
@@ -170,17 +172,20 @@ build.bat Release test
 | 2026-08-28 | Pin 自动避让 | `d8998e02` |
 | 2026-08-26～28 | F6 请求、profile、采集、拼接、停止条件、Application 接线 | `b1ee85bf`～`9607c013` |
 | 2026-08-28 | F6 预览、暂停停止和失败清理 | `7b66b2ae`、`1aeb4f3a`、`68f0e740` |
+| 2026-08-30 | 合并标注链路与 F1 / Pin / F6 | `d9f7c0dc` |
+| 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
 
 ---
 
 ## 6. 技术债与架构偏差
 
-- `selection_overlay.cpp` 当前包含窗口、渲染、工具栏、F2、长截图预览与就地标注入口；
+- `selection_overlay.cpp` 当前包含窗口、渲染、ModernToolbar、F2、长截图预览与就地标注入口（约 1,325 行）；
+- `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，但仍采用同线程模态消息循环（约 3,296 行）；
 - 工具栏按钮 ID、创建、启用条件和命令 switch 为硬编码；
 - `SelectionOverlay::show` 拥有嵌套模态 `GetMessage`，与原“消息循环只在 app”的文档表述不完全一致；
 - `Application` 直接执行桌面背景捕获、长截图与部分保存，原“业务能力只经 Dispatcher”过于绝对；
 - `LongShotRegion` 枚举存在但没有 Handler；
-- `qingying_overlay` 在 CMake 中公开链接 `qingying_capture`，就地标注也会经 Overlay 调用 CaptureEngine；
+- `qingying_overlay` 在 CMake 中公开链接 `qingying_capture`；就地标注会先隐藏遮罩，再在 Overlay 内直接调用 `CaptureEngine` 重新抓取选区；
 - `CaptureEngine`、`LongShotEngine`、`McpBridge` 仍以裸 `Impl*` 管理 PIMPL；
 - `ActionRequest` 会随 F8/F9 继续膨胀，缺少类型安全 payload；
 - `CaptureSession` 是有意保留的“最近结果”状态，但 Handler 间数据流仍具有隐式时序依赖。
@@ -191,8 +196,8 @@ build.bat Release test
 
 ## 7. 下一步建议
 
-1. 合并后重新编译并跑通 `qingying_tests`，再人工走一遍截图 / 标注 / 钉图 / 长截图；
-2. 标注完成后回到完整操作条（Copy / Save / Pin）；
+1. 对最新合并版本人工走一遍截图 / 标注 / 钉图 / 长截图；
+2. 标注完成后回到完整操作条（Save / Pin，Copy 已自动执行）；
 3. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
 4. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
 5. 收紧 `overlay → capture` 依赖，PIMPL 改 `unique_ptr`，明确 Dispatcher 与 Workflow 边界；
