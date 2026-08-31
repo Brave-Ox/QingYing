@@ -75,12 +75,9 @@ struct CaptureEngine::Impl {
   // GDI 截屏不跨调用持有状态；预留 DXGI 桌面复制接入位。
 };
 
-CaptureEngine::CaptureEngine() : impl_(new Impl) {}
+CaptureEngine::CaptureEngine() : impl_(std::make_unique<Impl>()) {}
 
-CaptureEngine::~CaptureEngine() {
-  delete impl_;
-  impl_ = nullptr;
-}
+CaptureEngine::~CaptureEngine() = default;
 
 ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
                                           Image& out) {

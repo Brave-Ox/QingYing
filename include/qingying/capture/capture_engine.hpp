@@ -3,6 +3,8 @@
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
 
+#include <memory>
+
 namespace qingying {
 
 // PIMPL: DXGI/GDI stay in .cpp — other modules only see this header.
@@ -21,7 +23,7 @@ class CaptureEngine {
 
  private:
   struct Impl;
-  Impl* impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace qingying

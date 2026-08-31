@@ -1,20 +1,19 @@
 ﻿#include "qingying/mcp/mcp_bridge.hpp"
 
+#include <memory>
+
 namespace qingying {
 
 struct McpBridge::Impl {
   ActionDispatcher* dispatcher{nullptr};
 };
 
-McpBridge::McpBridge(ActionDispatcher* dispatcher) : impl_(new Impl) {
+McpBridge::McpBridge(ActionDispatcher* dispatcher)
+    : impl_(std::make_unique<Impl>()) {
   impl_->dispatcher = dispatcher;
 }
 
-McpBridge::~McpBridge() {
-  stop();
-  delete impl_;
-  impl_ = nullptr;
-}
+McpBridge::~McpBridge() { stop(); }
 
 bool McpBridge::start() {
   return false;  // stub

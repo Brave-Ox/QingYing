@@ -2,6 +2,8 @@
 
 #include "qingying/action/action_dispatcher.hpp"
 
+#include <memory>
+
 namespace qingying {
 
 // Named Pipe MCP bridge — PIMPL hides protocol details.
@@ -18,7 +20,7 @@ class McpBridge {
 
  private:
   struct Impl;
-  Impl* impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace qingying

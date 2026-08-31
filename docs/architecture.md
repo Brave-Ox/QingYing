@@ -261,9 +261,9 @@ Application 预先记录 owner_window
 
 | 类 | 当前形式 | 调整方向 |
 |---|---|---|
-| `CaptureEngine` | `Impl*` + 手写 new/delete | `std::unique_ptr<Impl>` |
-| `LongShotEngine` | `Impl*` + 手写 new/delete | `std::unique_ptr<Impl>` |
-| `McpBridge` | `Impl*` + 手写 new/delete，且为 Stub | F9 实现时一并 RAII 化 |
+| `CaptureEngine` | `std::unique_ptr<Impl>` | 已完成；析构在 `.cpp` 定义 |
+| `LongShotEngine` | `std::unique_ptr<Impl>` | 已完成；析构在 `.cpp` 定义 |
+| `McpBridge` | `std::unique_ptr<Impl>`，且为 Stub | 已完成；F9 实现仍待做 |
 | `ActionDispatcher` / Request / Result | 透明契约 | 不使用 PIMPL |
 | GDI 资源 | 多数为 unique_ptr + 自定义 deleter | 保持 |
 | Pin 隐藏恢复 | RAII `CaptureGuard` | 保持 |
@@ -309,8 +309,8 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 ## 14. 质量基线
 
 - 2026-08-31：`build.bat Release test` 成功；
-- CTest 发现 262 个用例，实际执行 261 个且全部通过；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
-- Release EXE：214,528 字节；
+- CTest 发现 272 个用例，实际执行 271 个且全部通过；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- Release EXE：218,112 字节；
 - 自动测试覆盖 Action、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
 - 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、真实记事本长截、资源管理器 / Edge 长截、内存与唤起时延。
 
@@ -330,3 +330,4 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-08-30 | 合并标注链路与 F1 / Pin / F6 | `d9f7c0dc` |
 | 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
 | 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移与结果操作回流 | 当前工作区，待提交 |
+| 2026-08-31 | Capture / LongShot / MCP PIMPL 改为 `unique_ptr` | 当前工作区，待提交 |

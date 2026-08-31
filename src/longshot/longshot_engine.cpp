@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <thread>
 #include <utility>
 
@@ -148,12 +149,9 @@ struct LongShotEngine::Impl {
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
-    : impl_(new Impl(capture, limits)) {}
+    : impl_(std::make_unique<Impl>(capture, limits)) {}
 
-LongShotEngine::~LongShotEngine() {
-  delete impl_;
-  impl_ = nullptr;
-}
+LongShotEngine::~LongShotEngine() = default;
 
 bool LongShotFramePair::valid() const {
   return !first_frame.empty() && !second_frame.empty() &&
