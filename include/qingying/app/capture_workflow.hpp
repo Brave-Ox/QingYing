@@ -31,9 +31,9 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
     const SelectionResult& selection,
     bool longshot_result_ready) noexcept;
 
-// Owns one interactive capture workflow. The current implementation keeps the
-// existing synchronous Overlay contract; making both overlays non-modal is a
-// later lifecycle-only change and does not move orchestration back to app.
+// Owns one interactive capture workflow. Overlay windows are non-modal; this
+// object keeps the small continuation state machine that advances selection,
+// annotation, and result actions from the application's message loop.
 class CaptureWorkflow {
  public:
   CaptureWorkflow(ActionDispatcher& dispatcher, CaptureEngine& capture,
@@ -50,9 +50,13 @@ class CaptureWorkflow {
   // this non-owning handle for message delivery and dialog ownership.
   void setOwnerWindow(std::uintptr_t owner_window) noexcept;
 
-  // Runs the current synchronous selection workflow. Returns false only when
-  // it cannot start or the SelectionOverlay cannot be shown.
+  // Starts the selection workflow. Returns false only when it cannot start or
+  // the SelectionOverlay cannot be shown; completion is asynchronous.
   bool beginSelection();
+
+  // Advances a pending selection/annotation continuation posted by the overlay
+  // callbacks. Application forwards WM_QINGYING_WORKFLOW_CONTINUE here.
+  void continueWorkflow();
 
   // Consumes the private completion payload posted by the long-shot worker.
   // Application forwards WM_QINGYING_LONGSHOT_COMPLETE here unchanged.

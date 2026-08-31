@@ -22,6 +22,7 @@ add_executable(qingying_tests
   overlay_phase_test.cpp
   overlay_renderer_test.cpp
   selection_controller_test.cpp
+  selection_overlay_test.cpp
   selection_handles_test.cpp
   selection_toolbar_test.cpp
   coordinate_transform_test.cpp

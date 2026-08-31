@@ -7,8 +7,8 @@
 
 namespace qingying {
 
-// 标注编辑器窗口。与 SelectionOverlay 一致采用模态语义：
-// show 内部自跑消息循环，用户确认或取消后先回调、再返回。
+// 标注编辑器窗口。窗口采用非模态语义：show 创建窗口后立即返回，
+// 用户确认或取消时再通过回调交付结果，由应用自己的消息循环持续驱动。
 //
 // 边界：只建窗口、只处理本窗口消息。不调用 ActionDispatcher /
 // ExportService / CaptureEngine / PinManager，也不写剪贴板或文件；
@@ -16,6 +16,12 @@ namespace qingying {
 class AnnotationOverlay
 {
  public:
+  AnnotationOverlay() = default;
+  ~AnnotationOverlay();
+
+  AnnotationOverlay(const AnnotationOverlay&) = delete;
+  AnnotationOverlay& operator=(const AnnotationOverlay&) = delete;
+
   // owner 仅用于窗口归属，允许为 nullptr。source 会被拷贝一份，
   // 调用方后续改动原图不影响编辑结果。
   //
@@ -28,14 +34,18 @@ class AnnotationOverlay
   bool showInPlace(HWND owner, const Image& source, int screen_x, int screen_y,
                    AnnotationCallback callback);
 
-  // 请求关闭当前编辑器，等效于用户点取消。
+  // 请求关闭当前编辑器，等效于用户点取消，并交付一次取消回调。
   void hide();
+
+  // 应用退出或工作流中止时静默销毁窗口，不交付取消回调。
+  void closeSilently();
 
   bool isVisible() const;
 
  private:
   HWND m_hwnd{nullptr};
   bool m_visible{false};
+  bool m_suppress_callback{false};
 };
 
 }  // namespace qingying

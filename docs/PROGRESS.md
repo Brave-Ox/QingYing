@@ -1,6 +1,6 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前提交基线：`master` / `778cd336`（68 条提交；本文同时反映当前待提交的 `LongShotController` 调整）
+> 当前提交基线：`master` / `adeb7c60`（69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）
 > 更新日期：2026-08-31
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
@@ -16,14 +16,14 @@
 | 普通截图主链路 | **基本闭环** | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin |
 | F1 自定义区域 | **代码完成** | 自由框选、八点调整、移动、取消、虚拟桌面、物理像素转换 |
 | F2 窗口吸附 | **代码完成，待人工验收** | 候选过滤、悬停高亮、点击吸附、DWM 边框修正 |
-| F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
+| F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；非模态编辑器确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
 | F6 长截图 | **记事本代码路径已接入** | 固定选区拼接、预览、暂停 / 继续 / 停止、失败清理；另两应用未实现 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
 
-一句话：普通截图、窗口吸附、Pin、记事本长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`；下一步是 Overlay 非模态化、完整人工验收与重做 UI。
+一句话：普通截图、窗口吸附、Pin、记事本长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是完整人工验收与重做 UI。
 
 ---
 
@@ -39,6 +39,7 @@
 - `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
 - `SelectionToolbar` 独立管理选区操作条 HWND、命令与阶段映射，`OverlayPhase` 集中校验选区 / 长截图 / 关闭阶段；
+- `SelectionOverlay` 与 `AnnotationOverlay` 创建后立即返回，窗口消息统一由 Application 顶层消息泵处理；Workflow 通过阶段消息续接选区和标注；
 - 共享 `Image` 与 `CaptureSession` 已打通区域截图、导出、Pin 与标注结果回写；
 - 应用退出时由 `LongShotController` 停止并回收长截图 worker，同时关闭 Overlay。
 
@@ -54,7 +55,7 @@
 | Esc / 右键取消 | `selection_overlay.cpp` | 代码路径；人工体验待持续回归 |
 | 物理像素区域截图 | `capture_engine.cpp` | GDI 实图测试与 F1 集成测试 |
 
-桌面背景快照由 `CaptureWorkflow` 在 Overlay 出现前获取，并临时隐藏 Pin。Overlay 使用 `WS_EX_NOACTIVATE`，避免原前台窗口的 owned popup 因失活而消失。
+桌面背景快照由 `CaptureWorkflow` 在 Overlay 出现前获取，并临时隐藏 Pin。SelectionOverlay 使用 `WS_EX_NOACTIVATE`，避免原前台窗口的 owned popup 因失活而消失；两个 Overlay 均不再自建消息循环。
 
 ### 2.3 F2 窗口吸附
 
@@ -77,7 +78,7 @@
 | 就地编辑 Overlay | `annotation_overlay.*` | 自动布局 / 交互逻辑 + 1 个 `DISABLED_` 窗口冒烟 |
 | 标注工具条 | `modern_toolbar` | 主栏工具 + 颜色/线宽或字号二级栏；SVG 图标 |
 
-当前接线：`SelectionOverlay` 只返回 Edit 意图 → `CaptureWorkflow` 抓取编辑源图并打开 `AnnotationOverlay` → 合成图写入 Session 并自动 Copy → `composeCapturePreview` 将结果贴回桌面快照 → 同一选区恢复结果操作条，可继续 Save / Pin / Edit。
+当前接线：`SelectionOverlay` 只返回 Edit 意图 → `CaptureWorkflow` 抓取编辑源图并非模态打开 `AnnotationOverlay` → 合成图写入 Session 并自动 Copy → `composeCapturePreview` 将结果贴回桌面快照 → 同一选区恢复结果操作条，可继续 Save / Pin / Edit。
 
 ### 2.5 F4 导出
 
@@ -149,8 +150,8 @@
 build.bat Release test
 ```
 
-2026-08-31 Release 结果：CTest 发现 **287** 个用例，实际执行 **286** 个，其中 **282** 个通过、4 个为当前环境下既有 `BitBlt` 失败；
-`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。29 个测试源文件已纳入构建。
+2026-08-31 Release 结果：CTest 发现 **289** 个用例，实际执行 **288** 个，其中 **284** 个通过、4 个为当前环境下既有 `BitBlt` 失败；
+`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。30 个测试源文件已纳入构建。
 
 自动测试不能替代：
 
@@ -158,7 +159,7 @@ build.bat Release test
 - F2 在真实应用上的候选边界；
 - 多 Pin 的交互和隐藏 / 恢复闪烁；
 - 真实长文滚动拼接；
-- 就地标注与选区 Overlay 的组合验收。
+- 就地标注与选区 Overlay 的组合验收（当前非模态状态机已接线，仍需真实窗口验证）。
 
 ---
 
@@ -178,8 +179,9 @@ build.bat Release test
 | 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
 | 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移、标注结果操作回流 | `a5f4cb97` |
 | 2026-08-31 | PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
-| 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | 当前工作区，待提交 |
-| 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | 当前工作区，待提交 |
+| 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | `778cd336` |
+| 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
+| 2026-08-31 | Selection / Annotation Overlay 非模态化，顶层消息泵续接 Workflow | 当前工作区，待提交 |
 
 ---
 
@@ -187,12 +189,12 @@ build.bat Release test
 
 - `selection_overlay.cpp` 已降至约 780 行；选区工具栏、阶段状态、遮罩 / 预览渲染和标注捕获 / 编辑职责已移出，但窗口与消息路由仍在同一 Win32 壳中；
 - `SelectionToolbar` 已以 PIMPL + `unique_ptr` 独立管理 HWND，`OverlayPhase` 已替代选区 / 长截图 / 关闭阶段的互斥布尔组合；
-- `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，但仍采用同线程模态消息循环（约 3,296 行）；
-- `SelectionOverlay::show` 拥有嵌套模态 `GetMessage`，与原“消息循环只在 app”的文档表述不完全一致；
-- `Application` 已降至约 105 行，只保留依赖组装、托盘 / 热键与消息转发；`CaptureWorkflow` 约 470 行，已接管选区 → 标注 → 结果操作条；`LongShotController` 约 190 行独立管理长截图运行态，下一步是 Overlay 非模态化；
+- `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，窗口消息现由主循环驱动（约 3,300 行）；
+- `SelectionOverlay::show` 与 `AnnotationOverlay::showInPlace` 均创建后立即返回，Workflow 以 `WM_QINGYING_WORKFLOW_CONTINUE` 续接状态；
+- `Application` 已降至约 110 行，只保留依赖组装、托盘 / 热键与消息转发；`CaptureWorkflow` 约 560 行，已接管选区 → 标注 → 结果操作条的异步阶段；`LongShotController` 约 190 行独立管理长截图运行态；
 - `LongShotRegion` 枚举存在但没有 Handler；
 - `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 CaptureWorkflow 在 SelectionOverlay 返回后产生；
-- `CaptureEngine`、`LongShotEngine`、`LongShotController`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；`LongShotController` 已集中跨线程预览 / 完成消息生命周期，Overlay 内部消息仍需在非模态化时进一步收口；
+- `CaptureEngine`、`LongShotEngine`、`LongShotController`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；`LongShotController` 已集中跨线程预览 / 完成消息生命周期，两个 Overlay 的窗口状态也已由顶层消息泵收口；
 - `ActionRequest` 会随 F8/F9 继续膨胀，缺少类型安全 payload；
 - `CaptureSession` 是有意保留的“最近结果”状态，但 Handler 间数据流仍具有隐式时序依赖。
 
@@ -204,7 +206,7 @@ build.bat Release test
 
 1. 对最新合并版本人工走一遍截图 / 标注 / 钉图 / 长截图；
 2. 为标注编辑器增加重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
-3. 非模态化 Selection / Annotation Overlay；
+3. 为非模态 Selection / Annotation Overlay 补真实窗口、退出和组合测试；
 4. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
 5. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
 6. 完成跨线程消息所有权封装，再进入 F8/F9。

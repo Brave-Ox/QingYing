@@ -1,7 +1,7 @@
 # 轻映 QingYing — 当前架构说明（方案 B）
 
 > 状态：以当前代码为准
-> 提交基线：`master` / `778cd336`（本文同时反映当前待提交的 `LongShotController` 调整）
+> 提交基线：`master` / `adeb7c60`（本文同时反映当前待提交的 Overlay 非模态化调整）
 > 同步日期：2026-08-31
 > 形态：**一个 EXE + 11 个 static lib**
 
@@ -70,11 +70,11 @@
 | `qingying_capture` | static | GDI 区域截图；DXGI / 截窗 / 中央裁切接口位置 | 区域截图已实现，其余为桩 |
 | `qingying_export` | static | CF_DIB 剪贴板与 WIC PNG | 已实现 |
 | `qingying_ui` | static | 选区条 / 标注底栏共用的 ModernToolbar、GDI+ 与 SVG 路径图标 | 已实现 |
-| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、OverlayRenderer、长截图预览 | Renderer 已拆出；模态循环仍待收口 |
+| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、OverlayRenderer、长截图预览 | SelectionOverlay 已非模态化；Renderer 已拆出 |
 | `qingying_annotate` | static | 标注文档、引擎、渲染器、编辑会话和编辑 Overlay | 代码已接线，窗口冒烟仍单列 |
 | `qingying_pin` | static | 多 Pin、排布、缩放、独立导出、捕获排除 | 代码基本完成 |
 | `qingying_longshot` | static | 记事本选区滚动、拼接和停止条件 | 记事本路径已实现 |
-| `qingying_workflow` | static | 选区、标注、结果动作与交互式长截图编排 | CaptureWorkflow 与 LongShotController 已接入；非模态化待做 |
+| `qingying_workflow` | static | 选区、标注、结果动作与交互式长截图编排 | CaptureWorkflow 状态机与 LongShotController 已接入 |
 | `qingying_command` | static | 本地口令 → Action | Stub |
 | `qingying_mcp` | static | MCP Bridge / 后续 Named Pipe | Stub |
 | `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 已收口到约 105 行 |
@@ -168,7 +168,7 @@ Ctrl+Shift+Q
   → SelectionResult（物理像素 + SelectionAction）
   → Copy / Save / Pin：dispatch(CaptureRegion) → CaptureSession → 消费结果
   → Edit：SelectionOverlay 返回 → CaptureWorkflow 捕获选区源图
-           → AnnotationOverlay → rendered Image → 写回 Session 并自动 Copy
+  → AnnotationOverlay（非模态）→ rendered Image → 写回 Session 并自动 Copy
            → composeCapturePreview → 恢复同一选区与结果操作条
            → Save / Pin / 再次 Edit
 ```
@@ -180,7 +180,7 @@ Ctrl+Shift+Q
 - 操作条“编辑”只上报 `SelectionAction::Edit`；标注完成后 CaptureWorkflow 写回 Session、自动 Copy，并恢复完整 Save / Pin / Edit 结果操作条；
 - 恢复结果操作条时选区保持只读，避免移动 / 缩放后让物理矩形与既有标注栅格失配；开始长截图会显式清除该标注结果；
 - 选区条和标注底栏共用白色圆角 `ModernToolbar`，悬停 / 选中使用浅灰状态，图标含 SVG 路径实现；
-- `AnnotationOverlay` 在 SelectionOverlay 模态循环结束后打开；确认时把标注栅格贴回新桌面快照，取消时不覆盖 Session；
+- `SelectionOverlay` 和 `AnnotationOverlay` 均在创建后立即返回；完成 / 取消通过回调和 `WM_QINGYING_WORKFLOW_CONTINUE` 续接 CaptureWorkflow，确认时把标注栅格贴回新桌面快照，取消时不覆盖 Session；
 - Overlay 当前使用 `WS_EX_NOACTIVATE`，以避免遮罩出现后使原窗口的 owned popup 消失。
 
 ---
@@ -247,15 +247,15 @@ CaptureWorkflow 预先记录 owner_window
 | 项 | 当前实现 |
 |---|---|
 | 顶层进程消息循环 | `Application::run()` 中的 `GetMessage` |
-| Overlay | `SelectionOverlay::show()` 当前另有同线程嵌套模态 `GetMessage` 循环 |
-| 标注编辑器 | `AnnotationOverlay::showInPlace()` 也采用同线程嵌套模态 `GetMessage` 循环 |
+| Overlay | `SelectionOverlay::show()` 创建后立即返回，由 Application 顶层消息泵驱动 |
+| 标注编辑器 | `AnnotationOverlay::showInPlace()` 创建后立即返回，键盘 / 鼠标消息在窗口过程处理 |
 | 长截图 | `LongShotController` 创建单个 worker；暂停 / 停止使用 atomic 标志 |
 | 跨线程预览 | worker 复制预览图后 `PostMessage` 给 Overlay |
 | 完成回收 | `LongShotController` 将 `LongShotCompletion*` 投递给托盘窗口，UI 线程通过 Controller 接管并 join |
-| 应用退出 | 设置 stop、隐藏 Overlay、保留并重新投递 `WM_QUIT`，避免嵌套循环残留 |
+| 应用退出 | `CaptureWorkflow::shutdown()` 同步中止并销毁两个 Overlay，再由顶层循环处理 `WM_QUIT` |
 | 单实例 | Named Mutex |
 
-“Win32 消息循环只在 app”目前只对顶层循环成立；Overlay 的嵌套循环是已知偏差，后续应改为非模态窗口状态机。
+“Win32 消息循环只在 app”现已落实：Overlay 只负责窗口过程和生命周期回调，CaptureWorkflow 通过阶段状态机续接交互。
 
 ---
 
@@ -312,7 +312,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 ## 14. 质量基线
 
 - 2026-08-31：`build.bat Release test` 成功；
-- CTest 发现 287 个用例，实际执行 286 个，其中 282 个通过、4 个为当前环境下既有 `BitBlt` 失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- CTest 发现 289 个用例，实际执行 288 个，其中 284 个通过、4 个为当前环境下既有 `BitBlt` 失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
 - Release EXE：219,648 字节；
 - 自动测试覆盖 Action、CaptureWorkflow 路由、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
 - 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、真实记事本长截、资源管理器 / Edge 长截、内存与唤起时延。
@@ -335,5 +335,6 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移与结果操作回流 | `a5f4cb97` |
 | 2026-08-31 | Capture / LongShot / MCP PIMPL 改为 `unique_ptr` | `3e8f854e` |
 | 2026-08-31 | OverlayRenderer 拆出像素合成与分层窗口呈现 | `8c3166ed` |
-| 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | 当前工作区，待提交 |
-| 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | 当前工作区，待提交 |
+| 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | `778cd336` |
+| 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
+| 2026-08-31 | Selection / Annotation Overlay 非模态化，顶层消息泵续接 Workflow | 当前工作区，待提交 |

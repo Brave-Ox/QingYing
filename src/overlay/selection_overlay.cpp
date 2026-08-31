@@ -36,6 +36,9 @@ enum class DragKind { None, Create, Resize, Move };
 struct OverlayWindowData {
   SelectionController controller;
   SelectionCallback callback;
+  SelectionClosedCallback closed_callback;
+  std::atomic<std::uintptr_t>* owner_hwnd{nullptr};
+  bool* destroyed_during_create{nullptr};
   HWND overlay{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
@@ -391,11 +394,15 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case kMsgOverlayAbort: {
       if (data != nullptr) {
         data->callback = {};
+        data->closed_callback = {};
         data->longshot_control_callback = {};
         data->controller.cancel();
         data->action = SelectionAction::None;
       }
-      PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      if (data != nullptr) {
+        (void)transitionOverlayPhase(data->phase, OverlayPhase::Closing);
+      }
+      DestroyWindow(hwnd);
       return 0;
     }
     case WM_SETCURSOR: {
@@ -615,8 +622,27 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         if (callback && result.action != SelectionAction::LongShot) {
           callback(result);
         }
+        SelectionClosedCallback closed_callback =
+            std::move(data->closed_callback);
+        if (closed_callback) {
+          closed_callback();
+        }
+        if (data->owner_hwnd != nullptr) {
+          data->owner_hwnd->store(0);
+        }
+        UnregisterHotKey(hwnd, kEscapeHotkeyId);
       }
       return 0;
+    }
+    case WM_NCDESTROY: {
+      if (data != nullptr) {
+        if (data->destroyed_during_create != nullptr) {
+          *data->destroyed_during_create = true;
+        }
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        delete data;
+      }
+      return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
     default:
       break;
@@ -626,11 +652,20 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 }  // namespace
 
+SelectionOverlay::~SelectionOverlay() {
+  hide();
+}
+
 bool SelectionOverlay::show(const Image& background,
                              SelectionCallback callback,
                              LongShotControlCallback
                                  longshot_control_callback,
-                             const SelectionResult& initial_selection) {
+                             const SelectionResult& initial_selection,
+                             SelectionClosedCallback closed_callback) {
+  if (isVisible()) {
+    return false;
+  }
+
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
   WNDCLASSEXW wc{};
@@ -644,93 +679,58 @@ bool SelectionOverlay::show(const Image& background,
     return false;
   }
 
-  OverlayWindowData data;
-  data.background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
-  data.callback = std::move(callback);
-  data.longshot_control_callback = std::move(longshot_control_callback);
-  data.screen = coord::getVirtualScreen();
-  data.controller.setBounds(data.screen.width, data.screen.height);
+  auto data = std::make_unique<OverlayWindowData>();
+  bool destroyed_during_create = false;
+  data->destroyed_during_create = &destroyed_during_create;
+  data->background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
+  data->callback = std::move(callback);
+  data->closed_callback = std::move(closed_callback);
+  data->longshot_control_callback = std::move(longshot_control_callback);
+  data->owner_hwnd = &overlay_hwnd_;
+  data->screen = coord::getVirtualScreen();
+  data->controller.setBounds(data->screen.width, data->screen.height);
 
   if (!initial_selection.cancelled && initial_selection.width > 0 &&
       initial_selection.height > 0) {
-    data.controller.setSelection(
-        coord::screenToClientX(initial_selection.x, data.screen),
-        coord::screenToClientY(initial_selection.y, data.screen),
+    data->controller.setSelection(
+        coord::screenToClientX(initial_selection.x, data->screen),
+        coord::screenToClientY(initial_selection.y, data->screen),
         initial_selection.width, initial_selection.height);
-    if (!data.controller.selection().cancelled) {
-      (void)transitionOverlayPhase(data.phase, OverlayPhase::Selected);
-      data.annotated_image = initial_selection.annotated_image;
+    if (!data->controller.selection().cancelled) {
+      (void)transitionOverlayPhase(data->phase, OverlayPhase::Selected);
+      data->annotated_image = initial_selection.annotated_image;
     }
   }
 
   // 按 DPI 缩放 UI（100% 为 96 DPI）：手柄命中半径。
-  data.dpi = coord::getSystemDpi();
-  const auto scale = [&](int value) { return MulDiv(value, data.dpi, 96); };
-  data.handle_radius = scale(handles::kHandleHitRadius);
-  data.controller.setHandleRadius(data.handle_radius);
+  data->dpi = coord::getSystemDpi();
+  const auto scale = [&](int value) { return MulDiv(value, data->dpi, 96); };
+  data->handle_radius = scale(handles::kHandleHitRadius);
+  data->controller.setHandleRadius(data->handle_radius);
 
   HWND hwnd = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-      kOverlayClassName, L"", WS_POPUP | WS_VISIBLE, data.screen.left,
-      data.screen.top, data.screen.width, data.screen.height, nullptr, nullptr,
-      instance, &data);
+      kOverlayClassName, L"", WS_POPUP | WS_VISIBLE, data->screen.left,
+      data->screen.top, data->screen.width, data->screen.height, nullptr,
+      nullptr, instance, data.get());
   if (hwnd == nullptr) {
+    if (destroyed_during_create) {
+      data.release();
+    }
     return false;
   }
+  data->destroyed_during_create = nullptr;
+  data.release();
   overlay_hwnd_.store(reinterpret_cast<std::uintptr_t>(hwnd));
 
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
-  // 键盘取消改由临时全局 Esc 热键提供（模态循环退出后注销）。
-  const bool esc_registered =
-      RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE) != FALSE;
+  // 键盘取消改由临时全局 Esc 热键提供，窗口销毁时注销。
+  (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
 
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, kMsgOverlayReady, 0, 0);
-
-  // 模态消息循环：只以当前 Overlay 的生命周期作为退出条件，不借用线程级
-  // WM_QUIT。若应用正在退出，则销毁 Overlay 后把 WM_QUIT 重新交还外层循环。
-  bool quit_requested = false;
-  bool message_error = false;
-  int quit_code = 0;
-  MSG msg{};
-  while (data.phase != OverlayPhase::Closing) {
-    const BOOL message_result = GetMessageW(&msg, nullptr, 0, 0);
-    if (message_result == -1) {
-      message_error = true;
-      break;
-    }
-    if (message_result == 0) {
-      quit_requested = true;
-      quit_code = static_cast<int>(msg.wParam);
-      break;
-    }
-    TranslateMessage(&msg);
-    DispatchMessageW(&msg);
-  }
-
-  if (esc_registered && IsWindow(hwnd)) {
-    UnregisterHotKey(hwnd, kEscapeHotkeyId);
-  }
-
-  overlay_hwnd_.store(0);
-  if (data.phase != OverlayPhase::Closing && IsWindow(hwnd)) {
-    if (overlayPhaseIsLongShot(data.phase) &&
-        data.longshot_control_callback) {
-      data.longshot_control_callback(LongShotControl::Stop);
-    }
-    // Application shutdown and message-loop errors must not dispatch the
-    // partially selected region through the normal capture callback.
-    data.callback = {};
-    data.longshot_control_callback = {};
-    DestroyWindow(hwnd);
-  }
-
-  if (quit_requested) {
-    PostQuitMessage(quit_code);
-  }
-
-  return !quit_requested && !message_error;
+  return true;
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
@@ -772,8 +772,18 @@ bool SelectionOverlay::postLongShotFinished(bool success) {
 void SelectionOverlay::hide() {
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd != nullptr && IsWindow(hwnd)) {
-    PostMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+    const DWORD window_thread = GetWindowThreadProcessId(hwnd, nullptr);
+    if (window_thread == GetCurrentThreadId()) {
+      SendMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+    } else {
+      PostMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+    }
   }
+}
+
+bool SelectionOverlay::isVisible() const noexcept {
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  return hwnd != nullptr && IsWindow(hwnd) != FALSE;
 }
 
 }  // namespace qingying

@@ -46,13 +46,19 @@ void Application::installMessageRouter() {
     }
     if (msg == WM_DESTROY) {
       // The tray window owns the process lifetime. CaptureWorkflow closes any
-      // nested overlays and joins its worker before TrayController posts quit.
+      // non-modal overlays and joins its worker before TrayController posts
+      // quit.
       capture_workflow_.shutdown();
       return false;
     }
     if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {
       capture_workflow_.handleLongShotCompletion(
           static_cast<std::intptr_t>(lparam));
+      *result = 0;
+      return true;
+    }
+    if (msg == WM_QINGYING_WORKFLOW_CONTINUE) {
+      capture_workflow_.continueWorkflow();
       *result = 0;
       return true;
     }

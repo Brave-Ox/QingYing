@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -157,7 +158,10 @@ struct EditorWindowData
   wchar_t tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};
   bool confirmed{false};
   int client_width{0};
-  bool* loop_done{nullptr};
+  HWND* owner_hwnd{nullptr};
+  bool* owner_visible{nullptr};
+  bool* owner_suppress_callback{nullptr};
+  bool* destroyed_during_create{nullptr};
   int image_origin_x{AnnotationEditorFrameInsetPx};
   int image_origin_y{0};
   int image_screen_x{0};
@@ -755,6 +759,10 @@ void tryPromoteInlineEditToDrag(EditorWindowData* data, int client_x,
   invalidateImageArea(data);
 }
 
+bool isCtrlZKey(WPARAM key) {
+  return key == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
 LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
                                         LPARAM lparam)
 {
@@ -822,6 +830,16 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (wparam == VK_ESCAPE)
       {
         cancelInlineText(data);
+        return 0;
+      }
+      if (isCtrlZKey(wparam))
+      {
+        cancelInlineText(data);
+        clearTextSelection(data);
+        if (data->controller.undo(data->session.engine()))
+        {
+          invalidateImageArea(data);
+        }
         return 0;
       }
     }
@@ -3219,7 +3237,9 @@ void finishAndNotify(EditorWindowData* data)
     (void)data->session.finishCancelled(result);
   }
 
-  if (data->callback)
+  if ((data->owner_suppress_callback == nullptr ||
+       !*data->owner_suppress_callback) &&
+      data->callback)
   {
     data->callback(result);
   }
@@ -3481,6 +3501,53 @@ void handleToolCommand(EditorWindowData* data, UINT id)
   syncGeometryButton(data);
 }
 
+bool handleEditorKeyDown(HWND hwnd, EditorWindowData* data, WPARAM key) {
+  if (data == nullptr) {
+    return false;
+  }
+  if (key == VK_ESCAPE) {
+    if (data->stroke_popup != nullptr &&
+        IsWindowVisible(data->stroke_popup) != FALSE) {
+      hideStrokePopup(data);
+      return true;
+    }
+    if (data->inline_edit != nullptr) {
+      cancelInlineText(data);
+      return true;
+    }
+    if (data->text_gesture_active) {
+      resetTextGesture(data);
+      ReleaseCapture();
+      invalidateImageArea(data);
+      return true;
+    }
+    if (data->selected_text_index != kInvalidAnnotationIndex) {
+      clearTextSelection(data);
+      invalidateImageArea(data);
+      return true;
+    }
+    requestClose(data, false);
+    return true;
+  }
+  if ((key == VK_DELETE || key == VK_BACK) && data->inline_edit == nullptr) {
+    if (deleteSelectedTextAnnotation(data)) {
+      return true;
+    }
+  }
+  if (isCtrlZKey(key)) {
+    if (data->inline_edit != nullptr) {
+      cancelInlineText(data);
+    }
+    clearTextSelection(data);
+    if (data->controller.undo(data->session.engine())) {
+      invalidateImageArea(data);
+    }
+    return true;
+  }
+  (void)hwnd;
+  return false;
+}
+
 LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                LPARAM lparam)
 {
@@ -3534,6 +3601,12 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       break;
     }
+    case WM_KEYDOWN:
+      if (handleEditorKeyDown(hwnd, data, wparam))
+      {
+        return 0;
+      }
+      break;
     case WM_CTLCOLOREDIT:
     {
       if (data == nullptr || data->inline_edit == nullptr)
@@ -3816,7 +3889,8 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         cancelInlineText(data);
         resetTextGesture(data);
         clearTextSelection(data);
-        requestClose(data, false);
+        data->confirmed = false;
+        DestroyWindow(hwnd);
       }
       return 0;
     case WM_CLOSE:
@@ -3844,14 +3918,33 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->combo_font = nullptr;
         }
         finishAndNotify(data);
-        if (data->loop_done != nullptr)
+        if (data->owner_hwnd != nullptr)
         {
-          *data->loop_done = true;
+          *data->owner_hwnd = nullptr;
+        }
+        if (data->owner_visible != nullptr)
+        {
+          *data->owner_visible = false;
+        }
+        if (data->owner_suppress_callback != nullptr)
+        {
+          *data->owner_suppress_callback = false;
         }
       }
       return 0;
     default:
       break;
+  }
+
+  if (msg == WM_NCDESTROY)
+  {
+    if (data != nullptr && data->destroyed_during_create != nullptr)
+    {
+      *data->destroyed_during_create = true;
+    }
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+    delete data;
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
   }
 
   return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -3872,16 +3965,12 @@ bool registerEditorClass(HINSTANCE instance)
          GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
-bool isCtrlZ(const MSG& msg)
-{
-  if (msg.message != WM_KEYDOWN || msg.wParam != 'Z')
-  {
-    return false;
-  }
-  return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-}
-
 }  // namespace
+
+AnnotationOverlay::~AnnotationOverlay()
+{
+  closeSilently();
+}
 
 bool AnnotationOverlay::show(HWND owner, const Image& source,
                              AnnotationCallback callback)
@@ -3898,19 +3987,24 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
     return false;
   }
 
-  EditorWindowData data;
-  if (!data.session.begin(source))
+  auto data = std::make_unique<EditorWindowData>();
+  bool destroyed_during_create = false;
+  data->destroyed_during_create = &destroyed_during_create;
+  if (!data->session.begin(source))
   {
     return false;
   }
-  data.client_width = annotationEditorClientWidth(source.width);
-  data.image_origin_x = AnnotationEditorFrameInsetPx;
-  data.image_origin_y = annotationEditorTopInset();
-  data.image_screen_x = data.image_origin_x;
-  data.image_screen_y = data.image_origin_y;
-  data.controller.setCanvasSize(source.width, source.height);
-  data.controller.setTool(AnnotationTool::None);
-  data.callback = std::move(callback);
+  data->client_width = annotationEditorClientWidth(source.width);
+  data->image_origin_x = AnnotationEditorFrameInsetPx;
+  data->image_origin_y = annotationEditorTopInset();
+  data->image_screen_x = data->image_origin_x;
+  data->image_screen_y = data->image_origin_y;
+  data->controller.setCanvasSize(source.width, source.height);
+  data->controller.setTool(AnnotationTool::None);
+  data->callback = std::move(callback);
+  data->owner_hwnd = &m_hwnd;
+  data->owner_visible = &m_visible;
+  data->owner_suppress_callback = &m_suppress_callback;
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   if (!registerEditorClass(instance))
@@ -3924,39 +4018,42 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   const int desk_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
   if (screen_x < 0 || screen_y < 0)
   {
-    data.image_screen_x =
+    data->image_screen_x =
         (std::max)(0, (GetSystemMetrics(SM_CXSCREEN) - source.width) / 2);
-    data.image_screen_y =
+    data->image_screen_y =
         (std::max)(0, (GetSystemMetrics(SM_CYSCREEN) - source.height) / 2);
   }
   else
   {
-    data.image_screen_x = screen_x;
-    data.image_screen_y = screen_y;
+    data->image_screen_x = screen_x;
+    data->image_screen_y = screen_y;
   }
   const AnnotationEditorVirtualDesktopPlacement place =
-      annotationEditorVirtualDesktopPlacement(data.image_screen_x,
-                                              data.image_screen_y, desk_left,
+      annotationEditorVirtualDesktopPlacement(data->image_screen_x,
+                                              data->image_screen_y, desk_left,
                                               desk_top, desk_width, desk_height);
   const int x = place.window_x;
   const int y = place.window_y;
   const int window_width = place.window_width;
   const int window_height = place.window_height;
-  data.image_origin_x = place.image_origin_x;
-  data.image_origin_y = place.image_origin_y;
-  data.client_width = place.window_width;
-
-  bool done = false;
-  data.loop_done = &done;
+  data->image_origin_x = place.image_origin_x;
+  data->image_origin_y = place.image_origin_y;
+  data->client_width = place.window_width;
 
   const DWORD style = WS_POPUP | WS_VISIBLE;
   const HWND hwnd = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kOverlayClassName, L"", style, x, y,
-      window_width, window_height, owner, nullptr, instance, &data);
+      window_width, window_height, owner, nullptr, instance, data.get());
   if (hwnd == nullptr)
   {
+    if (destroyed_during_create)
+    {
+      data.release();
+    }
     return false;
   }
+  data->destroyed_during_create = nullptr;
+  data.release();
 
   m_hwnd = hwnd;
   m_visible = true;
@@ -3965,67 +4062,7 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
   SetForegroundWindow(hwnd);
-
-  MSG msg{};
-  while (!done && GetMessageW(&msg, nullptr, 0, 0) > 0)
-  {
-    if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
-    {
-      if (data.stroke_popup != nullptr &&
-          IsWindowVisible(data.stroke_popup) != FALSE)
-      {
-        hideStrokePopup(&data);
-        continue;
-      }
-      if (data.inline_edit != nullptr)
-      {
-        cancelInlineText(&data);
-        continue;
-      }
-      if (data.text_gesture_active)
-      {
-        resetTextGesture(&data);
-        ReleaseCapture();
-        invalidateImageArea(&data);
-        continue;
-      }
-      if (data.selected_text_index != kInvalidAnnotationIndex)
-      {
-        clearTextSelection(&data);
-        invalidateImageArea(&data);
-        continue;
-      }
-      requestClose(&data, false);
-      continue;
-    }
-    if (msg.message == WM_KEYDOWN &&
-        (msg.wParam == VK_DELETE || msg.wParam == VK_BACK) &&
-        data.inline_edit == nullptr)
-    {
-      if (deleteSelectedTextAnnotation(&data))
-      {
-        continue;
-      }
-    }
-    if (isCtrlZ(msg))
-    {
-      if (data.inline_edit != nullptr)
-      {
-        cancelInlineText(&data);
-      }
-      clearTextSelection(&data);
-      if (data.controller.undo(data.session.engine()))
-      {
-        invalidateImageArea(&data);
-      }
-      continue;
-    }
-    TranslateMessage(&msg);
-    DispatchMessageW(&msg);
-  }
-
-  m_visible = false;
-  m_hwnd = nullptr;
+  SetFocus(hwnd);
   return true;
 }
 
@@ -4033,7 +4070,33 @@ void AnnotationOverlay::hide()
 {
   if (m_hwnd != nullptr)
   {
-    PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
+    m_suppress_callback = false;
+    const DWORD window_thread = GetWindowThreadProcessId(m_hwnd, nullptr);
+    if (window_thread == GetCurrentThreadId())
+    {
+      SendMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+    }
+    else
+    {
+      PostMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+    }
+  }
+}
+
+void AnnotationOverlay::closeSilently()
+{
+  if (m_hwnd != nullptr)
+  {
+    m_suppress_callback = true;
+    const DWORD window_thread = GetWindowThreadProcessId(m_hwnd, nullptr);
+    if (window_thread == GetCurrentThreadId())
+    {
+      SendMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+    }
+    else
+    {
+      PostMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+    }
   }
 }
 

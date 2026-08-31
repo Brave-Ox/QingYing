@@ -73,6 +73,29 @@ TEST(AnnotationOverlayTest, HideOnIdleOverlayIsSafe)
   EXPECT_FALSE(overlay.isVisible());
 }
 
+TEST(AnnotationOverlayTest, ShowReturnsWithoutBlockingAndHideReportsCancel)
+{
+  AnnotationOverlay overlay;
+  Image source = makeStripedCanvas();
+  bool callback_invoked = false;
+  AnnotationFinishResult result;
+
+  ASSERT_TRUE(overlay.show(
+      nullptr, source,
+      [&callback_invoked, &result](const AnnotationFinishResult& finished)
+      {
+        callback_invoked = true;
+        result = finished;
+      }));
+  EXPECT_TRUE(overlay.isVisible());
+
+  overlay.hide();
+  EXPECT_FALSE(overlay.isVisible());
+  ASSERT_TRUE(callback_invoked);
+  EXPECT_TRUE(result.cancelled);
+  EXPECT_TRUE(result.rendered_image.empty());
+}
+
 TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
 {
   // 冒烟图画布仅 320 宽；主栏已无字号，但仍须盖住主栏与二级栏，以免裁掉「完成/取消」。
@@ -765,6 +788,10 @@ TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
                              result = finished;
                            }));
 
+  ASSERT_TRUE(overlay.isVisible());
+  // Non-modal overlays are driven by the application message loop; this test
+  // only checks the create / close lifecycle when explicitly enabled.
+  overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
   if (!result.cancelled)
   {

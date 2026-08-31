@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发清单与技术要点
 
 > 依据立项文档、仓库架构和当前代码整理。
-> 当前提交基线：`master` / `778cd336`（共 68 条提交；本文同时反映当前待提交的 `LongShotController` 调整）；同步日期：2026-08-31。
+> 当前提交基线：`master` / `adeb7c60`（共 69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）；同步日期：2026-08-31。
 > 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
 
 来源：
@@ -37,7 +37,7 @@
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 287 个，286 个执行；282 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
+| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 289 个，288 个执行；284 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -103,6 +103,7 @@
 - [x] `CaptureRegion / Copy / Save / Pin / Status` Handler 注册；
 - [x] `ModernToolbar` 共用选区条 / 标注底栏，GDI+ 与 SVG 路径图标；
 - [x] `SelectionToolbar`、`OverlayPhase` 与 `OverlayRenderer`，选区命令、顶层阶段和像素合成从 `selection_overlay.cpp` 抽离；
+- [x] Selection / Annotation Overlay 改为非模态窗口，统一由 Application 顶层消息循环驱动；
 - [ ] DXGI Desktop Duplication；当前只链接 `d3d11/dxgi`，没有实现 DXGI 捕获路径。
 
 ### P1 — 可用的“截—标”
@@ -114,7 +115,7 @@
 - [x] 标注对象模型和工具状态；
 - [x] 矩形、椭圆、箭头、画笔、文字、马赛克；
 - [x] 撤销 / 重做内核和离屏栅格化；
-- [x] `AnnotationOverlay` 与编辑完成回流到 Session 并自动复制；
+- [x] `AnnotationOverlay` 与编辑完成回流到 Session 并自动复制；窗口采用非模态生命周期，由应用主消息循环驱动；
 - [x] 标注后自动 Copy，并恢复 Save / Pin / 再编辑操作条；
 - [ ] 重做按钮和真实交互验收；
 
@@ -243,7 +244,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；287 个测试已发现，286 个执行，其中 282 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
+- [x] Release 构建；289 个测试已发现，288 个执行，其中 284 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -254,10 +255,10 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 |---|---|---|---|
 | 混合 DPI 坐标错误 | 高 | 物理像素契约、PMv2、坐标单测 | 真实多屏冒烟；必要时按显示器管理 Overlay |
 | 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
-| Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出 | 在 Workflow 阶段非模态化 |
+| Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出；Selection / Annotation 已非模态化 | 继续补状态级和真实窗口验收 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
 | Dispatcher 与工作流边界不清 | 低 | 单步动作走 Handler，多步交互已进入 `CaptureWorkflow` | F8/F9 前类型化 payload 与 operation id |
-| PIMPL 所有权 | 低 | Capture / LongShot / LongShotController / MCP 已改为 `std::unique_ptr<Impl>`；LongShotController 统一 worker 生命周期 | 非模态化后继续检查跨线程消息所有权 |
+| PIMPL 所有权 | 低 | Capture / LongShot / LongShotController / MCP 已改为 `std::unique_ptr<Impl>`；LongShotController 统一 worker 生命周期 | 继续检查跨线程消息所有权 |
 | MCP ↔ 主进程通信 | 中 | 尚未实现 | 本机 Named Pipe、主线程投递、参数校验 |
 | 云端不可用 | 低 | F1～F7 全本地 | F8 本地口令作为默认路径 |
 
@@ -277,8 +278,8 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | 选区 / 标注共用 ModernToolbar 与 SVG 图标 | `b91dbe21` |
 | SelectionToolbar / OverlayPhase、编辑源图上移与结果动作回流 | `a5f4cb97` |
 | PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
-| CaptureWorkflow 收口交互编排 | 当前工作区，待提交 |
-| LongShotController 收口 worker、控制 token 与完成回收 | 当前工作区，待提交 |
+| CaptureWorkflow 收口交互编排 | `778cd336` |
+| LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
 
 提交标题用于定位，最终完成度以当前源码和测试结果为准。
 

@@ -2,16 +2,16 @@
 
 Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 Agent 的本地截图能力提供者（本地口令 / MCP）。
 
-> 当前提交基线：`master` / `778cd336`（68 条提交；本文同时反映当前待提交的 `LongShotController` 调整）
+> 当前提交基线：`master` / `adeb7c60`（69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）
 > 文档同步日期：2026-08-31
-> Release 验证：构建成功，287 个测试已发现，286 个执行；282 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
+> Release 验证：构建成功，289 个测试已发现，288 个执行；284 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
 
 ## 当前能力
 
 - 已打通：全局热键 → 桌面快照遮罩 → 自由框选 / 八点调整 / 窗口吸附 → 区域截图 → 复制 / PNG 保存 / 钉图。
 - 已实现：多 Pin、自动避让排布、拖动与等比例缩放、独立复制 / 保存、截图时临时隐藏 Pin。
 - 已接入：选区“编辑”进入就地标注，支持矩形、椭圆、箭头、画笔、文字、马赛克、撤销；确认后自动复制，并恢复同一选区的结果操作条，可继续保存、钉图或再次编辑。
-- 已调整：选区条抽为 `SelectionToolbar`，交互阶段由 `OverlayPhase` 显式管理；底层仍复用白色圆角 `ModernToolbar`、GDI+、SVG 路径图标和中文 Tooltip。
+- 已调整：选区条抽为 `SelectionToolbar`，交互阶段由 `OverlayPhase` 显式管理；底层仍复用白色圆角 `ModernToolbar`、GDI+、SVG 路径图标和中文 Tooltip；Selection / Annotation Overlay 已改为非模态窗口。
 - 已接入：记事本选区长截图，支持固定选区滚动拼接、实时预览、暂停 / 继续、停止和失败清理。
 - 待实现：F8 本地口令、F9 MCP；`CaptureWindow` 与 `CropCenter` 仍为桩。F3 仍需重做按钮和真实窗口 / DPI 人工验收。
 - 待扩展：资源管理器与 Edge 长截图适配，以及双屏 / 混合 DPI、Pin、长截图的真实人工验收。
@@ -32,7 +32,7 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 - 对外可调用的业务动作以 `ActionDispatcher` 为统一入口；GUI 多步流程统一进入 `CaptureWorkflow`。
 - `Image` 统一为 BGRA32、行优先、物理像素；当前结果经 `CaptureSession` 在 Capture / Copy / Save / Pin 之间流转。
 - 当前区域捕获使用 GDI `BitBlt`；DXGI 仅保留链接和后续实现位置。
-- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、`CaptureWorkflow`、`LongShotController`、编辑源图上移、`overlay → capture / annotate` 依赖移除和 PIMPL RAII。后续见 [架构如何调整](./docs/架构如何调整.md)：非模态消息循环。
+- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、`CaptureWorkflow`、`LongShotController`、编辑源图上移、`overlay → capture / annotate` 依赖移除、PIMPL RAII 和 Overlay 非模态消息循环。后续见 [架构如何调整](./docs/架构如何调整.md)：重做按钮、人工验收与 F8/F9 契约。
 
 ## 构建与测试
 
@@ -53,7 +53,7 @@ build.bat notest          :: 不编译测试
 2026-08-31 本机 Release 结果：
 
 - `qingying.exe`：219,648 字节（约 0.21 MiB，仅指当前 EXE 文件）；
-- CTest 发现 287 个用例，其中 286 个执行：282 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- CTest 发现 289 个用例，其中 288 个执行：284 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
 - 常驻内存、热键唤起时延和完整绿色交付包体积仍需专项测量，不能由编译结果代替。
 
 GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
@@ -93,6 +93,6 @@ src/longshot        记事本选区滚动拼接
 src/export          剪贴板与 WIC PNG
 src/command         本地口令桩，F8 待实现
 src/mcp             MCP Bridge 桩，F9 待实现
-tests/              GoogleTest（当前 287 个已发现用例，1 个显式禁用）
+tests/              GoogleTest（当前 289 个已发现用例，1 个显式禁用）
 docs/               架构、进度、分工与整改文档
 ```
