@@ -13,11 +13,32 @@ inline constexpr int AnnotationEditorButtonGap = 4;
 inline constexpr int AnnotationEditorBarPadding = 8;
 inline constexpr int AnnotationEditorDividerGap = 10;
 inline constexpr int AnnotationEditorDividerCount = 2;
+inline constexpr int AnnotationEditorMoveButtonCount = 1;  // 左侧拖动把手
 inline constexpr int AnnotationEditorToolButtonCount =
     6;  // 几何/箭头/画笔/马赛克/文字/撤销
 inline constexpr int AnnotationEditorActionButtonCount = 2;  // 完成/取消
+inline constexpr int AnnotationEditorChromeImageGap = 8;
+inline constexpr int AnnotationEditorChromeStackGap = 6;
 inline constexpr int AnnotationEditorFontComboWidth = 52;
 inline constexpr int AnnotationEditorFontComboDropHeight = 200;
+inline constexpr int AnnotationEditorStrokeChipIconWidth = 22;
+inline constexpr int AnnotationEditorStrokeChipValueWidth = 28;
+inline constexpr int AnnotationEditorStrokeChipWidth =
+    AnnotationEditorStrokeChipIconWidth + AnnotationEditorStrokeChipValueWidth;
+inline constexpr int AnnotationEditorStrokePopupWidth = 280;
+inline constexpr int AnnotationEditorStrokePopupHeight = 72;
+inline constexpr int AnnotationEditorStrokePopupCornerRadius =
+    (AnnotationEditorButtonHeight + AnnotationEditorBarPadding * 2) / 2;
+inline constexpr int AnnotationEditorStrokePopupPadX = 12;
+inline constexpr int AnnotationEditorStrokePopupPadY = 10;
+inline constexpr int AnnotationEditorStrokePopupLabelWidth = 36;
+inline constexpr int AnnotationEditorStrokePopupValueWidth = 36;
+inline constexpr int AnnotationEditorStrokePopupHintHeight = 22;
+inline constexpr int AnnotationEditorStrokeSliderHeight = 16;
+inline constexpr int AnnotationEditorStrokeSliderThumbPx = 12;
+inline constexpr int AnnotationEditorStrokeSliderMinExtentPx = 1;
+inline constexpr int AnnotationEditorStrokeWidthParseMaxDigits = 4;
+inline constexpr float AnnotationEditorStrokeWidthRoundBias = 0.5f;
 inline constexpr int AnnotationEditorFontSizeOptionCount = 4;
 inline constexpr int AnnotationEditorFontSizeOptions[
     AnnotationEditorFontSizeOptionCount] = {12, 16, 24, 32};
@@ -32,9 +53,10 @@ inline constexpr int AnnotationEditorSizeLabelHeightPx = 18;
 inline constexpr int AnnotationEditorSizeLabelGapPx = 2;
 inline constexpr int AnnotationEditorHandleCount = 8;
 inline constexpr int AnnotationEditorInlineEditMinWidth = 80;
-inline constexpr int AnnotationEditorInlineEditMaxWidth = 220;
 inline constexpr int AnnotationEditorInlineEditHeightPad = 10;
 inline constexpr int AnnotationEditorInlineEditTextPadX = 8;
+inline constexpr int AnnotationEditorInlineEditCaretPadPx = 8;
+inline constexpr int AnnotationEditorInlineEditGlyphPadPx = 8;
 inline constexpr int AnnotationEditorInlineEditBorderPx = 1;
 inline constexpr int AnnotationEditorTextChromePadPx = 4;
 inline constexpr int AnnotationEditorTextDeleteButtonPx = 16;
@@ -42,9 +64,9 @@ inline constexpr int AnnotationEditorTextDeleteButtonPx = 16;
 inline constexpr int AnnotationEditorButtonCount =
     AnnotationEditorToolButtonCount + AnnotationEditorActionButtonCount;
 
-// 主栏只放工具与动作，字号在二级栏。
+// 主栏：拖动把手 + 工具 + 动作；字号在二级栏。
 inline constexpr int AnnotationEditorToolbarControlCount =
-    AnnotationEditorButtonCount;
+    AnnotationEditorMoveButtonCount + AnnotationEditorButtonCount;
 
 inline int annotationEditorToolbarHeight()
 {
@@ -60,6 +82,7 @@ inline int annotationEditorDividerExtra()
 inline int annotationEditorMainToolbarWidth()
 {
   return AnnotationEditorBarPadding * 2 +
+         AnnotationEditorMoveButtonCount * AnnotationEditorButtonWidth +
          AnnotationEditorToolButtonCount * AnnotationEditorButtonWidth +
          AnnotationEditorActionButtonCount * AnnotationEditorButtonWidth +
          (AnnotationEditorToolbarControlCount - 1) * AnnotationEditorButtonGap +
@@ -81,8 +104,7 @@ inline int annotationEditorPropertyBarWidth()
   const int colors_width =
       AnnotationStylePresetColorCount * AnnotationEditorColorSwatchSize +
       (AnnotationStylePresetColorCount - 1) * AnnotationEditorButtonGap;
-  const int stroke_width =
-      annotationEditorButtonsWidth(AnnotationStylePresetStrokeCount);
+  const int stroke_width = AnnotationEditorStrokeChipWidth;
   const int shape_width = annotationEditorButtonsWidth(2);
   const int fill_width = AnnotationEditorButtonWidth;
   const int line_style_width =
@@ -177,6 +199,96 @@ inline int annotationEditorClampMosaicBlockSize(int block_size)
   return clampMosaicBlockSize(block_size);
 }
 
+inline int annotationEditorClampStrokeWidthPx(int width)
+{
+  const int min_width = static_cast<int>(MinStrokeWidth);
+  const int max_width = static_cast<int>(MaxStrokeWidth);
+  if (width < min_width)
+  {
+    return min_width;
+  }
+  if (width > max_width)
+  {
+    return max_width;
+  }
+  return width;
+}
+
+inline int annotationEditorStrokeWidthPx(float width)
+{
+  int value = static_cast<int>(width);
+  if (width - static_cast<float>(value) >= AnnotationEditorStrokeWidthRoundBias)
+  {
+    ++value;
+  }
+  return annotationEditorClampStrokeWidthPx(value);
+}
+
+inline int annotationEditorStepStrokeWidth(int current, int steps)
+{
+  return annotationEditorClampStrokeWidthPx(current + steps);
+}
+
+inline bool annotationEditorParseStrokeWidthText(const wchar_t* text,
+                                                 int& out_width)
+{
+  if (text == nullptr || text[0] == L'\0')
+  {
+    return false;
+  }
+
+  int value = 0;
+  int digits = 0;
+  for (const wchar_t* cursor = text; *cursor != L'\0'; ++cursor)
+  {
+    if (*cursor < L'0' || *cursor > L'9')
+    {
+      return false;
+    }
+    ++digits;
+    if (digits > AnnotationEditorStrokeWidthParseMaxDigits)
+    {
+      return false;
+    }
+    value = value * 10 + static_cast<int>(*cursor - L'0');
+  }
+  out_width = annotationEditorClampStrokeWidthPx(value);
+  return true;
+}
+
+inline int annotationEditorStrokeSliderValue(int x, int slider_left,
+                                             int slider_width)
+{
+  const int min_width = static_cast<int>(MinStrokeWidth);
+  const int max_width = static_cast<int>(MaxStrokeWidth);
+  if (slider_width <= 0)
+  {
+    return min_width;
+  }
+
+  int pos = x - slider_left;
+  if (pos < 0)
+  {
+    pos = 0;
+  }
+  if (pos > slider_width)
+  {
+    pos = slider_width;
+  }
+  const int span = max_width - min_width;
+  return min_width + (pos * span + slider_width / 2) / slider_width;
+}
+
+inline int annotationEditorStrokeSliderX(int value, int slider_left,
+                                         int slider_width)
+{
+  const int min_width = static_cast<int>(MinStrokeWidth);
+  const int max_width = static_cast<int>(MaxStrokeWidth);
+  const int clamped = annotationEditorClampStrokeWidthPx(value);
+  const int span = max_width - min_width;
+  return slider_left + (clamped - min_width) * slider_width / span;
+}
+
 inline int annotationEditorPropertyBarHeight(AnnotationTool tool)
 {
   return annotationEditorShowsPropertyBar(tool)
@@ -186,8 +298,69 @@ inline int annotationEditorPropertyBarHeight(AnnotationTool tool)
 
 inline int annotationEditorChromeHeight(AnnotationTool tool)
 {
-  return annotationEditorToolbarHeight() +
-         annotationEditorPropertyBarHeight(tool);
+  const int main_height =
+      AnnotationEditorChromeImageGap + annotationEditorToolbarHeight();
+  const int property_height = annotationEditorPropertyBarHeight(tool);
+  if (property_height <= 0)
+  {
+    return main_height;
+  }
+  return main_height + AnnotationEditorChromeStackGap + property_height;
+}
+
+inline int annotationEditorChromeSpanWidth(int main_width, int property_width)
+{
+  return (std::max)(main_width, (std::max)(0, property_width));
+}
+
+inline void annotationEditorClampRectOrigin(int& x, int& y, int width,
+                                            int height, int bound_left,
+                                            int bound_top, int bound_right,
+                                            int bound_bottom)
+{
+  const int min_x = bound_left;
+  int max_x = bound_right - (std::max)(1, width);
+  if (max_x < min_x)
+  {
+    max_x = min_x;
+  }
+  const int min_y = bound_top;
+  int max_y = bound_bottom - (std::max)(1, height);
+  if (max_y < min_y)
+  {
+    max_y = min_y;
+  }
+  if (x < min_x)
+  {
+    x = min_x;
+  }
+  if (x > max_x)
+  {
+    x = max_x;
+  }
+  if (y < min_y)
+  {
+    y = min_y;
+  }
+  if (y > max_y)
+  {
+    y = max_y;
+  }
+}
+
+// 按屏幕坐标钳制功能栏：可离开图片，但整条栏仍留在 bound 矩形内（通常是虚拟屏）。
+inline void annotationEditorClampChromeOffset(int& offset_x, int& offset_y,
+                                              int default_x, int default_y,
+                                              int bar_width, int chrome_height,
+                                              int bound_left, int bound_top,
+                                              int bound_right, int bound_bottom)
+{
+  int x = default_x + offset_x;
+  int y = default_y + offset_y;
+  annotationEditorClampRectOrigin(x, y, bar_width, chrome_height, bound_left,
+                                  bound_top, bound_right, bound_bottom);
+  offset_x = x - default_x;
+  offset_y = y - default_y;
 }
 
 inline int annotationEditorTopInset()
@@ -220,12 +393,25 @@ inline int annotationEditorInlineEditHeight(int font_size)
   return font_size + AnnotationEditorInlineEditHeightPad;
 }
 
+inline int annotationEditorInlineEditPaddedExtent(int text_extent_px)
+{
+  const int extent = (std::max)(0, text_extent_px);
+  return extent + AnnotationEditorInlineEditTextPadX * 2 +
+         AnnotationEditorInlineEditCaretPadPx +
+         AnnotationEditorInlineEditGlyphPadPx;
+}
+
+inline bool annotationEditorInlineEditNeedsHScroll(int text_extent_px,
+                                                   int remain_width)
+{
+  return annotationEditorInlineEditPaddedExtent(text_extent_px) >
+         (std::max)(1, remain_width);
+}
+
 inline int annotationEditorInlineEditWidth(int text_extent_px, int remain_width)
 {
-  const int padded =
-      text_extent_px + AnnotationEditorInlineEditTextPadX * 2;
-  int width = (std::max)(AnnotationEditorInlineEditMinWidth, padded);
-  width = (std::min)(width, AnnotationEditorInlineEditMaxWidth);
+  int width = (std::max)(AnnotationEditorInlineEditMinWidth,
+                         annotationEditorInlineEditPaddedExtent(text_extent_px));
   width = (std::min)(width, remain_width);
   return (std::max)(1, width);
 }
@@ -244,6 +430,51 @@ struct AnnotationEditorRect
   int right{0};
   int bottom{0};
 };
+
+struct AnnotationEditorStrokePopupLayout
+{
+  AnnotationEditorRect label{};
+  AnnotationEditorRect slider{};
+  AnnotationEditorRect value{};
+  AnnotationEditorRect hint{};
+};
+
+inline AnnotationEditorStrokePopupLayout annotationEditorStrokePopupLayout()
+{
+  AnnotationEditorStrokePopupLayout layout{};
+  const int row_bottom = AnnotationEditorStrokePopupHeight -
+                         AnnotationEditorStrokePopupPadY -
+                         AnnotationEditorStrokePopupHintHeight;
+  layout.label.left = AnnotationEditorStrokePopupPadX;
+  layout.label.top = AnnotationEditorStrokePopupPadY;
+  layout.label.right =
+      AnnotationEditorStrokePopupPadX + AnnotationEditorStrokePopupLabelWidth;
+  layout.label.bottom = row_bottom;
+
+  layout.value.right =
+      AnnotationEditorStrokePopupWidth - AnnotationEditorStrokePopupPadX;
+  layout.value.left =
+      layout.value.right - AnnotationEditorStrokePopupValueWidth;
+  layout.value.top = AnnotationEditorStrokePopupPadY;
+  layout.value.bottom = row_bottom;
+
+  layout.slider.left = layout.label.right + AnnotationEditorButtonGap;
+  layout.slider.right = layout.value.left - AnnotationEditorButtonGap;
+  const int slider_pad =
+      (row_bottom - AnnotationEditorStrokePopupPadY -
+       AnnotationEditorStrokeSliderHeight) /
+      2;
+  layout.slider.top = AnnotationEditorStrokePopupPadY + slider_pad;
+  layout.slider.bottom = layout.slider.top + AnnotationEditorStrokeSliderHeight;
+
+  layout.hint.left = AnnotationEditorStrokePopupPadX;
+  layout.hint.top = row_bottom;
+  layout.hint.right =
+      AnnotationEditorStrokePopupWidth - AnnotationEditorStrokePopupPadX;
+  layout.hint.bottom =
+      AnnotationEditorStrokePopupHeight - AnnotationEditorStrokePopupPadY;
+  return layout;
+}
 
 struct AnnotationEditorTextChrome
 {
@@ -366,7 +597,7 @@ inline void annotationEditorHandlePoints(int origin_x, int origin_y,
 }
 
 // 就地编辑窗口摆放：图片客户区左上角必须等于选区左上角。
-// 工具栏可伸出屏幕外；禁止为塞进屏幕而平移图片（那会造成「框选区 ≠ 编辑区」）。
+// 功能栏可在屏幕内任意移动；禁止为塞进屏幕而平移图片（那会造成「框选区 ≠ 编辑区」）。
 struct AnnotationEditorInPlacePlacement
 {
   int window_x{0};
@@ -388,6 +619,94 @@ inline AnnotationEditorInPlacePlacement annotationEditorInPlacePlacement(
   placement.window_y = screen_y - placement.image_origin_y;
   placement.window_width = annotationEditorClientWidth(image_width);
   placement.window_height = annotationEditorWindowHeight(image_height, tool);
+  return placement;
+}
+
+struct AnnotationEditorVirtualDesktopPlacement
+{
+  int window_x{0};
+  int window_y{0};
+  int window_width{0};
+  int window_height{0};
+  int image_origin_x{0};
+  int image_origin_y{0};
+};
+
+// 铺满虚拟屏：图片原点只由选区屏幕坐标决定，与功能栏位置无关，避免拖栏时 SetWindowPos 造成截图框抖动。
+inline AnnotationEditorVirtualDesktopPlacement
+annotationEditorVirtualDesktopPlacement(int image_screen_x, int image_screen_y,
+                                        int desktop_left, int desktop_top,
+                                        int desktop_width, int desktop_height)
+{
+  AnnotationEditorVirtualDesktopPlacement placement{};
+  placement.window_x = desktop_left;
+  placement.window_y = desktop_top;
+  placement.window_width = (std::max)(1, desktop_width);
+  placement.window_height = (std::max)(1, desktop_height);
+  placement.image_origin_x = image_screen_x - desktop_left;
+  placement.image_origin_y = image_screen_y - desktop_top;
+  return placement;
+}
+
+inline AnnotationEditorRect annotationEditorImageFrameScreenRect(
+    int image_screen_x, int image_screen_y, int image_width, int image_height)
+{
+  AnnotationEditorRect rect{};
+  rect.left = image_screen_x - AnnotationEditorFrameInsetPx;
+  rect.top = image_screen_y - annotationEditorTopInset();
+  rect.right = image_screen_x + image_width + AnnotationEditorFrameInsetPx;
+  rect.bottom = image_screen_y + image_height + AnnotationEditorFrameInsetPx;
+  return rect;
+}
+
+inline AnnotationEditorRect annotationEditorUnionRect(
+    const AnnotationEditorRect& first, const AnnotationEditorRect& second)
+{
+  AnnotationEditorRect result{};
+  result.left = (std::min)(first.left, second.left);
+  result.top = (std::min)(first.top, second.top);
+  result.right = (std::max)(first.right, second.right);
+  result.bottom = (std::max)(first.bottom, second.bottom);
+  return result;
+}
+
+struct AnnotationEditorChromeHostPlacement
+{
+  int window_x{0};
+  int window_y{0};
+  int window_width{0};
+  int window_height{0};
+  int image_origin_x{0};
+  int image_origin_y{0};
+  int chrome_client_x{0};
+  int chrome_client_y{0};
+};
+
+// 宿主窗覆盖「图片外框 ∪ 功能栏」，图片屏幕坐标保持不变。
+inline AnnotationEditorChromeHostPlacement annotationEditorChromeHostPlacement(
+    int image_screen_x, int image_screen_y, int image_width, int image_height,
+    int chrome_screen_x, int chrome_screen_y, int chrome_width,
+    int chrome_height)
+{
+  const AnnotationEditorRect image_box = annotationEditorImageFrameScreenRect(
+      image_screen_x, image_screen_y, image_width, image_height);
+  AnnotationEditorRect chrome_box{};
+  chrome_box.left = chrome_screen_x;
+  chrome_box.top = chrome_screen_y;
+  chrome_box.right = chrome_screen_x + (std::max)(1, chrome_width);
+  chrome_box.bottom = chrome_screen_y + (std::max)(1, chrome_height);
+  const AnnotationEditorRect host =
+      annotationEditorUnionRect(image_box, chrome_box);
+
+  AnnotationEditorChromeHostPlacement placement{};
+  placement.window_x = host.left;
+  placement.window_y = host.top;
+  placement.window_width = (std::max)(1, host.right - host.left);
+  placement.window_height = (std::max)(1, host.bottom - host.top);
+  placement.image_origin_x = image_screen_x - placement.window_x;
+  placement.image_origin_y = image_screen_y - placement.window_y;
+  placement.chrome_client_x = chrome_screen_x - placement.window_x;
+  placement.chrome_client_y = chrome_screen_y - placement.window_y;
   return placement;
 }
 

@@ -15,6 +15,7 @@
 #include "qingying/overlay/mask_renderer.hpp"
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"
+#include "qingying/ui/modern_toolbar.hpp"
 #include "qingying/window/window_detector.hpp"
 
 namespace qingying {
@@ -29,16 +30,14 @@ constexpr UINT kToolbarButtonEdit = 3;
 constexpr UINT kToolbarButtonPin = 4;
 constexpr UINT kToolbarButtonLongShot = 5;
 constexpr UINT kToolbarButtonLongShotStop = 6;
+constexpr int kSelectionToolbarItemCount = 6;
+constexpr int kToolbarDividerPadExtraPx = 6;
 constexpr UINT kMsgLongShotPreview = WM_APP + 3;
 constexpr UINT kMsgLongShotFinished = WM_APP + 4;
 constexpr UINT kMsgOverlayAbort = WM_APP + 5;
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
-constexpr int kToolbarButtonWidth = 82;
-constexpr int kToolbarButtonHeight = 30;
-constexpr int kToolbarButtonGap = 4;
-constexpr int kToolbarPadding = 4;
 constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
 constexpr std::uint32_t kHoverPixel = 0xFF00B4FFu;   // 窗口吸附悬停高亮：亮蓝
 constexpr int kHoverThickness = 3;
@@ -50,6 +49,14 @@ const wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
+
+struct ToolbarItem
+{
+  UINT id{0};
+  ToolbarIconKind icon{ToolbarIconKind::Copy};
+  bool enabled{true};
+  RECT rect{};
+};
 
 // SelectionController 等 UI 状态通过窗口属性（WindowLongPtr）附加到窗口，
 // 供 WndProc 在处理消息时访问，避免全局/静态可变量。
@@ -65,10 +72,6 @@ struct OverlayWindowData {
   // 按 DPI 缩放后的 UI 尺寸（100% 时等于基准常量）。
   int dpi{96};
   int handle_radius{handles::kHandleHitRadius};
-  int toolbar_button_w{kToolbarButtonWidth};
-  int toolbar_button_h{kToolbarButtonHeight};
-  int toolbar_button_gap{kToolbarButtonGap};
-  int toolbar_padding{kToolbarPadding};
   SelectionHandle active_handle{SelectionHandle::None};
   WindowDetector window_detector;  // 窗口吸附检测
   bool has_hover{false};           // 是否悬停在可吸附窗口上
@@ -81,12 +84,11 @@ struct OverlayWindowData {
   SelectionAction longshot_pending_action{SelectionAction::None};
   bool closed{false};
   bool capture_passthrough{false};
-  HWND longshot_button{nullptr};
-  HWND longshot_stop_button{nullptr};
-  HWND copy_button{nullptr};
-  HWND save_button{nullptr};
-  HWND pin_button{nullptr};
-  HWND edit_button{nullptr};
+  ToolbarItem toolbar_items[kSelectionToolbarItemCount]{};
+  int toolbar_hover{-1};
+  int toolbar_divider_x{0};
+  HWND tooltip{nullptr};
+  wchar_t tooltip_text[kSelectionToolbarItemCount][kToolbarTooltipMaxChars]{};
   Image longshot_preview;
   Image annotated_image;
   bool freeze_backdrop{false};
@@ -136,7 +138,7 @@ struct ScreenHdcDeleter {
 };
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
-const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbar";
+const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbarV3";
 
 void destroyToolbar(OverlayWindowData* data) {
   if (data == nullptr || data->toolbar == nullptr) {
@@ -147,40 +149,155 @@ void destroyToolbar(OverlayWindowData* data) {
   DestroyWindow(toolbar);
 }
 
-void setLongShotButtons(OverlayWindowData* data) {
-  if (data == nullptr) {
+void layoutSelectionToolbarItems(OverlayWindowData* data, int width,
+                                 int height)
+{
+  if (data == nullptr)
+  {
     return;
   }
-  if (data->longshot_button != nullptr) {
-    SetWindowTextW(data->longshot_button,
-                   data->longshot_active
-                       ? (data->longshot_paused ? L"继续" : L"暂停")
-                       : L"长截图");
-    EnableWindow(data->longshot_button,
-                 data->longshot_finishing ? FALSE : TRUE);
+
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const int y = (height - metrics.item_size) / 2;
+  int x = metrics.bar_padding;
+  const ToolbarItem seed[kSelectionToolbarItemCount] = {
+      {kToolbarButtonCopy, ToolbarIconKind::Copy, true, {}},
+      {kToolbarButtonSave, ToolbarIconKind::Save, true, {}},
+      {kToolbarButtonLongShot, ToolbarIconKind::LongShot, true, {}},
+      {kToolbarButtonEdit, ToolbarIconKind::Edit, true, {}},
+      {kToolbarButtonPin, ToolbarIconKind::Pin, true, {}},
+      {kToolbarButtonLongShotStop, ToolbarIconKind::Stop, false, {}},
+  };
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    data->toolbar_items[i] = seed[i];
+    data->toolbar_items[i].rect = {x, y, x + metrics.item_size,
+                                   y + metrics.item_size};
+    x += metrics.item_size + metrics.gap;
+    if (i == 1)
+    {
+      data->toolbar_divider_x = x - metrics.gap + metrics.divider_gap / 2;
+      x += metrics.divider_gap - metrics.gap;
+    }
   }
-  if (data->longshot_stop_button != nullptr) {
-    SetWindowTextW(data->longshot_stop_button,
-                   data->longshot_finishing ? L"停止中" : L"停止");
-    EnableWindow(data->longshot_stop_button,
-                 data->longshot_active && !data->longshot_finishing);
+  (void)width;
+}
+
+int hitTestToolbarItem(const OverlayWindowData* data, int x, int y)
+{
+  if (data == nullptr)
+  {
+    return -1;
   }
+  const POINT pt{x, y};
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    if (PtInRect(&data->toolbar_items[i].rect, pt) != FALSE)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void bindSelectionToolbarTooltips(OverlayWindowData* data, HWND hwnd)
+{
+  if (data == nullptr || hwnd == nullptr)
+  {
+    return;
+  }
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    const ToolbarItem& item = data->toolbar_items[i];
+    const wchar_t* label = toolbarIconLabel(item.icon);
+    if (item.id == kToolbarButtonLongShotStop && data->longshot_finishing)
+    {
+      label = L"\x505C\x6B62\x4E2D";
+    }
+    bindToolbarTooltip(data->tooltip, hwnd, item.id, item.rect, label,
+                       data->tooltip_text[i], kToolbarTooltipMaxChars);
+  }
+}
+
+void setLongShotButtons(OverlayWindowData* data)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
   const bool actions_enabled =
       !data->longshot_active ||
       (data->longshot_paused && !data->longshot_finishing);
-  const BOOL enabled = actions_enabled ? TRUE : FALSE;
-  if (data->copy_button != nullptr) {
-    EnableWindow(data->copy_button, enabled);
+  ToolbarIconKind longshot_icon = ToolbarIconKind::LongShot;
+  if (data->longshot_active)
+  {
+    longshot_icon =
+        data->longshot_paused ? ToolbarIconKind::Resume : ToolbarIconKind::Pause;
   }
-  if (data->save_button != nullptr) {
-    EnableWindow(data->save_button, enabled);
+
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    ToolbarItem& item = data->toolbar_items[i];
+    switch (item.id)
+    {
+      case kToolbarButtonCopy:
+      case kToolbarButtonSave:
+      case kToolbarButtonEdit:
+      case kToolbarButtonPin:
+        item.enabled = actions_enabled;
+        break;
+      case kToolbarButtonLongShot:
+        item.icon = longshot_icon;
+        item.enabled = !data->longshot_finishing;
+        break;
+      case kToolbarButtonLongShotStop:
+        item.icon = ToolbarIconKind::Stop;
+        item.enabled = data->longshot_active && !data->longshot_finishing;
+        break;
+      default:
+        break;
+    }
   }
-  if (data->pin_button != nullptr) {
-    EnableWindow(data->pin_button, enabled);
+
+  if (data->toolbar != nullptr)
+  {
+    bindSelectionToolbarTooltips(data, data->toolbar);
+    InvalidateRect(data->toolbar, nullptr, FALSE);
   }
-  if (data->edit_button != nullptr) {
-    EnableWindow(data->edit_button, enabled);
+}
+
+void paintSelectionToolbar(HWND hwnd, OverlayWindowData* data)
+{
+  if (hwnd == nullptr || data == nullptr)
+  {
+    return;
   }
+
+  PAINTSTRUCT ps{};
+  const HDC hdc = BeginPaint(hwnd, &ps);
+  if (hdc == nullptr)
+  {
+    return;
+  }
+
+  RECT client{};
+  GetClientRect(hwnd, &client);
+  fillToolbarColorKey(hdc, client);
+  drawToolbarBar(hdc, client);
+
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const int divider_pad = metrics.bar_padding + kToolbarDividerPadExtraPx;
+  drawToolbarDivider(hdc, data->toolbar_divider_x, client.top + divider_pad,
+                     client.bottom - divider_pad);
+
+  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
+  {
+    const ToolbarItem& item = data->toolbar_items[i];
+    drawToolbarItem(hdc, item.rect, item.icon, i == data->toolbar_hover, false,
+                    item.enabled, false);
+  }
+  EndPaint(hwnd, &ps);
 }
 
 void requestLongShotStop(OverlayWindowData* data) {
@@ -325,58 +442,96 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y) {
 }
 
 LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                LPARAM lparam) {
+                                LPARAM lparam)
+{
   OverlayWindowData* data = reinterpret_cast<OverlayWindowData*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
-  switch (msg) {
-    case WM_NCCREATE: {
+  switch (msg)
+  {
+    case WM_NCCREATE:
+    {
       const CREATESTRUCTW* cs = reinterpret_cast<const CREATESTRUCTW*>(lparam);
       data = static_cast<OverlayWindowData*>(cs->lpCreateParams);
-      SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                        reinterpret_cast<LONG_PTR>(data));
-      if (data != nullptr) {
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
+      if (data != nullptr)
+      {
         data->toolbar = hwnd;
       }
       return TRUE;
     }
-    case WM_CREATE: {
-      if (data == nullptr) {
+    case WM_CREATE:
+    {
+      if (data == nullptr)
+      {
         return -1;
       }
-      const HINSTANCE instance = GetModuleHandleW(nullptr);
-      const DWORD button_style = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
-      const int y = data->toolbar_padding;
-      int x = data->toolbar_padding;
-      const auto createButton = [&](const wchar_t* label, UINT id,
-                                    bool enabled) -> HWND {
-        HWND button = CreateWindowExW(
-            0, L"BUTTON", label, button_style, x, y, data->toolbar_button_w,
-            data->toolbar_button_h, hwnd,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance,
-            nullptr);
-        x += data->toolbar_button_w + data->toolbar_button_gap;
-        if (button != nullptr && !enabled) {
-          EnableWindow(button, FALSE);
-        }
-        return button;
-      };
-
-      data->copy_button = createButton(L"复制", kToolbarButtonCopy, true);
-      data->save_button = createButton(L"下载图片", kToolbarButtonSave, true);
-      data->longshot_button =
-          createButton(L"长截图", kToolbarButtonLongShot, true);
-      data->edit_button = createButton(L"编辑", kToolbarButtonEdit, true);
-      data->pin_button = createButton(L"钉图", kToolbarButtonPin, true);
-      data->longshot_stop_button =
-          createButton(L"停止", kToolbarButtonLongShotStop, false);
+      RECT client{};
+      GetClientRect(hwnd, &client);
+      layoutSelectionToolbarItems(data, client.right - client.left,
+                                  client.bottom - client.top);
+      applyToolbarColorKey(hwnd);
+      const HRGN region = CreateRoundRectRgn(
+          0, 0, client.right + 1, client.bottom + 1,
+          DefaultModernToolbarMetrics.corner_radius * 2,
+          DefaultModernToolbarMetrics.corner_radius * 2);
+      if (region != nullptr)
+      {
+        SetWindowRgn(hwnd, region, TRUE);
+      }
+      data->tooltip = createToolbarTooltip(hwnd);
+      setLongShotButtons(data);
       return 0;
     }
-    case WM_COMMAND: {
-      if (data == nullptr || HIWORD(wparam) != BN_CLICKED) {
+    case WM_PAINT:
+      paintSelectionToolbar(hwnd, data);
+      return 0;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_MOUSEMOVE:
+    {
+      if (data == nullptr)
+      {
         return 0;
       }
-      switch (LOWORD(wparam)) {
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      const int hit = hitTestToolbarItem(data, x, y);
+      if (hit != data->toolbar_hover)
+      {
+        data->toolbar_hover = hit;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      TRACKMOUSEEVENT track{};
+      track.cbSize = sizeof(track);
+      track.dwFlags = TME_LEAVE;
+      track.hwndTrack = hwnd;
+      TrackMouseEvent(&track);
+      return 0;
+    }
+    case WM_MOUSELEAVE:
+      if (data != nullptr && data->toolbar_hover >= 0)
+      {
+        data->toolbar_hover = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+    case WM_LBUTTONUP:
+    {
+      if (data == nullptr)
+      {
+        return 0;
+      }
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      const int hit = hitTestToolbarItem(data, x, y);
+      if (hit < 0 || hit >= kSelectionToolbarItemCount ||
+          !data->toolbar_items[hit].enabled)
+      {
+        return 0;
+      }
+      switch (data->toolbar_items[hit].id)
+      {
         case kToolbarButtonCopy:
           chooseToolbarAction(data, SelectionAction::Copy);
           break;
@@ -401,14 +556,21 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     }
     case WM_KEYDOWN:
-      if (data != nullptr && wparam == VK_ESCAPE) {
+      if (data != nullptr && wparam == VK_ESCAPE)
+      {
         data->controller.cancel();
         data->action = SelectionAction::None;
         PostMessageW(data->overlay, WM_CLOSE, 0, 0);
       }
       return 0;
     case WM_DESTROY:
-      if (data != nullptr && data->toolbar == hwnd) {
+      if (data != nullptr && data->toolbar == hwnd)
+      {
+        if (data->tooltip != nullptr)
+        {
+          DestroyWindow(data->tooltip);
+          data->tooltip = nullptr;
+        }
         data->toolbar = nullptr;
       }
       return 0;
@@ -420,21 +582,22 @@ LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection_screen,
-                 const coord::VirtualScreenRect& screen) {
-  if (data == nullptr) {
+                 const coord::VirtualScreenRect& screen)
+{
+  if (data == nullptr)
+  {
     return false;
   }
 
-  const int button_count = 5;
-  const int toolbar_width =
-      data->toolbar_padding * 2 + button_count * data->toolbar_button_w +
-      (button_count - 1) * data->toolbar_button_gap;
-  const int toolbar_height =
-      data->toolbar_padding * 2 + data->toolbar_button_h;
+  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const int toolbar_width = modernToolbarWidth(
+      kSelectionToolbarItemCount, metrics.divider_gap - metrics.gap, metrics);
+  const int toolbar_height = modernToolbarHeight(metrics);
 
   int x = selection_screen.x;
   int y = selection_screen.y + selection_screen.height + 8;
-  if (y + toolbar_height > screen.bottom()) {
+  if (y + toolbar_height > screen.bottom())
+  {
     y = selection_screen.y - toolbar_height - 8;
   }
 
@@ -450,12 +613,11 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kToolbarClassName,
       L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, overlay,
       nullptr, instance, data);
-  if (toolbar == nullptr) {
+  if (toolbar == nullptr)
+  {
     return false;
   }
 
-  // SWP_NOACTIVATE：工具栏弹出也不抢前台激活权，避免原前台窗口及其
-  // 从属浮层因失活而隐藏。按钮点击仍能收到鼠标消息触发 BN_CLICKED。
   SetWindowPos(toolbar, HWND_TOPMOST, x, y, toolbar_width, toolbar_height,
                SWP_SHOWWINDOW | SWP_NOACTIVATE);
   return true;
@@ -1147,7 +1309,7 @@ bool SelectionOverlay::show(const Image& background,
   toolbar_wc.lpfnWndProc = toolbarWndProc;
   toolbar_wc.hInstance = instance;
   toolbar_wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
-  toolbar_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+  toolbar_wc.hbrBackground = nullptr;
   toolbar_wc.lpszClassName = kToolbarClassName;
   if (RegisterClassExW(&toolbar_wc) == 0 &&
       GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -1161,14 +1323,10 @@ bool SelectionOverlay::show(const Image& background,
   data.screen = coord::getVirtualScreen();
   data.controller.setBounds(data.screen.width, data.screen.height);
 
-  // 按 DPI 缩放 UI（100% 为 96 DPI）：手柄命中半径与操作条尺寸。
+  // 按 DPI 缩放 UI（100% 为 96 DPI）：手柄命中半径。
   data.dpi = coord::getSystemDpi();
   const auto scale = [&](int value) { return MulDiv(value, data.dpi, 96); };
   data.handle_radius = scale(handles::kHandleHitRadius);
-  data.toolbar_button_w = scale(kToolbarButtonWidth);
-  data.toolbar_button_h = scale(kToolbarButtonHeight);
-  data.toolbar_button_gap = scale(kToolbarButtonGap);
-  data.toolbar_padding = scale(kToolbarPadding);
   data.controller.setHandleRadius(data.handle_radius);
 
   HWND hwnd = CreateWindowExW(

@@ -55,6 +55,7 @@ include(GoogleTest)
 gtest_discover_tests(qingying_tests
   WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_tests>
   DISCOVERY_MODE PRE_TEST
+  DISCOVERY_TIMEOUT 60
 )
 
 # Ensure gtest DLLs are next to the test exe when using shared vcpkg libs

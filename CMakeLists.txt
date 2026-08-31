@@ -50,7 +50,7 @@ target_include_directories(qingying_ui
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
 if(WIN32)
-  target_link_libraries(qingying_ui PUBLIC gdi32 user32 comctl32)
+  target_link_libraries(qingying_ui PUBLIC gdi32 user32 comctl32 gdiplus)
 endif()
 
 add_library(qingying_overlay STATIC
@@ -67,7 +67,7 @@ target_include_directories(qingying_overlay
 target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
 if(WIN32)
   target_link_libraries(qingying_overlay PUBLIC dwmapi)
-  target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_annotate)
+  target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_annotate qingying_ui)
 endif()
 
 add_library(qingying_annotate STATIC

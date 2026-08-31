@@ -13,8 +13,8 @@
 
 namespace qingying {
 
-// 框选操作条 / 标注底栏共用：浅灰圆角条 + 深灰方钮 + 白线图标。
-// 条上说明文字必须用 label（深色），禁止复用 icon（白色），否则浅底上看不见。
+// 框选操作条 / 标注底栏共用：白色圆角条 + 深色线标（PixPin 风格）。
+// 空闲态不铺深灰方钮；悬停/选中只用浅灰底。条上说明文字用 label。
 enum class ToolbarIconKind
 {
   Copy,
@@ -32,9 +32,15 @@ enum class ToolbarIconKind
   Pen,
   Mosaic,
   Text,
+  StrokeWidth,
   Undo,
   Confirm,
   Cancel,
+  Move,
+  LongShot,
+  Pause,
+  Resume,
+  Stop,
 };
 
 inline constexpr int kToolbarTooltipMaxChars = 16;
@@ -44,7 +50,7 @@ struct ModernToolbarMetrics
   int item_size{28};
   int gap{4};
   int bar_padding{8};
-  int corner_radius{16};
+  int corner_radius{22};
   int hover_radius{6};
   int divider_gap{10};
   int divider_width{1};
@@ -56,23 +62,38 @@ inline constexpr ModernToolbarMetrics DefaultModernToolbarMetrics{};
 
 struct ModernToolbarColors
 {
-  COLORREF bar_fill{RGB(236, 238, 241)};
-  COLORREF bar_border{RGB(220, 223, 228)};
-  COLORREF bar_shadow{RGB(206, 210, 216)};
-  COLORREF button_fill{RGB(92, 98, 108)};
-  COLORREF hover_fill{RGB(52, 56, 64)};
-  COLORREF selected_fill{RGB(52, 56, 64)};
-  COLORREF disabled_fill{RGB(186, 190, 196)};
-  COLORREF icon{RGB(255, 255, 255)};
-  COLORREF icon_disabled{RGB(232, 234, 237)};
-  COLORREF label{RGB(52, 56, 64)};
-  COLORREF divider{RGB(210, 214, 219)};
+  COLORREF bar_fill{RGB(255, 255, 255)};
+  COLORREF bar_border{RGB(226, 229, 234)};
+  COLORREF bar_shadow{RGB(214, 218, 224)};
+  COLORREF button_fill{RGB(255, 255, 255)};
+  COLORREF hover_fill{RGB(245, 247, 249)};
+  COLORREF selected_fill{RGB(236, 239, 243)};
+  COLORREF disabled_fill{RGB(244, 245, 247)};
+  COLORREF icon{RGB(55, 59, 66)};
+  COLORREF icon_disabled{RGB(176, 180, 186)};
+  COLORREF label{RGB(55, 59, 66)};
+  COLORREF divider{RGB(226, 229, 234)};
+  COLORREF confirm{RGB(46, 167, 90)};
+  COLORREF cancel{RGB(72, 76, 84)};
 };
 
 inline constexpr ModernToolbarColors DefaultModernToolbarColors{};
 
+// 工具栏窗口圆角外的色键，避免 SetWindowRgn 与 GDI RoundRect 错位产生毛刺。
+inline constexpr COLORREF kToolbarColorKey{RGB(255, 0, 255)};
+
 void fillRoundRect(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border,
                    int radius);
+
+HBITMAP createTopDownArgbDib(int width, int height, void** bits);
+void applyColorKeyAlpha(void* bits, int width, int height, COLORREF key);
+void promoteRgbToOpaqueAlpha(void* bits, int width, int height);
+bool presentLayeredArgbWindow(HWND hwnd, HDC src_dc, int width, int height);
+bool drawToolbarBarOnArgbBits(void* bits, int width, int height,
+                              const RECT& rect);
+
+void fillToolbarColorKey(HDC hdc, const RECT& rect);
+void applyToolbarColorKey(HWND hwnd);
 
 void drawToolbarBar(HDC hdc, const RECT& rect);
 

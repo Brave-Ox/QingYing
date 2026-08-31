@@ -83,6 +83,7 @@ TEST(AnnotationOverlayTest, ClientWidthFitsAllToolbarButtonsForNarrowImage)
 
   const int last_control_right =
       AnnotationEditorBarPadding +
+      AnnotationEditorMoveButtonCount * AnnotationEditorButtonWidth +
       AnnotationEditorToolButtonCount * AnnotationEditorButtonWidth +
       AnnotationEditorActionButtonCount * AnnotationEditorButtonWidth +
       (AnnotationEditorToolbarControlCount - 1) * AnnotationEditorButtonGap +
@@ -105,7 +106,7 @@ TEST(AnnotationOverlayTest, EnteringEditorHidesPropertyBarUntilToolClick)
 {
   EXPECT_FALSE(annotationEditorShowsPropertyBar(AnnotationTool::None));
   EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::None),
-            annotationEditorToolbarHeight());
+            AnnotationEditorChromeImageGap + annotationEditorToolbarHeight());
   EXPECT_LT(annotationEditorWindowHeight(kCanvasHeight, AnnotationTool::None),
             annotationEditorWindowHeight(kCanvasHeight,
                                          AnnotationTool::Rectangle));
@@ -120,7 +121,153 @@ TEST(AnnotationOverlayTest, GeometryStyleDefaultsToHollowSolidLine)
 
 TEST(AnnotationOverlayTest, MainToolbarMergesRectangleAndEllipse)
 {
+  EXPECT_EQ(AnnotationEditorMoveButtonCount, 1);
   EXPECT_EQ(AnnotationEditorToolButtonCount, 6);
+  EXPECT_EQ(AnnotationEditorToolbarControlCount,
+            AnnotationEditorMoveButtonCount + AnnotationEditorButtonCount);
+}
+
+TEST(AnnotationOverlayTest, CompactMainBarIsNarrowerThanWideImage)
+{
+  EXPECT_LT(annotationEditorMainToolbarWidth(), 800);
+  EXPECT_GE(annotationEditorClientWidth(800), 800);
+}
+
+TEST(AnnotationOverlayTest, ChromeOffsetClampsToScreenBoundsNotImageBox)
+{
+  constexpr int kDefaultX = 100;
+  constexpr int kDefaultY = 200;
+  constexpr int kBarW = 120;
+  constexpr int kBarH = 50;
+  constexpr int kScreenLeft = 0;
+  constexpr int kScreenTop = 0;
+  constexpr int kScreenRight = 1920;
+  constexpr int kScreenBottom = 1080;
+
+  int offset_x = 0;
+  int offset_y = 0;
+  annotationEditorClampChromeOffset(offset_x, offset_y, kDefaultX, kDefaultY,
+                                    kBarW, kBarH, kScreenLeft, kScreenTop,
+                                    kScreenRight, kScreenBottom);
+  EXPECT_EQ(offset_x, 0);
+  EXPECT_EQ(offset_y, 0);
+
+  // 远离图片默认位置，但仍在屏幕内：不得再钳回图片窗口。
+  offset_x = 800;
+  offset_y = 400;
+  annotationEditorClampChromeOffset(offset_x, offset_y, kDefaultX, kDefaultY,
+                                    kBarW, kBarH, kScreenLeft, kScreenTop,
+                                    kScreenRight, kScreenBottom);
+  EXPECT_EQ(kDefaultX + offset_x, 900);
+  EXPECT_EQ(kDefaultY + offset_y, 600);
+
+  offset_x = 5000;
+  offset_y = 5000;
+  annotationEditorClampChromeOffset(offset_x, offset_y, kDefaultX, kDefaultY,
+                                    kBarW, kBarH, kScreenLeft, kScreenTop,
+                                    kScreenRight, kScreenBottom);
+  EXPECT_EQ(kDefaultX + offset_x, kScreenRight - kBarW);
+  EXPECT_EQ(kDefaultY + offset_y, kScreenBottom - kBarH);
+
+  offset_x = -800;
+  offset_y = -400;
+  annotationEditorClampChromeOffset(offset_x, offset_y, kDefaultX, kDefaultY,
+                                    kBarW, kBarH, kScreenLeft, kScreenTop,
+                                    kScreenRight, kScreenBottom);
+  EXPECT_EQ(kDefaultX + offset_x, kScreenLeft);
+  EXPECT_EQ(kDefaultY + offset_y, kScreenTop);
+}
+
+TEST(AnnotationOverlayTest, ChromeHostKeepsImagePinnedWhenChromeMovesAway)
+{
+  constexpr int kSelX = 100;
+  constexpr int kSelY = 200;
+  constexpr int kImgW = 80;
+  constexpr int kImgH = 60;
+  constexpr int kChromeX = 800;
+  constexpr int kChromeY = 40;
+  constexpr int kChromeW = 240;
+  constexpr int kChromeH = 50;
+
+  const AnnotationEditorChromeHostPlacement host =
+      annotationEditorChromeHostPlacement(kSelX, kSelY, kImgW, kImgH, kChromeX,
+                                          kChromeY, kChromeW, kChromeH);
+
+  EXPECT_EQ(host.window_x + host.image_origin_x, kSelX);
+  EXPECT_EQ(host.window_y + host.image_origin_y, kSelY);
+  EXPECT_EQ(host.window_x + host.chrome_client_x, kChromeX);
+  EXPECT_EQ(host.window_y + host.chrome_client_y, kChromeY);
+  EXPECT_LE(host.window_x, kChromeX);
+  EXPECT_LE(host.window_y, kChromeY);
+  EXPECT_GE(host.window_x + host.window_width, kChromeX + kChromeW);
+  EXPECT_GE(host.window_y + host.window_height, kChromeY + kChromeH);
+}
+
+TEST(AnnotationOverlayTest, ChromeHostAtDefaultMatchesCompactEditor)
+{
+  constexpr int kSelX = 100;
+  constexpr int kSelY = 200;
+  constexpr int kImgW = 80;
+  constexpr int kImgH = 60;
+  const int chrome_x = kSelX;
+  const int chrome_y =
+      kSelY + kImgH + AnnotationEditorChromeImageGap;
+  const int chrome_w = annotationEditorMainToolbarWidth();
+  const int chrome_h = annotationEditorToolbarHeight();
+
+  const AnnotationEditorChromeHostPlacement host =
+      annotationEditorChromeHostPlacement(kSelX, kSelY, kImgW, kImgH, chrome_x,
+                                          chrome_y, chrome_w, chrome_h);
+  const AnnotationEditorInPlacePlacement place =
+      annotationEditorInPlacePlacement(kSelX, kSelY, kImgW, kImgH);
+
+  EXPECT_EQ(host.window_x + host.image_origin_x, kSelX);
+  EXPECT_EQ(host.window_y + host.image_origin_y, kSelY);
+  EXPECT_EQ(host.window_x, place.window_x);
+  EXPECT_EQ(host.window_y, place.window_y);
+  EXPECT_EQ(host.window_height, place.window_height);
+}
+
+TEST(AnnotationOverlayTest, ChromeHostShiftsClientOriginWhenChromeCrossesImageEdge)
+{
+  // 包围盒方案会在功能栏越过图片左/上沿时改 window 原点，客户区 image_origin 跟着变。
+  // 这正是边缘处截图框抖动的来源：SetWindowPos 与重绘不同步。
+  constexpr int kSelX = 100;
+  constexpr int kSelY = 200;
+  constexpr int kImgW = 80;
+  constexpr int kImgH = 60;
+  const AnnotationEditorChromeHostPlacement below =
+      annotationEditorChromeHostPlacement(kSelX, kSelY, kImgW, kImgH, kSelX,
+                                          kSelY + kImgH + AnnotationEditorChromeImageGap, 240, 50);
+  const AnnotationEditorChromeHostPlacement left =
+      annotationEditorChromeHostPlacement(kSelX, kSelY, kImgW, kImgH, 0, kSelY,
+                                          240, 50);
+  EXPECT_NE(below.image_origin_x, left.image_origin_x);
+  EXPECT_EQ(below.window_x + below.image_origin_x, kSelX);
+  EXPECT_EQ(left.window_x + left.image_origin_x, kSelX);
+}
+
+TEST(AnnotationOverlayTest, VirtualDesktopPlacementKeepsImageOriginStable)
+{
+  constexpr int kSelX = 400;
+  constexpr int kSelY = 300;
+  constexpr int kDeskLeft = -1920;
+  constexpr int kDeskTop = 0;
+  constexpr int kDeskW = 3840;
+  constexpr int kDeskH = 1080;
+
+  const AnnotationEditorVirtualDesktopPlacement place =
+      annotationEditorVirtualDesktopPlacement(kSelX, kSelY, kDeskLeft, kDeskTop,
+                                              kDeskW, kDeskH);
+
+  EXPECT_EQ(place.window_x, kDeskLeft);
+  EXPECT_EQ(place.window_y, kDeskTop);
+  EXPECT_EQ(place.window_width, kDeskW);
+  EXPECT_EQ(place.window_height, kDeskH);
+  EXPECT_EQ(place.window_x + place.image_origin_x, kSelX);
+  EXPECT_EQ(place.window_y + place.image_origin_y, kSelY);
+  EXPECT_EQ(place.image_origin_x, kSelX - kDeskLeft);
+  EXPECT_EQ(place.image_origin_y, kSelY - kDeskTop);
 }
 
 TEST(AnnotationOverlayTest, GeometryPropertyBarShowsShapeFillAndLineStyle)
@@ -179,12 +326,18 @@ TEST(AnnotationOverlayTest, MosaicSizeComboPresetsIncludeDefaultTwelve)
 
 TEST(AnnotationOverlayTest, ChromeHeightAddsPropertyBarForMosaic)
 {
-  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Rectangle),
-            annotationEditorToolbarHeight() * 2);
-  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Text),
-            annotationEditorToolbarHeight() * 2);
-  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Mosaic),
-            annotationEditorToolbarHeight() * 2);
+  const int expected =
+      AnnotationEditorChromeImageGap + annotationEditorToolbarHeight() +
+      AnnotationEditorChromeStackGap + annotationEditorToolbarHeight();
+  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Rectangle), expected);
+  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Text), expected);
+  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::Mosaic), expected);
+}
+
+TEST(AnnotationOverlayTest, IdleChromeIsSinglePillBelowImage)
+{
+  EXPECT_EQ(annotationEditorChromeHeight(AnnotationTool::None),
+            AnnotationEditorChromeImageGap + annotationEditorToolbarHeight());
 }
 
 TEST(AnnotationOverlayTest, ClampMosaicBlockSizeKeepsDefaultAndClampsRange)
@@ -194,6 +347,61 @@ TEST(AnnotationOverlayTest, ClampMosaicBlockSizeKeepsDefaultAndClampsRange)
   EXPECT_EQ(annotationEditorClampMosaicBlockSize(0), 1);
   EXPECT_EQ(annotationEditorClampMosaicBlockSize(-4), 1);
   EXPECT_EQ(annotationEditorClampMosaicBlockSize(999), 32);
+}
+
+TEST(AnnotationOverlayTest, StrokeChipUsesPixPinValueControlWidth)
+{
+  EXPECT_EQ(AnnotationEditorStrokeChipWidth,
+            AnnotationEditorStrokeChipIconWidth +
+                AnnotationEditorStrokeChipValueWidth);
+  EXPECT_LT(AnnotationEditorStrokeChipWidth,
+            annotationEditorButtonsWidth(AnnotationStylePresetStrokeCount));
+}
+
+TEST(AnnotationOverlayTest, ClampAndStepStrokeWidthStayInRange)
+{
+  EXPECT_EQ(annotationEditorClampStrokeWidthPx(0),
+            static_cast<int>(MinStrokeWidth));
+  EXPECT_EQ(annotationEditorClampStrokeWidthPx(999),
+            static_cast<int>(MaxStrokeWidth));
+  EXPECT_EQ(annotationEditorStrokeWidthPx(DefaultStrokeWidth), 3);
+  EXPECT_EQ(annotationEditorStepStrokeWidth(3, 1), 4);
+  EXPECT_EQ(annotationEditorStepStrokeWidth(1, -1),
+            static_cast<int>(MinStrokeWidth));
+  EXPECT_EQ(annotationEditorStepStrokeWidth(
+                static_cast<int>(MaxStrokeWidth), 1),
+            static_cast<int>(MaxStrokeWidth));
+}
+
+TEST(AnnotationOverlayTest, ParseStrokeWidthTextRejectsNonDigitsAndClamps)
+{
+  int width = 0;
+  EXPECT_TRUE(annotationEditorParseStrokeWidthText(L"8", width));
+  EXPECT_EQ(width, 8);
+  EXPECT_TRUE(annotationEditorParseStrokeWidthText(L"99", width));
+  EXPECT_EQ(width, static_cast<int>(MaxStrokeWidth));
+  EXPECT_FALSE(annotationEditorParseStrokeWidthText(L"", width));
+  EXPECT_FALSE(annotationEditorParseStrokeWidthText(L"12a", width));
+}
+
+TEST(AnnotationOverlayTest, StrokeSliderMapsEndsAndMidpoint)
+{
+  EXPECT_EQ(annotationEditorStrokeSliderValue(0, 0, 150),
+            static_cast<int>(MinStrokeWidth));
+  EXPECT_EQ(annotationEditorStrokeSliderValue(150, 0, 150),
+            static_cast<int>(MaxStrokeWidth));
+  const AnnotationEditorStrokePopupLayout layout =
+      annotationEditorStrokePopupLayout();
+  EXPECT_GT(layout.slider.right, layout.slider.left);
+  EXPECT_EQ(layout.value.right - layout.value.left,
+            AnnotationEditorStrokePopupValueWidth);
+}
+
+TEST(AnnotationOverlayTest, StrokePopupCornerMatchesChromeStadium)
+{
+  EXPECT_EQ(AnnotationEditorStrokePopupCornerRadius,
+            annotationEditorToolbarHeight() / 2);
+  EXPECT_GT(AnnotationEditorStrokePopupCornerRadius, 8);
 }
 
 TEST(AnnotationOverlayTest, InPlacePlacementPinsImageOriginToSelection)
@@ -262,17 +470,36 @@ TEST(AnnotationOverlayTest, InlineEditHeightTracksFontSize)
             32 + AnnotationEditorInlineEditHeightPad);
 }
 
-TEST(AnnotationOverlayTest, InlineEditWidthGrowsWithTextThenClamps)
+TEST(AnnotationOverlayTest, InlineEditWidthGrowsWithTextThenClampsToRemain)
 {
   EXPECT_EQ(annotationEditorInlineEditWidth(10, 400),
             AnnotationEditorInlineEditMinWidth);
-  const int mid =
-      120 + AnnotationEditorInlineEditTextPadX * 2;
+  const int mid = 120 + AnnotationEditorInlineEditTextPadX * 2 +
+                  AnnotationEditorInlineEditCaretPadPx +
+                  AnnotationEditorInlineEditGlyphPadPx;
   EXPECT_EQ(annotationEditorInlineEditWidth(120, 400), mid);
-  EXPECT_EQ(annotationEditorInlineEditWidth(400, 400),
-            AnnotationEditorInlineEditMaxWidth);
+  // 旧实现硬限制 220px，长文案输入时会被裁掉；宽度应随文字涨到剩余空间。
+  const int long_text = 300 + AnnotationEditorInlineEditTextPadX * 2 +
+                        AnnotationEditorInlineEditCaretPadPx +
+                        AnnotationEditorInlineEditGlyphPadPx;
+  EXPECT_GT(long_text, 220);
+  EXPECT_EQ(annotationEditorInlineEditWidth(300, 800), long_text);
+  EXPECT_EQ(annotationEditorInlineEditWidth(400, 400), 400);
   EXPECT_EQ(annotationEditorInlineEditWidth(120, 50), 50);
   EXPECT_EQ(annotationEditorInlineEditWidth(120, 0), 1);
+}
+
+TEST(AnnotationOverlayTest, InlineEditFormatWidthLeavesGlyphAndCaret)
+{
+  // EM_SETMARGINS 会吃掉左右 TextPadX；扣完后必须仍能放下正文、插入符和字形左伸出，
+  // 否则 ES_AUTOHSCROLL 会把首字滚出视口（输入中 'w' 被切、结束后 DrawText 又正常）。
+  const int extent = 200;
+  const int width = annotationEditorInlineEditWidth(extent, 1000);
+  const int inner = width - AnnotationEditorInlineEditTextPadX * 2;
+  EXPECT_GE(inner, extent + AnnotationEditorInlineEditCaretPadPx +
+                       AnnotationEditorInlineEditGlyphPadPx);
+  EXPECT_FALSE(annotationEditorInlineEditNeedsHScroll(extent, 1000));
+  EXPECT_TRUE(annotationEditorInlineEditNeedsHScroll(800, 100));
 }
 
 TEST(AnnotationOverlayTest, TextChromePutsDeleteButtonOnTopRight)
@@ -409,7 +636,7 @@ TEST(AnnotationOverlayTest, HandlePointsSitOnImageEdges)
 // 4. 文字：空白单击新建；已有文字单击出现黑框+删除；拖过阈值可改位置；
 //    双击进入就地编辑（输入中显示所选颜色，透明底细黑框）；二级栏可改颜色/字号
 // 5. 切换箭头、画笔同样可画，二级栏改色/线宽对下一笔生效；点完成得到合成图；Esc/取消不改结果语义
-// 6. 框选后操作条同为圆角白底图标条（复制/下载/编辑/钉图）
+// 6. 框选后操作条同为圆角白底图标条（复制/下载 | 长截图/编辑/钉图/停止）
 TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
 {
   AnnotationOverlay overlay;
