@@ -2,9 +2,9 @@
 
 Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 Agent 的本地截图能力提供者（本地口令 / MCP）。
 
-> 当前提交基线：`master` / `a4e400bc`（63 条提交；本文同时反映当前待提交的架构调整）
+> 当前提交基线：`master` / `8c3166ed`（67 条提交；本文同时反映当前待提交的 `CaptureWorkflow` 调整）
 > 文档同步日期：2026-08-31
-> Release 验证：构建成功，277 个测试已发现，276 个执行；272 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
+> Release 验证：构建成功，283 个测试已发现，282 个执行；278 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
 
 ## 当前能力
 
@@ -27,12 +27,12 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 
 ## 架构要点
 
-- **一个 EXE + 10 个 static lib**，按 action / capture / export / ui / overlay / annotate / pin / longshot / command / mcp 切分。
-- `app/Application` 是组合根，拥有托盘、全局热键、顶层消息循环和交互工作流。
-- 对外可调用的业务动作以 `ActionDispatcher` 为统一入口；GUI 的选区、标注和交互式长截图属于多步工作流，由 Application 编排。
+- **一个 EXE + 11 个 static lib**，按 action / capture / export / ui / overlay / annotate / pin / longshot / workflow / command / mcp 切分。
+- `app/Application` 是组合根，拥有托盘、全局热键和顶层消息循环；`CaptureWorkflow` 编排选区、标注和交互式长截图。
+- 对外可调用的业务动作以 `ActionDispatcher` 为统一入口；GUI 多步流程统一进入 `CaptureWorkflow`。
 - `Image` 统一为 BGRA32、行优先、物理像素；当前结果经 `CaptureSession` 在 Capture / Copy / Save / Pin 之间流转。
 - 当前区域捕获使用 GDI `BitBlt`；DXGI 仅保留链接和后续实现位置。
-- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、编辑源图上移、`overlay → capture / annotate` 依赖移除和 PIMPL RAII。后续见 [架构如何调整](./docs/架构如何调整.md)：`CaptureWorkflow`、`LongShotController` 和非模态消息循环。
+- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、`CaptureWorkflow`、编辑源图上移、`overlay → capture / annotate` 依赖移除和 PIMPL RAII。后续见 [架构如何调整](./docs/架构如何调整.md)：`LongShotController` 和非模态消息循环。
 
 ## 构建与测试
 
@@ -52,8 +52,8 @@ build.bat notest          :: 不编译测试
 
 2026-08-31 本机 Release 结果：
 
-- `qingying.exe`：218,624 字节（约 0.21 MiB，仅指当前 EXE 文件）；
-- CTest 发现 277 个用例，其中 276 个执行：272 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- `qingying.exe`：219,648 字节（约 0.21 MiB，仅指当前 EXE 文件）；
+- CTest 发现 283 个用例，其中 282 个执行：278 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
 - 常驻内存、热键唤起时延和完整绿色交付包体积仍需专项测量，不能由编译结果代替。
 
 GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
@@ -82,7 +82,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ```text
 include/qingying/   对外头文件与稳定契约
-src/app             EXE：组合根、托盘、热键、交互工作流
+src/app             EXE 组合根、托盘、热键，以及 qingying_workflow 实现
 src/action          Action 契约与 Dispatcher
 src/capture         GDI 区域捕获（DXGI / 截窗 / 中央裁切待实现）
 src/overlay         桌面快照遮罩、框选、调区、窗口吸附、选区工具栏、阶段状态、OverlayRenderer、长截图预览
@@ -93,6 +93,6 @@ src/longshot        记事本选区滚动拼接
 src/export          剪贴板与 WIC PNG
 src/command         本地口令桩，F8 待实现
 src/mcp             MCP Bridge 桩，F9 待实现
-tests/              GoogleTest（当前 277 个已发现用例，1 个显式禁用）
+tests/              GoogleTest（当前 283 个已发现用例，1 个显式禁用）
 docs/               架构、进度、分工与整改文档
 ```

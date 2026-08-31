@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发清单与技术要点
 
 > 依据立项文档、仓库架构和当前代码整理。
-> 当前提交基线：`master` / `a4e400bc`（共 63 条提交；本文同时反映当前待提交架构调整）；同步日期：2026-08-31。
+> 当前提交基线：`master` / `8c3166ed`（共 67 条提交；本文同时反映当前待提交的 `CaptureWorkflow` 调整）；同步日期：2026-08-31。
 > 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
 
 来源：
@@ -33,11 +33,11 @@
 
 | 指标 | 目标 | 当前状态 | 证据 / 下一步 |
 |---|---:|---|---|
-| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 218,624 字节；仍需按最终交付包复测 |
+| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 219,648 字节；仍需按最终交付包复测 |
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 277 个，276 个执行；272 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
+| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 283 个，282 个执行；278 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -61,12 +61,12 @@
 
 | 功能 | 当前调用链 / 模块 |
 |---|---|
-| F1 | `SelectionOverlay` → `SelectionResult` → `Application` → `ActionDispatcher(CaptureRegion)` → `CaptureEngine` |
+| F1 | `SelectionOverlay` → `SelectionResult` → `CaptureWorkflow` → `ActionDispatcher(CaptureRegion)` → `CaptureEngine` |
 | F2 | `WindowDetector` + `SelectionOverlay` + `SelectionController::setSelection` |
-| F3 | `SelectionOverlay(Edit intent)` → `Application + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → Session + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
-| F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `Application` 管理 |
+| F3 | `SelectionOverlay(Edit intent)` → `CaptureWorkflow + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → Session + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
+| F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `CaptureWorkflow` 管理 |
 | F5 | `ActionDispatcher(Pin)` + `CaptureSession` + `PinManager / PinWindow` |
-| F6 | `Application` 工作流 + `SelectionOverlay` + `LongShotEngine` + `CaptureEngine` + `ImageStitcher` |
+| F6 | `CaptureWorkflow` + `SelectionOverlay` + `LongShotEngine` + `CaptureEngine` + `ImageStitcher`；LongShotController 待拆 |
 | F7 | `Application / TrayController / HotkeyManager / SingleInstanceGuard / AutostartSettings` |
 | F8 | `CommandParser` → `ActionRequest`（待实现） |
 | F9 | `McpBridge` → `ActionDispatcher / Workflow`（待实现） |
@@ -91,7 +91,7 @@
 ### P0 — 可演示的“截一下”
 
 - [x] CMake / MSVC / C++17 / Release 单 EXE；
-- [x] 10 个 static lib 与 `ActionDispatcher` 骨架；
+- [x] 11 个 static lib 与 `ActionDispatcher` 骨架（含 `qingying_workflow`）；
 - [x] `SingleInstanceGuard`（Named Mutex）；
 - [x] 系统托盘、退出和开机自启开关；
 - [x] `RegisterHotKey` 全局热键及冲突提示；
@@ -187,7 +187,7 @@ CaptureWindow / CropCenter / LongShotRegion / SuggestName
 
 ```text
 GUI 热键
-  → Application 交互工作流
+  → Application 转发到 CaptureWorkflow
   → SelectionOverlay
   → 普通动作：dispatch(CaptureRegion)
   → CaptureSession
@@ -195,12 +195,12 @@ GUI 热键
 
 标注动作
   → SelectionOverlay 返回 Edit 意图
-  → Application 捕获源图并打开 AnnotationOverlay
+  → CaptureWorkflow 捕获源图并打开 AnnotationOverlay
   → 自动 Copy + 恢复结果操作条
   → Save / Pin / 再编辑
 
 交互式长截图
-  → Application 启动 worker
+  → CaptureWorkflow 启动 worker（下一步抽 LongShotController）
   → LongShotEngine
   → 完成消息回 UI 线程
   → CaptureSession
@@ -211,7 +211,7 @@ GUI 热键
 
 1. 外部入口（口令 / MCP）不得直接调用引擎；
 2. 单步业务命令统一走 `ActionDispatcher`；
-3. 选区、标注、交互式长截图属于多步工作流，由 `Application` 或后续 `CaptureWorkflow` 编排；
+3. 选区、标注、交互式长截图属于多步工作流，由 `CaptureWorkflow` 编排；
 4. UI 预览快照等表现层基础设施必须明确标注例外，不得假装已经经过 Dispatcher；
 5. 具体整改顺序见 [架构如何调整](./docs/架构如何调整.md)。
 
@@ -243,7 +243,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；277 个测试已发现，276 个执行，其中 272 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
+- [x] Release 构建；283 个测试已发现，282 个执行，其中 278 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -256,7 +256,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
 | Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出 | 在 Workflow 阶段非模态化 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
-| Dispatcher 与工作流边界不清 | 中 | 单步动作已有 Handler | 引入 `CaptureWorkflow`，修正文档与依赖 |
+| Dispatcher 与工作流边界不清 | 低 | 单步动作走 Handler，多步交互已进入 `CaptureWorkflow` | F8/F9 前类型化 payload 与 operation id |
 | PIMPL 所有权 | 低 | Capture / LongShot / MCP 已改为 `std::unique_ptr<Impl>` | 继续检查跨线程消息所有权 |
 | MCP ↔ 主进程通信 | 中 | 尚未实现 | 本机 Named Pipe、主线程投递、参数校验 |
 | 云端不可用 | 低 | F1～F7 全本地 | F8 本地口令作为默认路径 |
@@ -273,9 +273,11 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | 桌面快照遮罩与浮层兼容 | `615c2f2a`、`1c9ac4d0` |
 | F5 Pin、捕获排除、独立导出和自动排布 | `726e8528`、`6f927b01`、`68e69337`、`0a5ad00e`、`d8998e02` |
 | F6 基础、profile、拼接、接线与交互控制 | `b1ee85bf`～`9607c013`、`7b66b2ae`、`1aeb4f3a`、`68f0e740` |
-| F3 标注文档、渲染、编辑器与 Application 接线 | `c26b62b5`～`cfa74978`、`d9f7c0dc` |
+| F3 标注文档、渲染、编辑器与原 Application 接线 | `c26b62b5`～`cfa74978`、`d9f7c0dc` |
 | 选区 / 标注共用 ModernToolbar 与 SVG 图标 | `b91dbe21` |
-| SelectionToolbar / OverlayPhase、编辑源图上移与结果动作回流 | 当前工作区，待提交 |
+| SelectionToolbar / OverlayPhase、编辑源图上移与结果动作回流 | `a5f4cb97` |
+| PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
+| CaptureWorkflow 收口交互编排 | 当前工作区，待提交 |
 
 提交标题用于定位，最终完成度以当前源码和测试结果为准。
 

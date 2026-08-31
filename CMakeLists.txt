@@ -130,10 +130,31 @@ target_include_directories(qingying_mcp
 )
 target_link_libraries(qingying_mcp PUBLIC qingying_action)
 
+add_library(qingying_workflow STATIC
+  src/app/capture_preview.cpp
+  src/app/capture_workflow.cpp
+)
+target_include_directories(qingying_workflow
+  PUBLIC ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(qingying_workflow
+  PUBLIC
+    qingying_action
+    qingying_overlay
+  PRIVATE
+    qingying_annotate
+    qingying_capture
+    qingying_export
+    qingying_longshot
+    qingying_pin
+)
+if(WIN32)
+  target_link_libraries(qingying_workflow PRIVATE comdlg32 user32)
+endif()
+
 add_executable(qingying WIN32
   src/app/main.cpp
   src/app/application.cpp
-  src/app/capture_preview.cpp
   src/app/single_instance_guard.cpp
   src/app/autostart_settings.cpp
   src/app/tray_controller.cpp
@@ -156,6 +177,7 @@ target_link_libraries(qingying PRIVATE
   qingying_longshot
   qingying_command
   qingying_mcp
+  qingying_workflow
 )
 if(WIN32)
   target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32 comdlg32)

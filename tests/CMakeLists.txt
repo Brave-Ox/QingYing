@@ -12,6 +12,7 @@ add_executable(qingying_tests
   longshot_request_adapter_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
+  capture_workflow_test.cpp
   capture_session_test.cpp
   dib_encoder_test.cpp
   export_service_test.cpp
@@ -30,7 +31,6 @@ add_executable(qingying_tests
   notepad_longshot_profile_test.cpp
   window_detector_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
-  ${CMAKE_SOURCE_DIR}/src/app/capture_preview.cpp
 )
 
 target_include_directories(qingying_tests
@@ -47,6 +47,7 @@ target_link_libraries(qingying_tests
     qingying_ui
     qingying_pin
     qingying_longshot
+    qingying_workflow
     GTest::gtest
     GTest::gtest_main
 )
