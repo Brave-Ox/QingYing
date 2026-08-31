@@ -13,7 +13,7 @@ class ActionDispatcher;
 class CaptureEngine;
 class CaptureSession;
 class ExportService;
-class LongShotEngine;
+class LongShotController;
 class PinManager;
 
 // Pure routing decision for one completed selection. Keeping this separate
@@ -37,7 +37,8 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
 class CaptureWorkflow {
  public:
   CaptureWorkflow(ActionDispatcher& dispatcher, CaptureEngine& capture,
-                  LongShotEngine& longshot, ExportService& export_service,
+                  LongShotController& longshot_controller,
+                  ExportService& export_service,
                   CaptureSession& session, PinManager& pin_manager,
                   SelectionOverlay& selection_overlay);
   ~CaptureWorkflow();

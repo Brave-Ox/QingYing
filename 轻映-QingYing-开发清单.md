@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发清单与技术要点
 
 > 依据立项文档、仓库架构和当前代码整理。
-> 当前提交基线：`master` / `8c3166ed`（共 67 条提交；本文同时反映当前待提交的 `CaptureWorkflow` 调整）；同步日期：2026-08-31。
+> 当前提交基线：`master` / `778cd336`（共 68 条提交；本文同时反映当前待提交的 `LongShotController` 调整）；同步日期：2026-08-31。
 > 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
 
 来源：
@@ -37,7 +37,7 @@
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 283 个，282 个执行；278 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
+| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 287 个，286 个执行；282 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -66,7 +66,7 @@
 | F3 | `SelectionOverlay(Edit intent)` → `CaptureWorkflow + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → Session + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
 | F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `CaptureWorkflow` 管理 |
 | F5 | `ActionDispatcher(Pin)` + `CaptureSession` + `PinManager / PinWindow` |
-| F6 | `CaptureWorkflow` + `SelectionOverlay` + `LongShotEngine` + `CaptureEngine` + `ImageStitcher`；LongShotController 待拆 |
+| F6 | `CaptureWorkflow` + `SelectionOverlay` + `LongShotController` → `LongShotEngine` + `CaptureEngine` + `ImageStitcher` |
 | F7 | `Application / TrayController / HotkeyManager / SingleInstanceGuard / AutostartSettings` |
 | F8 | `CommandParser` → `ActionRequest`（待实现） |
 | F9 | `McpBridge` → `ActionDispatcher / Workflow`（待实现） |
@@ -200,7 +200,7 @@ GUI 热键
   → Save / Pin / 再编辑
 
 交互式长截图
-  → CaptureWorkflow 启动 worker（下一步抽 LongShotController）
+  → CaptureWorkflow 请求 LongShotController 启动 worker
   → LongShotEngine
   → 完成消息回 UI 线程
   → CaptureSession
@@ -211,7 +211,7 @@ GUI 热键
 
 1. 外部入口（口令 / MCP）不得直接调用引擎；
 2. 单步业务命令统一走 `ActionDispatcher`；
-3. 选区、标注、交互式长截图属于多步工作流，由 `CaptureWorkflow` 编排；
+3. 选区、标注、交互式长截图属于多步工作流，由 `CaptureWorkflow` 编排；其中长截图线程生命周期由 `LongShotController` 管理；
 4. UI 预览快照等表现层基础设施必须明确标注例外，不得假装已经经过 Dispatcher；
 5. 具体整改顺序见 [架构如何调整](./docs/架构如何调整.md)。
 
@@ -243,7 +243,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；283 个测试已发现，282 个执行，其中 278 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
+- [x] Release 构建；287 个测试已发现，286 个执行，其中 282 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -257,7 +257,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出 | 在 Workflow 阶段非模态化 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
 | Dispatcher 与工作流边界不清 | 低 | 单步动作走 Handler，多步交互已进入 `CaptureWorkflow` | F8/F9 前类型化 payload 与 operation id |
-| PIMPL 所有权 | 低 | Capture / LongShot / MCP 已改为 `std::unique_ptr<Impl>` | 继续检查跨线程消息所有权 |
+| PIMPL 所有权 | 低 | Capture / LongShot / LongShotController / MCP 已改为 `std::unique_ptr<Impl>`；LongShotController 统一 worker 生命周期 | 非模态化后继续检查跨线程消息所有权 |
 | MCP ↔ 主进程通信 | 中 | 尚未实现 | 本机 Named Pipe、主线程投递、参数校验 |
 | 云端不可用 | 低 | F1～F7 全本地 | F8 本地口令作为默认路径 |
 
@@ -278,6 +278,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | SelectionToolbar / OverlayPhase、编辑源图上移与结果动作回流 | `a5f4cb97` |
 | PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
 | CaptureWorkflow 收口交互编排 | 当前工作区，待提交 |
+| LongShotController 收口 worker、控制 token 与完成回收 | 当前工作区，待提交 |
 
 提交标题用于定位，最终完成度以当前源码和测试结果为准。
 

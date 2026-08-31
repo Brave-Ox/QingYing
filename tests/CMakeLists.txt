@@ -10,6 +10,7 @@ add_executable(qingying_tests
   annotation_overlay_test.cpp
   annotation_renderer_test.cpp
   longshot_request_adapter_test.cpp
+  longshot_controller_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
   capture_workflow_test.cpp

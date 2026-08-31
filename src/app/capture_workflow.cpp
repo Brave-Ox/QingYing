@@ -2,13 +2,12 @@
 
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/annotate/annotation_overlay.hpp"
-#include "qingying/app/app_messages.hpp"
 #include "qingying/app/capture_preview.hpp"
 #include "qingying/app/capture_session.hpp"
+#include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/longshot_request_adapter.hpp"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
-#include "qingying/longshot/longshot_engine.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/pin/pin_manager.hpp"
 
@@ -16,22 +15,13 @@
 #include <commdlg.h>
 
 #include <atomic>
-#include <chrono>
 #include <iterator>
-#include <memory>
-#include <new>
 #include <string>
-#include <thread>
 #include <utility>
 
 namespace qingying {
 
 namespace {
-
-struct LongShotCompletion {
-  ActionResult result;
-  Image image;
-};
 
 const wchar_t* longShotFailureText(int error_code) {
   if (error_code == ErrorCode::kLongShotUnsupported) {
@@ -71,12 +61,13 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
 
 struct CaptureWorkflow::Impl {
   Impl(ActionDispatcher& dispatcher_in, CaptureEngine& capture_in,
-       LongShotEngine& longshot_in, ExportService& export_service_in,
+       LongShotController& longshot_controller_in,
+       ExportService& export_service_in,
        CaptureSession& session_in, PinManager& pin_manager_in,
        SelectionOverlay& selection_overlay_in)
       : dispatcher(dispatcher_in),
         capture(capture_in),
-        longshot(longshot_in),
+        longshot_controller(longshot_controller_in),
         export_service(export_service_in),
         session(session_in),
         pin_manager(pin_manager_in),
@@ -84,6 +75,7 @@ struct CaptureWorkflow::Impl {
 
   void setOwnerWindow(std::uintptr_t window) noexcept {
     owner_window = reinterpret_cast<HWND>(window);
+    longshot_controller.setOwnerWindow(window);
   }
 
   Image captureDesktopBackground() {
@@ -207,7 +199,12 @@ struct CaptureWorkflow::Impl {
         return;
       case CaptureWorkflowRoute::StartLongShot:
         longshot_result_ready = false;
-        startLongShot(pending_longshot_request);
+        if (!longshot_controller.start(pending_longshot_request)) {
+          pending_overlay_error = L"长截图无法启动，请重新框选后再试。";
+          if (!selection_overlay.postLongShotFinished(false)) {
+            selection_overlay.hide();
+          }
+        }
         return;
       case CaptureWorkflowRoute::ExistingLongShotResult:
         dispatchResultAction(region.action);
@@ -239,78 +236,24 @@ struct CaptureWorkflow::Impl {
     }
   }
 
-  void startLongShot(const LongShotRequest& request) {
-    stopLongShotWorker();
-    longshot_stop.store(false);
-    longshot_paused.store(false);
-    const HWND completion_window = owner_window;
-
-    longshot_thread = std::thread([this, request, completion_window] {
-      Image image;
-      const ActionResult result = longshot.captureSelection(
-          request, image,
-          [this](const Image& preview) {
-            selection_overlay.postLongShotPreview(preview);
-          },
-          [this] {
-            while (longshot_paused.load() && !longshot_stop.load()) {
-              std::this_thread::sleep_for(std::chrono::milliseconds(40));
-            }
-            return !longshot_stop.load();
-          });
-
-      if (shutting_down.load()) {
-        return;
-      }
-
-      std::unique_ptr<LongShotCompletion> completion(
-          new (std::nothrow) LongShotCompletion);
-      if (completion == nullptr) {
-        selection_overlay.postLongShotFinished(false);
-        return;
-      }
-      completion->result = result;
-      completion->image = std::move(image);
-      if (!PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0,
-                        reinterpret_cast<LPARAM>(completion.get()))) {
-        selection_overlay.postLongShotFinished(false);
-        return;
-      }
-      (void)completion.release();
-    });
-  }
-
   void onLongShotControl(LongShotControl control) {
-    if (control == LongShotControl::TogglePause) {
-      longshot_paused.store(!longshot_paused.load());
-    } else if (control == LongShotControl::Stop) {
-      longshot_stop.store(true);
-      longshot_paused.store(false);
-    }
-  }
-
-  void finishLongShotOnUiThread() {
-    if (longshot_thread.joinable()) {
-      longshot_thread.join();
-    }
+    longshot_controller.handleControl(control);
   }
 
   void stopLongShotWorker() {
-    longshot_stop.store(true);
-    longshot_paused.store(false);
-    if (longshot_thread.joinable()) {
-      longshot_thread.join();
-    }
+    longshot_controller.cancel();
+    longshot_controller.join();
   }
 
   void handleLongShotCompletion(std::intptr_t payload) {
-    std::unique_ptr<LongShotCompletion> completion(
-        reinterpret_cast<LongShotCompletion*>(payload));
-    finishLongShotOnUiThread();
+    ActionResult completion_result;
+    Image completion_image;
+    const bool completion_received = longshot_controller.handleCompletion(
+        payload, completion_result, completion_image);
     if (shutting_down.load()) {
       return;
     }
-    if (completion == nullptr) {
+    if (!completion_received) {
       longshot_result_ready = false;
       pending_overlay_error = L"长截图失败，请重新框选后再试。";
       if (!selection_overlay.postLongShotFinished(false)) {
@@ -319,9 +262,9 @@ struct CaptureWorkflow::Impl {
       return;
     }
 
-    bool overlay_success = completion->result.ok;
-    if (completion->result.ok) {
-      session.setResult(std::move(completion->image));
+    bool overlay_success = completion_result.ok;
+    if (completion_result.ok) {
+      session.setResult(std::move(completion_image));
       longshot_result_ready = true;
 
       // Keep the current behavior: the first completed result is available
@@ -337,7 +280,7 @@ struct CaptureWorkflow::Impl {
     } else {
       longshot_result_ready = false;
       pending_overlay_error =
-          longShotFailureText(completion->result.error_code);
+          longShotFailureText(completion_result.error_code);
     }
 
     if (!selection_overlay.postLongShotFinished(overlay_success)) {
@@ -444,8 +387,7 @@ struct CaptureWorkflow::Impl {
   }
 
   void cancel() {
-    longshot_stop.store(true);
-    longshot_paused.store(false);
+    longshot_controller.cancel();
     annotation_overlay.hide();
     selection_overlay.hide();
   }
@@ -455,7 +397,7 @@ struct CaptureWorkflow::Impl {
       return;
     }
     cancel();
-    stopLongShotWorker();
+    longshot_controller.shutdown();
     active = false;
     longshot_result_ready = false;
     recorded_owner_window = 0;
@@ -466,7 +408,7 @@ struct CaptureWorkflow::Impl {
 
   ActionDispatcher& dispatcher;
   CaptureEngine& capture;
-  LongShotEngine& longshot;
+  LongShotController& longshot_controller;
   ExportService& export_service;
   CaptureSession& session;
   PinManager& pin_manager;
@@ -475,9 +417,6 @@ struct CaptureWorkflow::Impl {
   HWND owner_window{nullptr};
   std::uintptr_t recorded_owner_window{0};
   LongShotRequest pending_longshot_request{};
-  std::thread longshot_thread;
-  std::atomic<bool> longshot_stop{false};
-  std::atomic<bool> longshot_paused{false};
   std::atomic<bool> shutting_down{false};
   bool active{false};
   bool longshot_result_ready{false};
@@ -486,10 +425,10 @@ struct CaptureWorkflow::Impl {
 
 CaptureWorkflow::CaptureWorkflow(
     ActionDispatcher& dispatcher, CaptureEngine& capture,
-    LongShotEngine& longshot, ExportService& export_service,
+    LongShotController& longshot_controller, ExportService& export_service,
     CaptureSession& session, PinManager& pin_manager,
     SelectionOverlay& selection_overlay)
-    : impl_(std::make_unique<Impl>(dispatcher, capture, longshot,
+    : impl_(std::make_unique<Impl>(dispatcher, capture, longshot_controller,
                                    export_service, session, pin_manager,
                                    selection_overlay)) {}
 

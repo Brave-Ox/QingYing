@@ -4,6 +4,7 @@
 #include "qingying/app/capture_session.hpp"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/hotkey_manager.hpp"
+#include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
 #include "qingying/capture/capture_engine.hpp"
@@ -42,6 +43,7 @@ class Application {
   CaptureSession session_;
   PinManager pin_manager_;
   SelectionOverlay overlay_;
+  LongShotController longshot_controller_;
   CaptureWorkflow capture_workflow_;
 };
 

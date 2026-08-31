@@ -133,6 +133,7 @@ target_link_libraries(qingying_mcp PUBLIC qingying_action)
 add_library(qingying_workflow STATIC
   src/app/capture_preview.cpp
   src/app/capture_workflow.cpp
+  src/app/longshot_controller.cpp
 )
 target_include_directories(qingying_workflow
   PUBLIC ${CMAKE_SOURCE_DIR}/include

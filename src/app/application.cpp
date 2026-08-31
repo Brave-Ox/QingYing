@@ -10,8 +10,9 @@ namespace qingying {
 Application::Application(HINSTANCE instance)
     : instance_(instance),
       longshot_(capture_),
-      capture_workflow_(dispatcher_, capture_, longshot_, export_service_,
-                        session_, pin_manager_, overlay_) {}
+      longshot_controller_(longshot_, overlay_),
+      capture_workflow_(dispatcher_, capture_, longshot_controller_,
+                        export_service_, session_, pin_manager_, overlay_) {}
 
 Application::~Application() {
   capture_workflow_.shutdown();
