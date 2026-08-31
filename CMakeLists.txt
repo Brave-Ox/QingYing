@@ -79,10 +79,16 @@ add_library(qingying_annotate STATIC
   src/annotate/annotation_editor_session.cpp
   src/annotate/annotation_interaction_controller.cpp
   src/annotate/annotation_overlay.cpp
+  src/annotate/annotation_editor_host.cpp
+  src/annotate/annotation_inline_text.cpp
+  src/annotate/annotation_editor_chrome.cpp
+  src/annotate/annotation_stroke_popup.cpp
+  src/annotate/annotation_editor_paint.cpp
   src/annotate/annotation_renderer.cpp
 )
 target_include_directories(qingying_annotate
   PUBLIC ${CMAKE_SOURCE_DIR}/include
+  PRIVATE ${CMAKE_SOURCE_DIR}/src
 )
 target_link_libraries(qingying_annotate PUBLIC qingying_action qingying_ui)
 if(WIN32)

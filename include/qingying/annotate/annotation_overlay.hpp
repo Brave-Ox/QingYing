@@ -32,7 +32,7 @@ class AnnotationOverlay
   // 就地编辑弹层：图片原点钉在屏幕 (screen_x, screen_y)，外侧绘制选区框。
   // screen_x < 0 时居中（测试/兜底）。
   bool showInPlace(HWND owner, const Image& source, int screen_x, int screen_y,
-                   AnnotationCallback callback);
+                    AnnotationCallback callback);
 
   // 请求关闭当前编辑器，等效于用户点取消，并交付一次取消回调。
   void hide();
