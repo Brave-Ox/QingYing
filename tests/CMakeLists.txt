@@ -18,6 +18,7 @@ add_executable(qingying_tests
   mask_renderer_test.cpp
   modern_toolbar_test.cpp
   overlay_phase_test.cpp
+  overlay_renderer_test.cpp
   selection_controller_test.cpp
   selection_handles_test.cpp
   selection_toolbar_test.cpp

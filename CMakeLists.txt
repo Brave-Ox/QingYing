@@ -56,6 +56,7 @@ endif()
 add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
   src/overlay/overlay_phase.cpp
+  src/overlay/overlay_renderer.cpp
   src/overlay/selection_controller.cpp
   src/overlay/selection_overlay.cpp
   src/overlay/selection_toolbar.cpp

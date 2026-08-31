@@ -33,11 +33,11 @@
 
 | 指标 | 目标 | 当前状态 | 证据 / 下一步 |
 |---|---:|---|---|
-| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 218,112 字节；仍需按最终交付包复测 |
+| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 218,624 字节；仍需按最终交付包复测 |
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 全绿 | 已验证 | 2026-08-31 Release：CTest 发现 272 个，271 个执行并全部通过，1 个窗口冒烟测试显式禁用 |
+| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 277 个，276 个执行；272 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -102,7 +102,7 @@
 - [x] WIC PNG 保存；
 - [x] `CaptureRegion / Copy / Save / Pin / Status` Handler 注册；
 - [x] `ModernToolbar` 共用选区条 / 标注底栏，GDI+ 与 SVG 路径图标；
-- [x] `SelectionToolbar` 与 `OverlayPhase`，选区命令和顶层阶段从 `selection_overlay.cpp` 抽离；
+- [x] `SelectionToolbar`、`OverlayPhase` 与 `OverlayRenderer`，选区命令、顶层阶段和像素合成从 `selection_overlay.cpp` 抽离；
 - [ ] DXGI Desktop Duplication；当前只链接 `d3d11/dxgi`，没有实现 DXGI 捕获路径。
 
 ### P1 — 可用的“截—标”
@@ -153,7 +153,7 @@
 | 领域 | 当前实现 | 规划 / 说明 |
 |---|---|---|
 | 语言 / GUI | C++17 + Win32 | 已落地；不用 Qt / Electron |
-| Overlay 绘制 | GDI DIB + `UpdateLayeredWindow` | Direct2D 尚未使用 |
+| Overlay 绘制 | `OverlayRenderer`：GDI DIB + `UpdateLayeredWindow` | Direct2D 尚未使用 |
 | 共用工具栏 | `qingying_ui`：GDI+ 圆角条、SVG 路径图标、中文 Tooltip | 当前选区条和标注底栏已接入 |
 | 区域捕获 | GDI `BitBlt` | DXGI Desktop Duplication 待实现 |
 | 标注 | `qingying_annotate`：Document / Engine / Renderer / EditorSession / Overlay | 动作回流已接线；重做 UI 与人工验收待补 |
@@ -243,7 +243,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；272 个测试已发现，271 个执行并全部通过，1 个 `DISABLED_` 窗口冒烟测试；
+- [x] Release 构建；277 个测试已发现，276 个执行，其中 272 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -254,7 +254,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 |---|---|---|---|
 | 混合 DPI 坐标错误 | 高 | 物理像素契约、PMv2、坐标单测 | 真实多屏冒烟；必要时按显示器管理 Overlay |
 | 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
-| Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase 已抽出 | 继续抽 Renderer，并在 Workflow 阶段非模态化 |
+| Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出 | 在 Workflow 阶段非模态化 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
 | Dispatcher 与工作流边界不清 | 中 | 单步动作已有 Handler | 引入 `CaptureWorkflow`，修正文档与依赖 |
 | PIMPL 所有权 | 低 | Capture / LongShot / MCP 已改为 `std::unique_ptr<Impl>` | 继续检查跨线程消息所有权 |

@@ -70,7 +70,7 @@
 | `qingying_capture` | static | GDI 区域截图；DXGI / 截窗 / 中央裁切接口位置 | 区域截图已实现，其余为桩 |
 | `qingying_export` | static | CF_DIB 剪贴板与 WIC PNG | 已实现 |
 | `qingying_ui` | static | 选区条 / 标注底栏共用的 ModernToolbar、GDI+ 与 SVG 路径图标 | 已实现 |
-| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、长截图预览 | 首批拆分已完成；Renderer / 模态循环仍待收口 |
+| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、OverlayRenderer、长截图预览 | Renderer 已拆出；模态循环仍待收口 |
 | `qingying_annotate` | static | 标注文档、引擎、渲染器、编辑会话和编辑 Overlay | 代码已接线，窗口冒烟仍单列 |
 | `qingying_pin` | static | 多 Pin、排布、缩放、独立导出、捕获排除 | 代码基本完成 |
 | `qingying_longshot` | static | 记事本选区滚动、拼接和停止条件 | 记事本路径已实现 |
@@ -309,8 +309,8 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 ## 14. 质量基线
 
 - 2026-08-31：`build.bat Release test` 成功；
-- CTest 发现 272 个用例，实际执行 271 个且全部通过；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
-- Release EXE：218,112 字节；
+- CTest 发现 277 个用例，实际执行 276 个，其中 272 个通过、4 个为当前环境下既有 `BitBlt` 失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- Release EXE：218,624 字节；
 - 自动测试覆盖 Action、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
 - 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、真实记事本长截、资源管理器 / Edge 长截、内存与唤起时延。
 
@@ -331,3 +331,4 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
 | 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移与结果操作回流 | 当前工作区，待提交 |
 | 2026-08-31 | Capture / LongShot / MCP PIMPL 改为 `unique_ptr` | 当前工作区，待提交 |
+| 2026-08-31 | OverlayRenderer 拆出像素合成与分层窗口呈现 | 当前工作区，待提交 |

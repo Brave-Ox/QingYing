@@ -4,7 +4,7 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 
 > 当前提交基线：`master` / `a4e400bc`（63 条提交；本文同时反映当前待提交的架构调整）
 > 文档同步日期：2026-08-31
-> Release 验证：构建成功，272 个测试已发现，271 个执行并全部通过，1 个窗口冒烟测试显式禁用
+> Release 验证：构建成功，277 个测试已发现，276 个执行；272 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
 
 ## 当前能力
 
@@ -32,7 +32,7 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 - 对外可调用的业务动作以 `ActionDispatcher` 为统一入口；GUI 的选区、标注和交互式长截图属于多步工作流，由 Application 编排。
 - `Image` 统一为 BGRA32、行优先、物理像素；当前结果经 `CaptureSession` 在 Capture / Copy / Save / Pin 之间流转。
 - 当前区域捕获使用 GDI `BitBlt`；DXGI 仅保留链接和后续实现位置。
-- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、编辑源图上移、`overlay → capture / annotate` 依赖移除和 PIMPL RAII。后续见 [架构如何调整](./docs/架构如何调整.md)：`CaptureWorkflow`、`LongShotController`、非模态消息循环和 Renderer 拆分。
+- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、编辑源图上移、`overlay → capture / annotate` 依赖移除和 PIMPL RAII。后续见 [架构如何调整](./docs/架构如何调整.md)：`CaptureWorkflow`、`LongShotController` 和非模态消息循环。
 
 ## 构建与测试
 
@@ -52,8 +52,8 @@ build.bat notest          :: 不编译测试
 
 2026-08-31 本机 Release 结果：
 
-- `qingying.exe`：218,112 字节（约 0.21 MiB，仅指当前 EXE 文件）；
-- CTest 发现 272 个用例，其中 271 个执行并全部通过，`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- `qingying.exe`：218,624 字节（约 0.21 MiB，仅指当前 EXE 文件）；
+- CTest 发现 277 个用例，其中 276 个执行：272 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
 - 常驻内存、热键唤起时延和完整绿色交付包体积仍需专项测量，不能由编译结果代替。
 
 GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
@@ -85,7 +85,7 @@ include/qingying/   对外头文件与稳定契约
 src/app             EXE：组合根、托盘、热键、交互工作流
 src/action          Action 契约与 Dispatcher
 src/capture         GDI 区域捕获（DXGI / 截窗 / 中央裁切待实现）
-src/overlay         桌面快照遮罩、框选、调区、窗口吸附、选区工具栏、阶段状态、长截图预览
+src/overlay         桌面快照遮罩、框选、调区、窗口吸附、选区工具栏、阶段状态、OverlayRenderer、长截图预览
 src/ui              选区条 / 标注底栏共用的 ModernToolbar 与 SVG 路径图标
 src/annotate        标注文档、引擎、渲染器和就地编辑 Overlay
 src/pin             多钉图窗口与捕获排除
@@ -93,6 +93,6 @@ src/longshot        记事本选区滚动拼接
 src/export          剪贴板与 WIC PNG
 src/command         本地口令桩，F8 待实现
 src/mcp             MCP Bridge 桩，F9 待实现
-tests/              GoogleTest（当前 272 个已发现用例，1 个显式禁用）
+tests/              GoogleTest（当前 277 个已发现用例，1 个显式禁用）
 docs/               架构、进度、分工与整改文档
 ```

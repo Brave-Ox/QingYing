@@ -148,8 +148,8 @@
 build.bat Release test
 ```
 
-2026-08-31 Release 结果：CTest 发现 **272** 个用例，实际执行 **271** 个且全部通过；
-`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。27 个测试源文件已纳入构建。
+2026-08-31 Release 结果：CTest 发现 **277** 个用例，实际执行 **276** 个，其中 **272** 个通过、4 个为当前环境下既有 `BitBlt` 失败；
+`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。28 个测试源文件已纳入构建。
 
 自动测试不能替代：
 
@@ -181,14 +181,14 @@ build.bat Release test
 
 ## 6. 技术债与架构偏差
 
-- `selection_overlay.cpp` 已降至约 970 行；选区工具栏、阶段状态和标注捕获 / 编辑职责已移出，但窗口、遮罩渲染、F2 与长截图预览仍在同一 Win32 壳中；
+- `selection_overlay.cpp` 已降至约 780 行；选区工具栏、阶段状态、遮罩 / 预览渲染和标注捕获 / 编辑职责已移出，但窗口与消息路由仍在同一 Win32 壳中；
 - `SelectionToolbar` 已以 PIMPL + `unique_ptr` 独立管理 HWND，`OverlayPhase` 已替代选区 / 长截图 / 关闭阶段的互斥布尔组合；
 - `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，但仍采用同线程模态消息循环（约 3,296 行）；
 - `SelectionOverlay::show` 拥有嵌套模态 `GetMessage`，与原“消息循环只在 app”的文档表述不完全一致；
 - `Application` 约 409 行，当前直接编排选区 → 标注 → 结果操作条，并管理桌面背景、长截图与部分保存；下一步应抽 `CaptureWorkflow` / `LongShotController`；
 - `LongShotRegion` 枚举存在但没有 Handler；
 - `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 Application 在 SelectionOverlay 返回后产生；
-- `CaptureEngine`、`LongShotEngine`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；跨线程预览 / 完成消息仍需统一封装所有权；
+- `CaptureEngine`、`LongShotEngine`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；跨线程预览 / 完成消息仍需统一封装所有权；
 - `ActionRequest` 会随 F8/F9 继续膨胀，缺少类型安全 payload；
 - `CaptureSession` 是有意保留的“最近结果”状态，但 Handler 间数据流仍具有隐式时序依赖。
 
@@ -203,7 +203,7 @@ build.bat Release test
 3. 抽 `CaptureWorkflow` 与 `LongShotController`，随后非模态化 Selection / Annotation Overlay；
 4. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
 5. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
-6. 继续完成 Renderer 拆分与跨线程消息所有权封装，再进入 F8/F9。
+6. 完成跨线程消息所有权封装，再进入 F8/F9。
 
 ---
 
