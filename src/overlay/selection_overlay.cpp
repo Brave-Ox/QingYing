@@ -9,13 +9,12 @@
 #include <utility>
 #include <vector>
 
-#include "qingying/annotate/annotation_overlay.hpp"
-#include "qingying/capture/capture_engine.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/overlay/mask_renderer.hpp"
+#include "qingying/overlay/overlay_phase.hpp"
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"
-#include "qingying/ui/modern_toolbar.hpp"
+#include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/window/window_detector.hpp"
 
 namespace qingying {
@@ -24,14 +23,6 @@ namespace {
 
 // 遮罩窗口的自定义消息：通知窗口属性已就绪，可开始渲染首帧。
 constexpr UINT kMsgOverlayReady = WM_APP + 1;
-constexpr UINT kToolbarButtonCopy = 1;
-constexpr UINT kToolbarButtonSave = 2;
-constexpr UINT kToolbarButtonEdit = 3;
-constexpr UINT kToolbarButtonPin = 4;
-constexpr UINT kToolbarButtonLongShot = 5;
-constexpr UINT kToolbarButtonLongShotStop = 6;
-constexpr int kSelectionToolbarItemCount = 6;
-constexpr int kToolbarDividerPadExtraPx = 6;
 constexpr UINT kMsgLongShotPreview = WM_APP + 3;
 constexpr UINT kMsgLongShotFinished = WM_APP + 4;
 constexpr UINT kMsgOverlayAbort = WM_APP + 5;
@@ -41,22 +32,9 @@ constexpr int kEscapeHotkeyId = 2;
 constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
 constexpr std::uint32_t kHoverPixel = 0xFF00B4FFu;   // 窗口吸附悬停高亮：亮蓝
 constexpr int kHoverThickness = 3;
-constexpr int kCaptureHidePumpRounds = 8;
-constexpr DWORD kCaptureHidePumpSleepMs = 10;
-// 与 annotation_overlay.cpp 约定：点遮罩空白处取消就地编辑。
-constexpr UINT kMsgCancelFromBackdrop = WM_APP + 2;
-const wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
-
-struct ToolbarItem
-{
-  UINT id{0};
-  ToolbarIconKind icon{ToolbarIconKind::Copy};
-  bool enabled{true};
-  RECT rect{};
-};
 
 // SelectionController 等 UI 状态通过窗口属性（WindowLongPtr）附加到窗口，
 // 供 WndProc 在处理消息时访问，避免全局/静态可变量。
@@ -64,9 +42,9 @@ struct OverlayWindowData {
   SelectionController controller;
   SelectionCallback callback;
   HWND overlay{nullptr};
-  HWND toolbar{nullptr};
+  SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
-  bool selection_confirmed{false};
+  OverlayPhase phase{OverlayPhase::Sniffing};
   DragKind drag{DragKind::None};
   coord::VirtualScreenRect screen;
   // 按 DPI 缩放后的 UI 尺寸（100% 时等于基准常量）。
@@ -78,20 +56,10 @@ struct OverlayWindowData {
   SelectionResult hover_rect;      // 悬停窗口矩形（客户区坐标）
   Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
-  bool longshot_active{false};
-  bool longshot_paused{false};
-  bool longshot_finishing{false};
   SelectionAction longshot_pending_action{SelectionAction::None};
-  bool closed{false};
   bool capture_passthrough{false};
-  ToolbarItem toolbar_items[kSelectionToolbarItemCount]{};
-  int toolbar_hover{-1};
-  int toolbar_divider_x{0};
-  HWND tooltip{nullptr};
-  wchar_t tooltip_text[kSelectionToolbarItemCount][kToolbarTooltipMaxChars]{};
   Image longshot_preview;
   Image annotated_image;
-  bool freeze_backdrop{false};
 };
 
 struct LongShotPreviewMessage {
@@ -108,7 +76,8 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data);
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection_screen,
                  const coord::VirtualScreenRect& screen);
-void beginInPlaceEdit(OverlayWindowData* data);
+void handleToolbarCommand(OverlayWindowData* data,
+                          SelectionToolbarCommand command);
 
 // CreateCompatibleDC RAII：DeleteDC。
 struct CompatibleDcDeleter {
@@ -138,175 +107,30 @@ struct ScreenHdcDeleter {
 };
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
-const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbarV3";
 
 void destroyToolbar(OverlayWindowData* data) {
-  if (data == nullptr || data->toolbar == nullptr) {
+  if (data == nullptr) {
     return;
   }
-  const HWND toolbar = data->toolbar;
-  data->toolbar = nullptr;
-  DestroyWindow(toolbar);
+  data->toolbar.hide();
 }
 
-void layoutSelectionToolbarItems(OverlayWindowData* data, int width,
-                                 int height)
-{
-  if (data == nullptr)
-  {
-    return;
+void refreshToolbar(OverlayWindowData* data) {
+  if (data != nullptr) {
+    data->toolbar.update(data->phase);
   }
-
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-  const int y = (height - metrics.item_size) / 2;
-  int x = metrics.bar_padding;
-  const ToolbarItem seed[kSelectionToolbarItemCount] = {
-      {kToolbarButtonCopy, ToolbarIconKind::Copy, true, {}},
-      {kToolbarButtonSave, ToolbarIconKind::Save, true, {}},
-      {kToolbarButtonLongShot, ToolbarIconKind::LongShot, true, {}},
-      {kToolbarButtonEdit, ToolbarIconKind::Edit, true, {}},
-      {kToolbarButtonPin, ToolbarIconKind::Pin, true, {}},
-      {kToolbarButtonLongShotStop, ToolbarIconKind::Stop, false, {}},
-  };
-  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
-  {
-    data->toolbar_items[i] = seed[i];
-    data->toolbar_items[i].rect = {x, y, x + metrics.item_size,
-                                   y + metrics.item_size};
-    x += metrics.item_size + metrics.gap;
-    if (i == 1)
-    {
-      data->toolbar_divider_x = x - metrics.gap + metrics.divider_gap / 2;
-      x += metrics.divider_gap - metrics.gap;
-    }
-  }
-  (void)width;
-}
-
-int hitTestToolbarItem(const OverlayWindowData* data, int x, int y)
-{
-  if (data == nullptr)
-  {
-    return -1;
-  }
-  const POINT pt{x, y};
-  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
-  {
-    if (PtInRect(&data->toolbar_items[i].rect, pt) != FALSE)
-    {
-      return i;
-    }
-  }
-  return -1;
-}
-
-void bindSelectionToolbarTooltips(OverlayWindowData* data, HWND hwnd)
-{
-  if (data == nullptr || hwnd == nullptr)
-  {
-    return;
-  }
-  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
-  {
-    const ToolbarItem& item = data->toolbar_items[i];
-    const wchar_t* label = toolbarIconLabel(item.icon);
-    if (item.id == kToolbarButtonLongShotStop && data->longshot_finishing)
-    {
-      label = L"\x505C\x6B62\x4E2D";
-    }
-    bindToolbarTooltip(data->tooltip, hwnd, item.id, item.rect, label,
-                       data->tooltip_text[i], kToolbarTooltipMaxChars);
-  }
-}
-
-void setLongShotButtons(OverlayWindowData* data)
-{
-  if (data == nullptr)
-  {
-    return;
-  }
-
-  const bool actions_enabled =
-      !data->longshot_active ||
-      (data->longshot_paused && !data->longshot_finishing);
-  ToolbarIconKind longshot_icon = ToolbarIconKind::LongShot;
-  if (data->longshot_active)
-  {
-    longshot_icon =
-        data->longshot_paused ? ToolbarIconKind::Resume : ToolbarIconKind::Pause;
-  }
-
-  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
-  {
-    ToolbarItem& item = data->toolbar_items[i];
-    switch (item.id)
-    {
-      case kToolbarButtonCopy:
-      case kToolbarButtonSave:
-      case kToolbarButtonEdit:
-      case kToolbarButtonPin:
-        item.enabled = actions_enabled;
-        break;
-      case kToolbarButtonLongShot:
-        item.icon = longshot_icon;
-        item.enabled = !data->longshot_finishing;
-        break;
-      case kToolbarButtonLongShotStop:
-        item.icon = ToolbarIconKind::Stop;
-        item.enabled = data->longshot_active && !data->longshot_finishing;
-        break;
-      default:
-        break;
-    }
-  }
-
-  if (data->toolbar != nullptr)
-  {
-    bindSelectionToolbarTooltips(data, data->toolbar);
-    InvalidateRect(data->toolbar, nullptr, FALSE);
-  }
-}
-
-void paintSelectionToolbar(HWND hwnd, OverlayWindowData* data)
-{
-  if (hwnd == nullptr || data == nullptr)
-  {
-    return;
-  }
-
-  PAINTSTRUCT ps{};
-  const HDC hdc = BeginPaint(hwnd, &ps);
-  if (hdc == nullptr)
-  {
-    return;
-  }
-
-  RECT client{};
-  GetClientRect(hwnd, &client);
-  fillToolbarColorKey(hdc, client);
-  drawToolbarBar(hdc, client);
-
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-  const int divider_pad = metrics.bar_padding + kToolbarDividerPadExtraPx;
-  drawToolbarDivider(hdc, data->toolbar_divider_x, client.top + divider_pad,
-                     client.bottom - divider_pad);
-
-  for (int i = 0; i < kSelectionToolbarItemCount; ++i)
-  {
-    const ToolbarItem& item = data->toolbar_items[i];
-    drawToolbarItem(hdc, item.rect, item.icon, i == data->toolbar_hover, false,
-                    item.enabled, false);
-  }
-  EndPaint(hwnd, &ps);
 }
 
 void requestLongShotStop(OverlayWindowData* data) {
-  if (data == nullptr || !data->longshot_active ||
-      data->longshot_finishing) {
+  if (data == nullptr || !overlayPhaseIsLongShot(data->phase) ||
+      data->phase == OverlayPhase::LongShotFinishing) {
     return;
   }
-  data->longshot_finishing = true;
-  setLongShotButtons(data);
+  if (!transitionOverlayPhase(data->phase,
+                              OverlayPhase::LongShotFinishing)) {
+    return;
+  }
+  refreshToolbar(data);
   if (data->longshot_control_callback) {
     data->longshot_control_callback(LongShotControl::Stop);
   }
@@ -317,9 +141,16 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     return;
   }
   if (action == SelectionAction::LongShot) {
-    if (data->longshot_active) {
-      data->longshot_paused = !data->longshot_paused;
-      setLongShotButtons(data);
+    if (data->phase == OverlayPhase::LongShotRunning ||
+        data->phase == OverlayPhase::LongShotPaused) {
+      const OverlayPhase next =
+          data->phase == OverlayPhase::LongShotRunning
+              ? OverlayPhase::LongShotPaused
+              : OverlayPhase::LongShotRunning;
+      if (!transitionOverlayPhase(data->phase, next)) {
+        return;
+      }
+      refreshToolbar(data);
       if (data->longshot_control_callback) {
         data->longshot_control_callback(LongShotControl::TogglePause);
       }
@@ -327,15 +158,17 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
       return;
     }
 
+    if (!transitionOverlayPhase(data->phase,
+                                OverlayPhase::LongShotRunning)) {
+      return;
+    }
     data->action = SelectionAction::LongShot;
-    data->longshot_active = true;
-    data->longshot_paused = false;
-    data->longshot_finishing = false;
+    data->annotated_image = Image{};
     data->longshot_pending_action = SelectionAction::None;
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
     data->capture_passthrough = true;
-    setLongShotButtons(data);
+    refreshToolbar(data);
     updateOverlay(data->overlay, data);
 
     SelectionResult result = toScreenSelection(data->controller.selection(),
@@ -346,8 +179,8 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     }
     return;
   }
-  if (data->longshot_active) {
-    if (data->longshot_paused && !data->longshot_finishing) {
+  if (overlayPhaseIsLongShot(data->phase)) {
+    if (data->phase == OverlayPhase::LongShotPaused) {
       data->longshot_pending_action = action;
       requestLongShotStop(data);
     }
@@ -355,6 +188,38 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
   }
   data->action = action;
   PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+}
+
+void handleToolbarCommand(OverlayWindowData* data,
+                          SelectionToolbarCommand command) {
+  if (data == nullptr) {
+    return;
+  }
+  switch (command) {
+    case SelectionToolbarCommand::Copy:
+      chooseToolbarAction(data, SelectionAction::Copy);
+      break;
+    case SelectionToolbarCommand::Save:
+      chooseToolbarAction(data, SelectionAction::Save);
+      break;
+    case SelectionToolbarCommand::ToggleLongShot:
+      chooseToolbarAction(data, SelectionAction::LongShot);
+      break;
+    case SelectionToolbarCommand::Edit:
+      chooseToolbarAction(data, SelectionAction::Edit);
+      break;
+    case SelectionToolbarCommand::Pin:
+      chooseToolbarAction(data, SelectionAction::Pin);
+      break;
+    case SelectionToolbarCommand::StopLongShot:
+      requestLongShotStop(data);
+      break;
+    case SelectionToolbarCommand::Cancel:
+      data->controller.cancel();
+      data->action = SelectionAction::None;
+      PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+      break;
+  }
 }
 
 // Win32 系统光标资源：使用显式资源编号，避免项目未定义 UNICODE 时
@@ -396,14 +261,17 @@ void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
     return;
   }
 
+  const bool selection_editable =
+      overlayPhaseHasSelection(data->phase) && data->annotated_image.empty();
   SelectionHandle handle = SelectionHandle::None;
   if (data->drag == DragKind::Resize || data->drag == DragKind::Move) {
     handle = data->active_handle;
-  } else if (data->selection_confirmed) {
+  } else if (selection_editable) {
     handle = data->controller.hitTest(x, y);
   }
 
-  HCURSOR cursor = loadOverlayCursor(handle, data->selection_confirmed);
+  HCURSOR cursor = loadOverlayCursor(
+      handle, overlayPhaseHasSelection(data->phase));
   if (cursor != nullptr) {
     SetCursor(cursor);
   }
@@ -441,186 +309,26 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y) {
   }
 }
 
-LRESULT CALLBACK toolbarWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                LPARAM lparam)
-{
-  OverlayWindowData* data = reinterpret_cast<OverlayWindowData*>(
-      GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-
-  switch (msg)
-  {
-    case WM_NCCREATE:
-    {
-      const CREATESTRUCTW* cs = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-      data = static_cast<OverlayWindowData*>(cs->lpCreateParams);
-      SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
-      if (data != nullptr)
-      {
-        data->toolbar = hwnd;
-      }
-      return TRUE;
-    }
-    case WM_CREATE:
-    {
-      if (data == nullptr)
-      {
-        return -1;
-      }
-      RECT client{};
-      GetClientRect(hwnd, &client);
-      layoutSelectionToolbarItems(data, client.right - client.left,
-                                  client.bottom - client.top);
-      applyToolbarColorKey(hwnd);
-      const HRGN region = CreateRoundRectRgn(
-          0, 0, client.right + 1, client.bottom + 1,
-          DefaultModernToolbarMetrics.corner_radius * 2,
-          DefaultModernToolbarMetrics.corner_radius * 2);
-      if (region != nullptr)
-      {
-        SetWindowRgn(hwnd, region, TRUE);
-      }
-      data->tooltip = createToolbarTooltip(hwnd);
-      setLongShotButtons(data);
-      return 0;
-    }
-    case WM_PAINT:
-      paintSelectionToolbar(hwnd, data);
-      return 0;
-    case WM_ERASEBKGND:
-      return 1;
-    case WM_MOUSEMOVE:
-    {
-      if (data == nullptr)
-      {
-        return 0;
-      }
-      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
-      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      const int hit = hitTestToolbarItem(data, x, y);
-      if (hit != data->toolbar_hover)
-      {
-        data->toolbar_hover = hit;
-        InvalidateRect(hwnd, nullptr, FALSE);
-      }
-      TRACKMOUSEEVENT track{};
-      track.cbSize = sizeof(track);
-      track.dwFlags = TME_LEAVE;
-      track.hwndTrack = hwnd;
-      TrackMouseEvent(&track);
-      return 0;
-    }
-    case WM_MOUSELEAVE:
-      if (data != nullptr && data->toolbar_hover >= 0)
-      {
-        data->toolbar_hover = -1;
-        InvalidateRect(hwnd, nullptr, FALSE);
-      }
-      return 0;
-    case WM_LBUTTONUP:
-    {
-      if (data == nullptr)
-      {
-        return 0;
-      }
-      const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
-      const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      const int hit = hitTestToolbarItem(data, x, y);
-      if (hit < 0 || hit >= kSelectionToolbarItemCount ||
-          !data->toolbar_items[hit].enabled)
-      {
-        return 0;
-      }
-      switch (data->toolbar_items[hit].id)
-      {
-        case kToolbarButtonCopy:
-          chooseToolbarAction(data, SelectionAction::Copy);
-          break;
-        case kToolbarButtonSave:
-          chooseToolbarAction(data, SelectionAction::Save);
-          break;
-        case kToolbarButtonLongShot:
-          chooseToolbarAction(data, SelectionAction::LongShot);
-          break;
-        case kToolbarButtonLongShotStop:
-          requestLongShotStop(data);
-          break;
-        case kToolbarButtonEdit:
-          beginInPlaceEdit(data);
-          break;
-        case kToolbarButtonPin:
-          chooseToolbarAction(data, SelectionAction::Pin);
-          break;
-        default:
-          break;
-      }
-      return 0;
-    }
-    case WM_KEYDOWN:
-      if (data != nullptr && wparam == VK_ESCAPE)
-      {
-        data->controller.cancel();
-        data->action = SelectionAction::None;
-        PostMessageW(data->overlay, WM_CLOSE, 0, 0);
-      }
-      return 0;
-    case WM_DESTROY:
-      if (data != nullptr && data->toolbar == hwnd)
-      {
-        if (data->tooltip != nullptr)
-        {
-          DestroyWindow(data->tooltip);
-          data->tooltip = nullptr;
-        }
-        data->toolbar = nullptr;
-      }
-      return 0;
-    default:
-      break;
-  }
-  return DefWindowProcW(hwnd, msg, wparam, lparam);
-}
-
 bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const SelectionResult& selection_screen,
-                 const coord::VirtualScreenRect& screen)
-{
-  if (data == nullptr)
-  {
+                 const coord::VirtualScreenRect& screen) {
+  if (data == nullptr) {
     return false;
   }
-
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-  const int toolbar_width = modernToolbarWidth(
-      kSelectionToolbarItemCount, metrics.divider_gap - metrics.gap, metrics);
-  const int toolbar_height = modernToolbarHeight(metrics);
-
-  int x = selection_screen.x;
-  int y = selection_screen.y + selection_screen.height + 8;
-  if (y + toolbar_height > screen.bottom())
-  {
-    y = selection_screen.y - toolbar_height - 8;
-  }
-
-  const int min_x = screen.left;
-  const int min_y = screen.top;
-  const int max_x = screen.right() - toolbar_width;
-  const int max_y = screen.bottom() - toolbar_height;
-  x = (std::max)(min_x, (std::min)(x, max_x));
-  y = (std::max)(min_y, (std::min)(y, max_y));
-
-  const HINSTANCE instance = GetModuleHandleW(nullptr);
-  const HWND toolbar = CreateWindowExW(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kToolbarClassName,
-      L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, overlay,
-      nullptr, instance, data);
-  if (toolbar == nullptr)
-  {
-    return false;
-  }
-
-  SetWindowPos(toolbar, HWND_TOPMOST, x, y, toolbar_width, toolbar_height,
-               SWP_SHOWWINDOW | SWP_NOACTIVATE);
-  return true;
+  SelectionToolbarPlacement placement;
+  placement.selection_x = selection_screen.x;
+  placement.selection_y = selection_screen.y;
+  placement.selection_width = selection_screen.width;
+  placement.selection_height = selection_screen.height;
+  placement.screen_left = screen.left;
+  placement.screen_top = screen.top;
+  placement.screen_right = screen.right();
+  placement.screen_bottom = screen.bottom();
+  return data->toolbar.show(
+      reinterpret_cast<std::uintptr_t>(overlay), placement, data->phase,
+      [data](SelectionToolbarCommand command) {
+        handleToolbarCommand(data, command);
+      });
 }
 
 // 像素缓冲写点（越界跳过）。
@@ -791,7 +499,8 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   if (pixels.size() != num_pixels) {
     return false;
   }
-  if (data->selection_confirmed && !selection.cancelled) {
+  if (overlayPhaseHasSelection(data->phase) && !selection.cancelled &&
+      data->annotated_image.empty()) {
     handles::drawHandles(pixels, width, height, selection.x, selection.y,
                          selection.width, selection.height, kHandlePixel,
                          data->handle_radius);
@@ -804,7 +513,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   // out of the selected pixels and can never contaminate a captured frame.
   drawLongShotPreview(pixels, width, height, selection, data->longshot_preview);
 
-  if (data->capture_passthrough && data->selection_confirmed &&
+  if (data->capture_passthrough && overlayPhaseHasSelection(data->phase) &&
       !selection.cancelled) {
     // Remove the border/handles as well as the hole's 1-alpha marker while a
     // worker captures. This keeps the selected pixels free of overlay UI.
@@ -852,107 +561,6 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   return ok != FALSE;
 }
 
-void requestCancelAnnotationFromBackdrop(HWND overlay)
-{
-  if (overlay == nullptr)
-  {
-    return;
-  }
-  const HWND editor =
-      static_cast<HWND>(GetPropW(overlay, kEditorHwndPropName));
-  if (editor != nullptr)
-  {
-    PostMessageW(editor, kMsgCancelFromBackdrop, 0, 0);
-  }
-}
-
-void beginInPlaceEdit(OverlayWindowData* data)
-{
-  if (data == nullptr || data->overlay == nullptr)
-  {
-    return;
-  }
-
-  const SelectionResult selection = data->controller.selection();
-  if (selection.cancelled || selection.width <= 0 || selection.height <= 0)
-  {
-    return;
-  }
-
-  const SelectionResult selection_screen =
-      toScreenSelection(selection, data->screen);
-
-  destroyToolbar(data);
-  ShowWindow(data->overlay, SW_HIDE);
-
-  for (int round = 0; round < kCaptureHidePumpRounds; ++round)
-  {
-    MSG pump{};
-    while (PeekMessageW(&pump, nullptr, 0, 0, PM_REMOVE))
-    {
-      if (pump.message == WM_QUIT)
-      {
-        PostQuitMessage(static_cast<int>(pump.wParam));
-        ShowWindow(data->overlay, SW_SHOW);
-        return;
-      }
-      TranslateMessage(&pump);
-      DispatchMessageW(&pump);
-    }
-    Sleep(kCaptureHidePumpSleepMs);
-  }
-
-  CaptureEngine capture;
-  Image image;
-  const ActionResult captured = capture.captureRegion(
-      selection_screen.x, selection_screen.y, selection_screen.width,
-      selection_screen.height, image);
-
-  if (!captured.ok || image.empty())
-  {
-    ShowWindow(data->overlay, SW_SHOW);
-    SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    (void)showToolbar(data->overlay, data, selection_screen, data->screen);
-    return;
-  }
-
-  data->freeze_backdrop = true;
-  ShowWindow(data->overlay, SW_SHOW);
-  SetWindowPos(data->overlay, HWND_TOPMOST, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-  (void)updateOverlay(data->overlay, data);
-
-  AnnotationFinishResult finish;
-  AnnotationOverlay editor;
-  const bool shown = editor.showInPlace(
-      data->overlay, image, selection_screen.x, selection_screen.y,
-      [&finish](const AnnotationFinishResult& result)
-      {
-        finish = result;
-      });
-
-  data->freeze_backdrop = false;
-
-  if (!shown)
-  {
-    (void)showToolbar(data->overlay, data, selection_screen, data->screen);
-    return;
-  }
-
-  if (finish.cancelled || finish.rendered_image.empty())
-  {
-    data->action = SelectionAction::None;
-    data->controller.cancel();
-    PostMessageW(data->overlay, WM_CLOSE, 0, 0);
-    return;
-  }
-
-  data->annotated_image = finish.rendered_image;
-  data->action = SelectionAction::Edit;
-  PostMessageW(data->overlay, WM_CLOSE, 0, 0);
-}
-
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                 LPARAM lparam) {
   OverlayWindowData* data = reinterpret_cast<OverlayWindowData*>(
@@ -976,6 +584,15 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (!updateOverlay(hwnd, data)) {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        return 0;
+      }
+      if (data->phase == OverlayPhase::Selected) {
+        const SelectionResult selection_screen =
+            toScreenSelection(data->controller.selection(), data->screen);
+        if (!showToolbar(hwnd, data, selection_screen, data->screen)) {
+          data->controller.cancel();
+          PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
       }
       return 0;
     }
@@ -996,9 +613,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         const SelectionAction pending_action = data->longshot_pending_action;
         const bool run_pending_action =
             success && pending_action != SelectionAction::None;
-        data->longshot_active = false;
-        data->longshot_paused = false;
-        data->longshot_finishing = false;
+        if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+          PostMessageW(hwnd, WM_CLOSE, 0, 0);
+          return 0;
+        }
         data->longshot_pending_action = SelectionAction::None;
         if (!success) {
           // Failure dialogs are shown by Application only after this topmost
@@ -1011,7 +629,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
-        setLongShotButtons(data);
+        refreshToolbar(data);
         updateOverlay(hwnd, data);
       }
       return 0;
@@ -1022,7 +640,6 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         data->longshot_control_callback = {};
         data->controller.cancel();
         data->action = SelectionAction::None;
-        data->selection_confirmed = false;
       }
       PostMessageW(hwnd, WM_CLOSE, 0, 0);
       return 0;
@@ -1041,18 +658,22 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data == nullptr) {
         return 0;
       }
-      if (data->freeze_backdrop) {
-        requestCancelAnnotationFromBackdrop(hwnd);
+      if (overlayPhaseIsLongShot(data->phase)) {
         return 0;
       }
-      if (data->longshot_active || data->longshot_finishing) {
+      // 标注后的栅格结果与当前物理选区是一组不可拆分的结果。恢复操作条
+      // 时锁定选区，避免拖动 / 缩放后继续对尺寸不匹配的旧图执行动作。
+      if (!data->annotated_image.empty()) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
 
-      if (!data->selection_confirmed) {
+      if (!overlayPhaseHasSelection(data->phase)) {
         // 尚无有效选区：开始拖出矩形。
+        if (!transitionOverlayPhase(data->phase, OverlayPhase::Creating)) {
+          return 0;
+        }
         SetCapture(hwnd);
         data->drag = DragKind::Create;
         data->active_handle = SelectionHandle::None;
@@ -1065,7 +686,9 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const SelectionHandle handle = data->controller.hitTest(x, y);
       if (handle == SelectionHandle::None) {
         destroyToolbar(data);
-        data->selection_confirmed = false;
+        if (!transitionOverlayPhase(data->phase, OverlayPhase::Creating)) {
+          return 0;
+        }
         data->action = SelectionAction::None;
         SetCapture(hwnd);
         data->drag = DragKind::Create;
@@ -1096,7 +719,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
       if (data->drag == DragKind::None) {
         // 空闲悬停：无按键且未确认选区 → 窗口吸附高亮。
-        if ((wparam & MK_LBUTTON) == 0 && !data->selection_confirmed) {
+        if ((wparam & MK_LBUTTON) == 0 &&
+            data->phase == OverlayPhase::Sniffing) {
           updateHover(data, x, y);
           updateOverlay(hwnd, data);
         }
@@ -1156,13 +780,17 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
       const SelectionResult& selection = data->controller.selection();
       if (selection.cancelled) {
-        data->selection_confirmed = false;
+        (void)transitionOverlayPhase(data->phase, OverlayPhase::Sniffing);
         destroyToolbar(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
 
-      data->selection_confirmed = true;
+      if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+        data->controller.cancel();
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        return 0;
+      }
       const SelectionResult selection_screen =
           toScreenSelection(selection, data->screen);
       if (!showToolbar(hwnd, data, selection_screen, data->screen)) {
@@ -1175,17 +803,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_RBUTTONDOWN: {
       if (data != nullptr) {
-        if (data->freeze_backdrop) {
-          requestCancelAnnotationFromBackdrop(hwnd);
-          return 0;
-        }
-        if (data->longshot_active) {
+        if (overlayPhaseIsLongShot(data->phase)) {
           requestLongShotStop(data);
           return 0;
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
-        data->selection_confirmed = false;
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -1194,46 +817,41 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       // 截图期间临时注册的全局 Esc 热键：遮罩不激活（WS_EX_NOACTIVATE），
       // 键盘消息不会发给遮罩，取消改由这里处理。
       if (data != nullptr && wparam == kEscapeHotkeyId) {
-        if (data->freeze_backdrop) {
-          requestCancelAnnotationFromBackdrop(hwnd);
-          return 0;
-        }
-        if (data->longshot_active) {
+        if (overlayPhaseIsLongShot(data->phase)) {
           requestLongShotStop(data);
           return 0;
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
-        data->selection_confirmed = false;
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
     }
     case WM_KEYDOWN: {
       if (data != nullptr && wparam == VK_ESCAPE) {
-        if (data->freeze_backdrop) {
-          requestCancelAnnotationFromBackdrop(hwnd);
-          return 0;
-        }
-        if (data->longshot_active) {
+        if (overlayPhaseIsLongShot(data->phase)) {
           requestLongShotStop(data);
           return 0;
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
-        data->selection_confirmed = false;
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
     }
     case WM_CLOSE: {
+      if (data != nullptr) {
+        (void)transitionOverlayPhase(data->phase, OverlayPhase::Closing);
+      }
       destroyToolbar(data);
       DestroyWindow(hwnd);
       return 0;
     }
     case WM_DESTROY: {
       if (data != nullptr) {
-        data->closed = true;
+        if (data->phase != OverlayPhase::Closing) {
+          (void)transitionOverlayPhase(data->phase, OverlayPhase::Closing);
+        }
         destroyToolbar(data);
         SelectionResult result = toScreenSelection(data->controller.selection(),
                                                    data->screen);
@@ -1290,7 +908,8 @@ Image makeLongShotPreviewImage(const Image& source) {
 bool SelectionOverlay::show(const Image& background,
                              SelectionCallback callback,
                              LongShotControlCallback
-                                 longshot_control_callback) {
+                                 longshot_control_callback,
+                             const SelectionResult& initial_selection) {
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
   WNDCLASSEXW wc{};
@@ -1304,24 +923,24 @@ bool SelectionOverlay::show(const Image& background,
     return false;
   }
 
-  WNDCLASSEXW toolbar_wc{};
-  toolbar_wc.cbSize = sizeof(WNDCLASSEXW);
-  toolbar_wc.lpfnWndProc = toolbarWndProc;
-  toolbar_wc.hInstance = instance;
-  toolbar_wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
-  toolbar_wc.hbrBackground = nullptr;
-  toolbar_wc.lpszClassName = kToolbarClassName;
-  if (RegisterClassExW(&toolbar_wc) == 0 &&
-      GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-    return false;
-  }
-
   OverlayWindowData data;
   data.background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
   data.callback = std::move(callback);
   data.longshot_control_callback = std::move(longshot_control_callback);
   data.screen = coord::getVirtualScreen();
   data.controller.setBounds(data.screen.width, data.screen.height);
+
+  if (!initial_selection.cancelled && initial_selection.width > 0 &&
+      initial_selection.height > 0) {
+    data.controller.setSelection(
+        coord::screenToClientX(initial_selection.x, data.screen),
+        coord::screenToClientY(initial_selection.y, data.screen),
+        initial_selection.width, initial_selection.height);
+    if (!data.controller.selection().cancelled) {
+      (void)transitionOverlayPhase(data.phase, OverlayPhase::Selected);
+      data.annotated_image = initial_selection.annotated_image;
+    }
+  }
 
   // 按 DPI 缩放 UI（100% 为 96 DPI）：手柄命中半径。
   data.dpi = coord::getSystemDpi();
@@ -1354,7 +973,7 @@ bool SelectionOverlay::show(const Image& background,
   bool message_error = false;
   int quit_code = 0;
   MSG msg{};
-  while (!data.closed) {
+  while (data.phase != OverlayPhase::Closing) {
     const BOOL message_result = GetMessageW(&msg, nullptr, 0, 0);
     if (message_result == -1) {
       message_error = true;
@@ -1374,8 +993,9 @@ bool SelectionOverlay::show(const Image& background,
   }
 
   overlay_hwnd_.store(0);
-  if (!data.closed && IsWindow(hwnd)) {
-    if (data.longshot_active && data.longshot_control_callback) {
+  if (data.phase != OverlayPhase::Closing && IsWindow(hwnd)) {
+    if (overlayPhaseIsLongShot(data.phase) &&
+        data.longshot_control_callback) {
       data.longshot_control_callback(LongShotControl::Stop);
     }
     // Application shutdown and message-loop errors must not dispatch the

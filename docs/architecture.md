@@ -1,7 +1,7 @@
 # 轻映 QingYing — 当前架构说明（方案 B）
 
 > 状态：以当前代码为准
-> 基线：`master` / `b91dbe21`
+> 提交基线：`master` / `a4e400bc`（本文同时反映当前待提交的架构调整）
 > 同步日期：2026-08-31
 > 形态：**一个 EXE + 10 个 static lib**
 
@@ -42,11 +42,11 @@
 └───────────────┬──────────────────────┬───────────────┘
                 │ 单步命令             │ 多步 GUI 工作流
                 ▼                      ▼
-┌────────────────────────────┐   ┌──────────────────────┐
-│ qingying_action            │   │ SelectionOverlay     │
-│ Request / Result /         │   │ LongShot worker      │
-│ Dispatcher / Handler       │   │ Annotation（已接线） │
-└──────────────┬─────────────┘   └──────────┬───────────┘
+┌────────────────────────────┐   ┌──────────────────────────┐
+│ qingying_action            │   │ SelectionOverlay /      │
+│ Request / Result /         │   │ SelectionToolbar        │
+│ Dispatcher / Handler       │   │ Annotation / LongShot   │
+└──────────────┬─────────────┘   └────────────┬─────────────┘
                │                            │
       ┌────────┼────────┐          ┌────────┴─────────┐
       ▼        ▼        ▼          ▼                  ▼
@@ -70,7 +70,7 @@
 | `qingying_capture` | static | GDI 区域截图；DXGI / 截窗 / 中央裁切接口位置 | 区域截图已实现，其余为桩 |
 | `qingying_export` | static | CF_DIB 剪贴板与 WIC PNG | 已实现 |
 | `qingying_ui` | static | 选区条 / 标注底栏共用的 ModernToolbar、GDI+ 与 SVG 路径图标 | 已实现 |
-| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、ModernToolbar、长截图预览、就地标注入口 | 已实现但文件职责偏重 |
+| `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、长截图预览 | 首批拆分已完成；Renderer / 模态循环仍待收口 |
 | `qingying_annotate` | static | 标注文档、引擎、渲染器、编辑会话和编辑 Overlay | 代码已接线，窗口冒烟仍单列 |
 | `qingying_pin` | static | 多 Pin、排布、缩放、独立导出、捕获排除 | 代码基本完成 |
 | `qingying_longshot` | static | 记事本选区滚动、拼接和停止条件 | 记事本路径已实现 |
@@ -107,7 +107,7 @@ action    ← annotate
 action    ← command
 action    ← mcp
 action + capture ← longshot
-action + capture + annotate + ui ← overlay   （CMake：capture 为公开链接，annotate/ui 为私有链接）
+action + ui ← overlay   （CMake：overlay 已不链接 capture / annotate）
 ui        （ModernToolbar 独立于 action，由 app/targets 组合）
 
 app → 上述所有模块（Composition Root）
@@ -119,7 +119,7 @@ app → 上述所有模块（Composition Root）
 - 引擎模块不得反向依赖 `app`；
 - 跨模块不 include 对方 `.cpp` 旁的私有头；
 - `window_detector.cpp` 目前编入 `qingying_overlay`，需要被 F6/F8 复用时再拆 `qingying_window`；
-- `qingying_overlay` 现在确实在就地编辑前直接使用 `CaptureEngine` 重新抓取选区；若改为由 Application 传入源图，再考虑删除该公开链接。
+- 编辑源图已由 Application 在 `SelectionOverlay` 返回 Edit 意图后抓取；`qingying_overlay` 不再 include 或链接 capture / annotate。
 
 ---
 
@@ -160,22 +160,25 @@ Ctrl+Shift+Q
   → Application 记录原前台顶层窗口（供长截图）
   → PinManager::CaptureGuard 临时隐藏可见 Pin
   → CaptureEngine 直接抓取虚拟桌面，生成 Overlay 背景快照
-  → SelectionOverlay::show(background, callback)
+  → SelectionOverlay::show(background, callback[, initial_selection])
   → 用户自由框选 / 窗口吸附 / 八点调区
-  → ModernToolbar（Copy / Save / LongShot / Edit / Pin）
+  → SelectionToolbar（Copy / Save / LongShot / Edit / Pin）
   → SelectionResult（物理像素 + SelectionAction）
   → Copy / Save / Pin：dispatch(CaptureRegion) → CaptureSession → 消费结果
-  → Edit：隐藏遮罩 → Overlay 直接 CaptureEngine 重抓选区
-           → AnnotationOverlay（就地）→ rendered Image → Application 写回 Session 并自动 Copy
+  → Edit：SelectionOverlay 返回 → Application 捕获选区源图
+           → AnnotationOverlay → rendered Image → 写回 Session 并自动 Copy
+           → composeCapturePreview → 恢复同一选区与结果操作条
+           → Save / Pin / 再次 Edit
 ```
 
 说明：
 
 - 桌面背景快照是 UI 表现层输入，因此当前直接调用 `CaptureEngine`，不会写 `CaptureSession`；
 - 普通保存路径当前由 `Application::saveImage` 直接调用 `ExportService`，尚未完全复用 `SaveHandler`；
-- 操作条“编辑”按钮已启用并接入 `SelectionAction::Edit`；当前标注完成后写回 Session 并自动 Copy，尚未返回完整 Save / Pin 操作条；
+- 操作条“编辑”只上报 `SelectionAction::Edit`；标注完成后 Application 写回 Session、自动 Copy，并恢复完整 Save / Pin / Edit 结果操作条；
+- 恢复结果操作条时选区保持只读，避免移动 / 缩放后让物理矩形与既有标注栅格失配；开始长截图会显式清除该标注结果；
 - 选区条和标注底栏共用白色圆角 `ModernToolbar`，悬停 / 选中使用浅灰状态，图标含 SVG 路径实现；
-- `AnnotationOverlay` 的源图在就地编辑时钉在选区左上角，编辑期间父遮罩冻结显示；
+- `AnnotationOverlay` 在 SelectionOverlay 模态循环结束后打开；确认时把标注栅格贴回新桌面快照，取消时不覆盖 Session；
 - Overlay 当前使用 `WS_EX_NOACTIVATE`，以避免遮罩出现后使原窗口的 owned popup 消失。
 
 ---
@@ -293,7 +296,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 |---|---|---|
 | F1 自定义区域 | overlay → app → action → capture | 代码完成，人工混合 DPI 待验收 |
 | F2 窗口吸附 | window + overlay | 代码完成，真实应用待验收 |
-| F3 标注 | annotate + AnnotationOverlay + overlay + app | 代码已接线，六类工具与撤销可用；重做 UI、Save / Pin 回流和人工验收待补 |
+| F3 标注 | app + capture + AnnotationOverlay + overlay | 六类工具与撤销可用，Copy / Save / Pin / 再编辑代码回流已接通；重做 UI 和人工验收待补 |
 | F4 导出 | export + action | 已实现 |
 | F5 钉图 | pin + action | 代码基本完成，人工验收待做 |
 | F6 长截图 | app + overlay + longshot + capture | 记事本路径已接入；另外两应用未实现 |
@@ -306,9 +309,9 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 ## 14. 质量基线
 
 - 2026-08-31：`build.bat Release test` 成功；
-- CTest 发现 252 个用例，实际执行 251 个且全部通过；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
-- Release EXE：212,480 字节；
-- 自动测试覆盖 Action、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、Pin、拼接、记事本 profile 和长截图停止条件；
+- CTest 发现 262 个用例，实际执行 261 个且全部通过；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- Release EXE：214,528 字节；
+- 自动测试覆盖 Action、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
 - 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、真实记事本长截、资源管理器 / Edge 长截、内存与唤起时延。
 
 ---
@@ -326,3 +329,4 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-08-26～28 | 接通记事本 F6，并补预览、暂停停止与失败清理 | `b1ee85bf`～`68f0e740` |
 | 2026-08-30 | 合并标注链路与 F1 / Pin / F6 | `d9f7c0dc` |
 | 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
+| 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移与结果操作回流 | 当前工作区，待提交 |

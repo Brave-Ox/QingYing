@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发清单与技术要点
 
 > 依据立项文档、仓库架构和当前代码整理。
-> 当前基线：`master` / `b91dbe21`（共 62 条提交）；同步日期：2026-08-31。
+> 当前提交基线：`master` / `a4e400bc`（共 63 条提交；本文同时反映当前待提交架构调整）；同步日期：2026-08-31。
 > 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
 
 来源：
@@ -25,7 +25,7 @@
 | 平台 | Windows only |
 | GUI | C++17 + Win32；不用 Qt / Electron |
 | 主路径 | 热键 → 框选 / 调区 → 标注 → 复制 / 保存，目标约 15 秒 |
-| 当前主链路 | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 编辑标注 → 复制；普通复制 / 保存 / Pin 可用，标注后完整操作条回流待补 |
+| 当前主链路 | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 编辑标注 → 自动复制 → 恢复结果操作条 → 保存 / Pin / 再编辑 |
 
 ---
 
@@ -33,11 +33,11 @@
 
 | 指标 | 目标 | 当前状态 | 证据 / 下一步 |
 |---|---:|---|---|
-| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 212,480 字节；仍需按最终交付包复测 |
+| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 214,528 字节；仍需按最终交付包复测 |
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
-| 主路径演示 | 约 15 秒 | 部分闭环 | F3 已可就地标注并自动复制；标注后继续 Save / Pin 和完整 Demo 待补 |
-| 自动测试 | 全绿 | 已验证 | 2026-08-31 Release：CTest 发现 252 个，251 个执行并全部通过，1 个窗口冒烟测试显式禁用 |
+| 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
+| 自动测试 | 全绿 | 已验证 | 2026-08-31 Release：CTest 发现 262 个，261 个执行并全部通过，1 个窗口冒烟测试显式禁用 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -49,7 +49,7 @@
 |---|---|---|---|---|
 | **F1** | 自定义截图区域 | **代码完成** | 自由框选、反向归一化、八点调区、移动、取消、虚拟桌面与物理像素转换 | 双屏和混合 DPI 人工冒烟 |
 | **F2** | 窗口吸附 | **代码完成，待人工验收** | 悬停检测、高亮、点击吸附、自身 / 工具 / 最小化 / 桌面窗口过滤、DWM 边框修正 | 记事本、资源管理器、Edge 与混合 DPI 实测 |
-| **F3** | 截图标注 | **代码已接线，最小闭环** | 文档 / 引擎 / 渲染器、矩形 / 椭圆 / 箭头 / 画笔 / 文字 / 马赛克、样式二级栏、撤销、就地编辑；编辑结果回写 Session 并自动复制 | 标注后继续 Save / Pin、重做 UI、真实交互验收 |
+| **F3** | 截图标注 | **代码动作闭环，待人工验收** | 文档 / 引擎 / 渲染器、六类工具、样式二级栏、撤销；编辑结果回写 Session、自动复制并恢复 Save / Pin / 再编辑操作条 | 重做 UI、真实窗口 / DPI 交互验收 |
 | **F4** | 导出 | **已实现** | CF_DIB 剪贴板、WIC PNG 保存、输入校验 | UI 错误文案和最终人工回归 |
 | **F5** | 钉图 | **代码基本完成，待人工验收** | 置顶、多 Pin、自动避让、拖动、等比缩放、关闭、独立复制 / 保存、捕获时隐藏恢复 | 多 Pin、缩放、隐藏恢复的视觉体验实测 |
 | **F6** | 长截图 | **记事本路径已接入** | 固定选区、记事本内容区校验、滚轮驱动、重叠拼接、到底 / 无新增 / 上限停止、预览、暂停 / 继续 / 停止、失败清理 | 记事本真实闭环；资源管理器与 Edge profile；三应用验收 |
@@ -63,7 +63,7 @@
 |---|---|
 | F1 | `SelectionOverlay` → `SelectionResult` → `Application` → `ActionDispatcher(CaptureRegion)` → `CaptureEngine` |
 | F2 | `WindowDetector` + `SelectionOverlay` + `SelectionController::setSelection` |
-| F3 | `SelectionOverlay` → `AnnotationOverlay` → `AnnotationEditorSession / AnnotationEngine / AnnotationRenderer` → `SelectionResult.annotated_image` → `Application` 回写 Session 并复制 |
+| F3 | `SelectionOverlay(Edit intent)` → `Application + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → Session + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
 | F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `Application` 管理 |
 | F5 | `ActionDispatcher(Pin)` + `CaptureSession` + `PinManager / PinWindow` |
 | F6 | `Application` 工作流 + `SelectionOverlay` + `LongShotEngine` + `CaptureEngine` + `ImageStitcher` |
@@ -102,6 +102,7 @@
 - [x] WIC PNG 保存；
 - [x] `CaptureRegion / Copy / Save / Pin / Status` Handler 注册；
 - [x] `ModernToolbar` 共用选区条 / 标注底栏，GDI+ 与 SVG 路径图标；
+- [x] `SelectionToolbar` 与 `OverlayPhase`，选区命令和顶层阶段从 `selection_overlay.cpp` 抽离；
 - [ ] DXGI Desktop Duplication；当前只链接 `d3d11/dxgi`，没有实现 DXGI 捕获路径。
 
 ### P1 — 可用的“截—标”
@@ -114,7 +115,8 @@
 - [x] 矩形、椭圆、箭头、画笔、文字、马赛克；
 - [x] 撤销 / 重做内核和离屏栅格化；
 - [x] `AnnotationOverlay` 与编辑完成回流到 Session 并自动复制；
-- [ ] 重做按钮、标注后 Save / Pin 完整操作回流和真实交互验收；
+- [x] 标注后自动 Copy，并恢复 Save / Pin / 再编辑操作条；
+- [ ] 重做按钮和真实交互验收；
 
 ### P2 — “钉得住 / 长页一次成”
 
@@ -154,7 +156,7 @@
 | Overlay 绘制 | GDI DIB + `UpdateLayeredWindow` | Direct2D 尚未使用 |
 | 共用工具栏 | `qingying_ui`：GDI+ 圆角条、SVG 路径图标、中文 Tooltip | 当前选区条和标注底栏已接入 |
 | 区域捕获 | GDI `BitBlt` | DXGI Desktop Duplication 待实现 |
-| 标注 | `qingying_annotate`：Document / Engine / Renderer / EditorSession / Overlay | 已接线；重做 UI 与完整动作回流待补 |
+| 标注 | `qingying_annotate`：Document / Engine / Renderer / EditorSession / Overlay | 动作回流已接线；重做 UI 与人工验收待补 |
 | 窗口 / 中央裁切 | 方法存在但返回 `kNotImplemented` | F8/F9 前实现 |
 | 多屏 / DPI | PMv2 + Virtual Screen + 坐标工具 | 混合 DPI 人工验收待完成 |
 | 剪贴板 | Win32 Clipboard / CF_DIB | 已实现 |
@@ -187,9 +189,15 @@ CaptureWindow / CropCenter / LongShotRegion / SuggestName
 GUI 热键
   → Application 交互工作流
   → SelectionOverlay
-  → dispatch(CaptureRegion)
+  → 普通动作：dispatch(CaptureRegion)
   → CaptureSession
   → dispatch(Copy / Pin)
+
+标注动作
+  → SelectionOverlay 返回 Edit 意图
+  → Application 捕获源图并打开 AnnotationOverlay
+  → 自动 Copy + 恢复结果操作条
+  → Save / Pin / 再编辑
 
 交互式长截图
   → Application 启动 worker
@@ -235,7 +243,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；252 个测试已发现，251 个执行并全部通过，1 个 `DISABLED_` 窗口冒烟测试；
+- [x] Release 构建；262 个测试已发现，261 个执行并全部通过，1 个 `DISABLED_` 窗口冒烟测试；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -246,7 +254,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 |---|---|---|---|
 | 混合 DPI 坐标错误 | 高 | 物理像素契约、PMv2、坐标单测 | 真实多屏冒烟；必要时按显示器管理 Overlay |
 | 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
-| Overlay 状态膨胀 | 高 | 纯逻辑 SelectionController 已抽出 | 抽 Toolbar / Renderer，引入显式 `OverlayPhase` |
+| Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase 已抽出 | 继续抽 Renderer，并在 Workflow 阶段非模态化 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
 | Dispatcher 与工作流边界不清 | 中 | 单步动作已有 Handler | 引入 `CaptureWorkflow`，修正文档与依赖 |
 | PIMPL 裸指针 | 中 | 析构中显式释放 | 改为 `std::unique_ptr<Impl>` |
@@ -267,6 +275,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | F6 基础、profile、拼接、接线与交互控制 | `b1ee85bf`～`9607c013`、`7b66b2ae`、`1aeb4f3a`、`68f0e740` |
 | F3 标注文档、渲染、编辑器与 Application 接线 | `c26b62b5`～`cfa74978`、`d9f7c0dc` |
 | 选区 / 标注共用 ModernToolbar 与 SVG 图标 | `b91dbe21` |
+| SelectionToolbar / OverlayPhase、编辑源图上移与结果动作回流 | 当前工作区，待提交 |
 
 提交标题用于定位，最终完成度以当前源码和测试结果为准。
 
@@ -276,7 +285,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 
 - [x] 当前可运行 Release EXE；
 - [x] 当前架构、进度、耦合分析和架构调整文档；
-- [ ] F3 标注后继续 Save / Pin 的完整 15 秒 Demo；
+- [ ] F3 Copy / Save / Pin / 再编辑的完整 15 秒人工 Demo 记录；
 - [ ] F5 / F6 / DPI 人工验收记录；
 - [ ] Skill / MCP 接口说明；
 - [ ] 最终绿色交付包及体积 / 内存 / 时延报告；

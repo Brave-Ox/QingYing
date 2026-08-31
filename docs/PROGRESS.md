@@ -1,6 +1,6 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前基线：`master` / `b91dbe21`（本地标注与远端 F1/钉图/长截图已合并）
+> 当前提交基线：`master` / `a4e400bc`（63 条提交；本文同时反映当前待提交的架构调整）
 > 更新日期：2026-08-31
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
@@ -16,14 +16,14 @@
 | 普通截图主链路 | **基本闭环** | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin |
 | F1 自定义区域 | **代码完成** | 自由框选、八点调整、移动、取消、虚拟桌面、物理像素转换 |
 | F2 窗口吸附 | **代码完成，待人工验收** | 候选过滤、悬停高亮、点击吸附、DWM 边框修正 |
-| F3 标注 | **代码已接线，最小闭环** | 矩形/椭圆/箭头/画笔/马赛克/文字、样式二级栏、撤销；选区「编辑」就地标注后回写并复制 |
+| F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
 | F6 长截图 | **记事本代码路径已接入** | 固定选区拼接、预览、暂停 / 继续 / 停止、失败清理；另两应用未实现 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
 
-一句话：普通截图、窗口吸附、Pin、记事本长截图与标注就地编辑已经形成代码链路；下一步是双端功能的真实环境验收，以及标注完成后回到完整 Save / Pin 操作条。
+一句话：普通截图、窗口吸附、Pin、记事本长截图与标注结果 Copy / Save / Pin 已形成代码链路；下一步是完整人工验收、重做 UI，以及把 Application 中的多步流程继续收口为非模态 Workflow。
 
 ---
 
@@ -37,6 +37,7 @@
 - `WM_QINGYING_BEGIN_CAPTURE` 将热键处理延后到 UI 消息流；
 - `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
+- `SelectionToolbar` 独立管理选区操作条 HWND、命令与阶段映射，`OverlayPhase` 集中校验选区 / 长截图 / 关闭阶段；
 - 共享 `Image` 与 `CaptureSession` 已打通区域截图、导出、Pin 与标注结果回写；
 - 应用退出时停止长截图 worker、关闭 Overlay 并回收线程。
 
@@ -75,7 +76,7 @@
 | 就地编辑 Overlay | `annotation_overlay.*` | 自动布局 / 交互逻辑 + 1 个 `DISABLED_` 窗口冒烟 |
 | 标注工具条 | `modern_toolbar` | 主栏工具 + 颜色/线宽或字号二级栏；SVG 图标 |
 
-第三人接线：选区操作条「编辑」→ `AnnotationOverlay::showInPlace` → 合成图写入 `SelectionResult::annotated_image` → Application 回写 Session 并复制。
+当前接线：`SelectionOverlay` 只返回 Edit 意图 → Application 抓取编辑源图并打开 `AnnotationOverlay` → 合成图写入 Session 并自动 Copy → `composeCapturePreview` 将结果贴回桌面快照 → 同一选区恢复结果操作条，可继续 Save / Pin / Edit。
 
 ### 2.5 F4 导出
 
@@ -122,7 +123,7 @@
 
 ### F3 标注后续（不是 Stub）
 
-- 标注完成后当前回写 Session 并自动 Copy，尚未回到完整操作条（Save / Pin）；
+- 标注后的 Copy / Save / Pin / 再编辑代码回流已接通，仍需真实窗口与混合 DPI 联合验收；
 - 重做 UI 仍待补；
 - 就地标注与八点调区 / 多屏的组合冒烟待验收。
 
@@ -147,8 +148,8 @@
 build.bat Release test
 ```
 
-2026-08-31 Release 结果：CTest 发现 **252** 个用例，实际执行 **251** 个且全部通过；
-`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。24 个测试源文件已纳入构建。
+2026-08-31 Release 结果：CTest 发现 **262** 个用例，实际执行 **261** 个且全部通过；
+`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。27 个测试源文件已纳入构建。
 
 自动测试不能替代：
 
@@ -174,18 +175,19 @@ build.bat Release test
 | 2026-08-28 | F6 预览、暂停停止和失败清理 | `7b66b2ae`、`1aeb4f3a`、`68f0e740` |
 | 2026-08-30 | 合并标注链路与 F1 / Pin / F6 | `d9f7c0dc` |
 | 2026-08-31 | 选区 / 标注共用圆角 ModernToolbar 与 SVG 图标 | `b91dbe21` |
+| 2026-08-31 | SelectionToolbar / OverlayPhase、编辑源图上移、标注结果操作回流 | 当前工作区，待提交 |
 
 ---
 
 ## 6. 技术债与架构偏差
 
-- `selection_overlay.cpp` 当前包含窗口、渲染、ModernToolbar、F2、长截图预览与就地标注入口（约 1,325 行）；
+- `selection_overlay.cpp` 已降至约 970 行；选区工具栏、阶段状态和标注捕获 / 编辑职责已移出，但窗口、遮罩渲染、F2 与长截图预览仍在同一 Win32 壳中；
+- `SelectionToolbar` 已以 PIMPL + `unique_ptr` 独立管理 HWND，`OverlayPhase` 已替代选区 / 长截图 / 关闭阶段的互斥布尔组合；
 - `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，但仍采用同线程模态消息循环（约 3,296 行）；
-- 工具栏按钮 ID、创建、启用条件和命令 switch 为硬编码；
 - `SelectionOverlay::show` 拥有嵌套模态 `GetMessage`，与原“消息循环只在 app”的文档表述不完全一致；
-- `Application` 直接执行桌面背景捕获、长截图与部分保存，原“业务能力只经 Dispatcher”过于绝对；
+- `Application` 约 409 行，当前直接编排选区 → 标注 → 结果操作条，并管理桌面背景、长截图与部分保存；下一步应抽 `CaptureWorkflow` / `LongShotController`；
 - `LongShotRegion` 枚举存在但没有 Handler；
-- `qingying_overlay` 在 CMake 中公开链接 `qingying_capture`；就地标注会先隐藏遮罩，再在 Overlay 内直接调用 `CaptureEngine` 重新抓取选区；
+- `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 Application 在 SelectionOverlay 返回后产生；
 - `CaptureEngine`、`LongShotEngine`、`McpBridge` 仍以裸 `Impl*` 管理 PIMPL；
 - `ActionRequest` 会随 F8/F9 继续膨胀，缺少类型安全 payload；
 - `CaptureSession` 是有意保留的“最近结果”状态，但 Handler 间数据流仍具有隐式时序依赖。
@@ -197,11 +199,11 @@ build.bat Release test
 ## 7. 下一步建议
 
 1. 对最新合并版本人工走一遍截图 / 标注 / 钉图 / 长截图；
-2. 标注完成后回到完整操作条（Save / Pin，Copy 已自动执行）；
-3. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
-4. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
-5. 收紧 `overlay → capture` 依赖，PIMPL 改 `unique_ptr`，明确 Dispatcher 与 Workflow 边界；
-6. 完成上述契约后再进入 F8/F9。
+2. 为标注编辑器增加重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
+3. 抽 `CaptureWorkflow` 与 `LongShotController`，随后非模态化 Selection / Annotation Overlay；
+4. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
+5. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
+6. 继续完成 Renderer 拆分与其余 PIMPL RAII，再进入 F8/F9。
 
 ---
 

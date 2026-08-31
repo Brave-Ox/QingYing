@@ -55,8 +55,10 @@ endif()
 
 add_library(qingying_overlay STATIC
   src/overlay/mask_renderer.cpp
+  src/overlay/overlay_phase.cpp
   src/overlay/selection_controller.cpp
   src/overlay/selection_overlay.cpp
+  src/overlay/selection_toolbar.cpp
   src/overlay/selection_handles.cpp
   src/overlay/coordinate_transform.cpp
   src/window/window_detector.cpp
@@ -64,10 +66,10 @@ add_library(qingying_overlay STATIC
 target_include_directories(qingying_overlay
   PUBLIC ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(qingying_overlay PUBLIC qingying_action qingying_capture)
+target_link_libraries(qingying_overlay PUBLIC qingying_action)
 if(WIN32)
   target_link_libraries(qingying_overlay PUBLIC dwmapi)
-  target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_annotate qingying_ui)
+  target_link_libraries(qingying_overlay PRIVATE gdi32 user32 qingying_ui)
 endif()
 
 add_library(qingying_annotate STATIC
@@ -130,6 +132,7 @@ target_link_libraries(qingying_mcp PUBLIC qingying_action)
 add_executable(qingying WIN32
   src/app/main.cpp
   src/app/application.cpp
+  src/app/capture_preview.cpp
   src/app/single_instance_guard.cpp
   src/app/autostart_settings.cpp
   src/app/tray_controller.cpp

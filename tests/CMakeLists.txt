@@ -11,13 +11,16 @@ add_executable(qingying_tests
   annotation_renderer_test.cpp
   longshot_request_adapter_test.cpp
   capture_engine_test.cpp
+  capture_preview_test.cpp
   capture_session_test.cpp
   dib_encoder_test.cpp
   export_service_test.cpp
   mask_renderer_test.cpp
   modern_toolbar_test.cpp
+  overlay_phase_test.cpp
   selection_controller_test.cpp
   selection_handles_test.cpp
+  selection_toolbar_test.cpp
   coordinate_transform_test.cpp
   f1_selection_integration_test.cpp
   pin_manager_test.cpp
@@ -26,6 +29,7 @@ add_executable(qingying_tests
   notepad_longshot_profile_test.cpp
   window_detector_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
+  ${CMAKE_SOURCE_DIR}/src/app/capture_preview.cpp
 )
 
 target_include_directories(qingying_tests

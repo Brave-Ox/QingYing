@@ -36,6 +36,9 @@ class Application {
   void onCaptureHotkey();
   void saveLastCapture();
   ActionResult saveImage(const Image& image);
+  Image captureDesktopBackground();
+  bool editSelection(SelectionResult& region);
+  void dispatchResultAction(SelectionAction action);
   void beginCaptureFlow();
   void runCapturePipeline(const SelectionResult& region);
   void startLongShot(const LongShotRequest& request);

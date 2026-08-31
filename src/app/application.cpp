@@ -2,8 +2,10 @@
 
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/app/capture_preview.hpp"
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/annotate/annotation_overlay.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 
 #include "resource.h"
@@ -168,19 +170,82 @@ ActionResult Application::saveImage(const Image& image) {
   return export_service_.savePng(image, path);
 }
 
+Image Application::captureDesktopBackground() {
+  Image background;
+  auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
+  const coord::VirtualScreenRect screen = coord::getVirtualScreen();
+  (void)capture_.captureRegion(screen.left, screen.top, screen.width,
+                               screen.height, background);
+  return background;
+}
+
+bool Application::editSelection(SelectionResult& region) {
+  // 编辑意图已经离开长截图结果工具栏；无论编辑确认、取消或启动失败，
+  // 下一轮普通截图都不得继续消费上一轮长截图的临时结果状态。
+  longshot_result_ready_ = false;
+  if (region.cancelled || region.width <= 0 || region.height <= 0) {
+    return false;
+  }
+
+  Image source = region.annotated_image;
+  if (source.empty()) {
+    auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
+    const ActionResult captured = capture_.captureRegion(
+        region.x, region.y, region.width, region.height, source);
+    if (!captured.ok || source.empty()) {
+      return false;
+    }
+  }
+
+  AnnotationFinishResult finish;
+  AnnotationOverlay editor;
+  const bool shown = editor.showInPlace(
+      tray_.hwnd(), source, region.x, region.y,
+      [&finish](const AnnotationFinishResult& result) { finish = result; });
+  if (!shown || finish.cancelled || finish.rendered_image.empty()) {
+    return false;
+  }
+
+  region.annotated_image = std::move(finish.rendered_image);
+  session_.setResult(region.annotated_image);
+
+  // 保持原有体验：完成标注立即复制；结果工具栏随后仍可继续保存或钉图。
+  ActionRequest copy_request;
+  copy_request.type = ActionType::Copy;
+  (void)dispatcher_.dispatch(copy_request);
+  return true;
+}
+
+void Application::dispatchResultAction(SelectionAction action) {
+  if (action == SelectionAction::Save) {
+    saveLastCapture();
+    return;
+  }
+  if (action == SelectionAction::Pin) {
+    ActionRequest pin_request;
+    pin_request.type = ActionType::Pin;
+    const ActionResult pin_result = dispatcher_.dispatch(pin_request);
+    if (!pin_result.ok) {
+      MessageBoxW(tray_.hwnd(), L"Failed to pin the latest capture.",
+                  L"QingYing", MB_OK | MB_ICONERROR);
+    }
+    return;
+  }
+  if (action == SelectionAction::Copy) {
+    ActionRequest copy_request;
+    copy_request.type = ActionType::Copy;
+    (void)dispatcher_.dispatch(copy_request);
+  }
+}
+
 void Application::runCapturePipeline(const SelectionResult& region) {
   if (region.cancelled) {
     return;
   }
 
-  if (region.action == SelectionAction::Edit) {
-    if (region.annotated_image.empty()) {
-      return;
-    }
+  if (!region.annotated_image.empty()) {
     session_.setResult(region.annotated_image);
-    ActionRequest copy_req;
-    copy_req.type = ActionType::Copy;
-    dispatcher_.dispatch(copy_req);
+    dispatchResultAction(region.action);
     return;
   }
 
@@ -193,22 +258,14 @@ void Application::runCapturePipeline(const SelectionResult& region) {
   // Once an interactive long-shot has completed, the selection toolbar acts
   // on its accumulated result instead of recapturing the current viewport.
   if (longshot_result_ready_) {
-    if (region.action == SelectionAction::Save) {
-      saveLastCapture();
-    } else if (region.action == SelectionAction::Pin) {
-      ActionRequest pin_request;
-      pin_request.type = ActionType::Pin;
-      const ActionResult pin_result = dispatcher_.dispatch(pin_request);
-      if (!pin_result.ok) {
-        MessageBoxW(tray_.hwnd(), L"Failed to pin the latest capture.",
-                    L"QingYing", MB_OK | MB_ICONERROR);
-      }
-    } else {
-      ActionRequest copy_request;
-      copy_request.type = ActionType::Copy;
-      dispatcher_.dispatch(copy_request);
-    }
+    dispatchResultAction(region.action);
     longshot_result_ready_ = false;
+    return;
+  }
+
+  if (region.action != SelectionAction::Copy &&
+      region.action != SelectionAction::Save &&
+      region.action != SelectionAction::Pin) {
     return;
   }
 
@@ -229,26 +286,7 @@ void Application::runCapturePipeline(const SelectionResult& region) {
   if (!capture_result.ok) {
     return;
   }
-
-  if (region.action == SelectionAction::Save) {
-    saveLastCapture();
-    return;
-  }
-
-  if (region.action == SelectionAction::Pin) {
-    ActionRequest pin_request;
-    pin_request.type = ActionType::Pin;
-    const ActionResult pin_result = dispatcher_.dispatch(pin_request);
-    if (!pin_result.ok) {
-      MessageBoxW(tray_.hwnd(), L"Failed to pin the latest capture.",
-                  L"QingYing", MB_OK | MB_ICONERROR);
-    }
-    return;
-  }
-
-  ActionRequest copy_req;
-  copy_req.type = ActionType::Copy;
-  dispatcher_.dispatch(copy_req);
+  dispatchResultAction(region.action);
 }
 
 void Application::startLongShot(const LongShotRequest& request) {
@@ -322,28 +360,62 @@ void Application::beginCaptureFlow() {
   recorded_owner_window_ = reinterpret_cast<std::uintptr_t>(target);
   pending_longshot_request_ = LongShotRequest{};
 
-  // 先截取虚拟桌面作为遮罩界面背景（排除 Pin 窗口）。遮罩基于截图渲染，
-  // 其它窗口（含从属浮层）在截图里保持可见，不再被实时 topmost 窗口盖住。
-  // 截屏失败时 background 为空，遮罩退回纯半透明遮罩。
-  Image background;
-  {
-    auto pin_capture_guard = pin_manager_.temporarilyHideForCapture();
-    const coord::VirtualScreenRect screen = coord::getVirtualScreen();
-    capture_.captureRegion(screen.left, screen.top, screen.width, screen.height,
-                           background);
+  // 截屏失败时 background 为空，遮罩仍会退回纯半透明模式。
+  Image background = captureDesktopBackground();
+  SelectionResult initial_selection;
+  bool overlay_failed = false;
+
+  for (;;) {
+    SelectionResult completed;
+    bool completed_received = false;
+    const bool shown = overlay_.show(
+        background,
+        [this, &completed, &completed_received](
+            const SelectionResult& region) {
+          pending_longshot_request_ =
+              makeLongShotRequest(recorded_owner_window_, region);
+          if (region.action == SelectionAction::LongShot) {
+            runCapturePipeline(region);
+            return;
+          }
+          completed = region;
+          completed_received = true;
+        },
+        [this](LongShotControl control) { onLongShotControl(control); },
+        initial_selection);
+
+    if (!shown) {
+      overlay_failed = true;
+      break;
+    }
+    if (!completed_received || completed.cancelled) {
+      break;
+    }
+
+    if (completed.action == SelectionAction::Edit) {
+      if (!editSelection(completed)) {
+        break;
+      }
+
+      // 编辑器关闭后重新抓桌面，并把合成图贴回原选区，恢复统一的
+      // Copy / Save / Pin 结果工具栏。Overlay 不再负责抓图或创建编辑器。
+      background = captureDesktopBackground();
+      (void)composeCapturePreview(background, completed.annotated_image,
+                                  completed, coord::getVirtualScreen());
+      completed.action = SelectionAction::None;
+      completed.cancelled = false;
+      initial_selection = std::move(completed);
+      continue;
+    }
+
+    runCapturePipeline(completed);
+    break;
   }
 
-  const bool shown = overlay_.show(
-      background, [this](const SelectionResult& region) {
-        pending_longshot_request_ =
-            makeLongShotRequest(recorded_owner_window_, region);
-        runCapturePipeline(region);
-      },
-      [this](LongShotControl control) { onLongShotControl(control); });
-
+  longshot_result_ready_ = false;
   recorded_owner_window_ = 0;
   pending_longshot_request_ = LongShotRequest{};
-  if (!shown) {
+  if (overlay_failed) {
     pending_overlay_error_.clear();
     return;
   }
