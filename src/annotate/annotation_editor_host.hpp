@@ -34,6 +34,7 @@ inline constexpr UINT kButtonMoveId = 24;
 inline constexpr UINT kInlineEditId = 10;
 inline constexpr UINT kFontComboId = 20;
 inline constexpr UINT kStrokePopupEditId = 21;
+inline constexpr UINT_PTR kStrokePopupEditSubclassId = 1;
 inline constexpr UINT kSizeMenuBaseId = 400;
 inline constexpr UINT kTipShapeRectId = 200;
 inline constexpr UINT kTipShapeEllipseId = 201;
@@ -235,6 +236,7 @@ void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value);
 void pickSizeFromOverlayMenu(AnnotationEditorHost* data);
 bool handleSizeComboWheel(AnnotationEditorHost* data, int delta);
 bool hitTestStrokeChip(const AnnotationEditorHost* data, int x, int y);
+bool strokePopupIsVisible(const AnnotationEditorHost* data);
 void hideStrokePopup(AnnotationEditorHost* data);
 void destroyStrokePopup(AnnotationEditorHost* data);
 void showStrokePopup(AnnotationEditorHost* data);
@@ -273,6 +275,9 @@ bool colorsMatch(const ColorBgra& left, const ColorBgra& right);
 RECT toWinRect(const AnnotationEditorRect& rect);
 int currentStrokeWidthPx(const AnnotationEditorHost* data);
 void syncStrokePopupEdit(AnnotationEditorHost* data);
+void applyStrokeFromPopupEdit(AnnotationEditorHost* data);
+bool handleStrokePopupEditCommand(AnnotationEditorHost* data, UINT id, UINT code,
+                                  HWND control);
 void applyStrokeFromPopupSlider(AnnotationEditorHost* data, int client_x);
 void paintStrokePopup(HWND hwnd, AnnotationEditorHost* data);
 LRESULT CALLBACK strokePopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,

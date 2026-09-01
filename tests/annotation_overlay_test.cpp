@@ -515,6 +515,80 @@ TEST(AnnotationOverlayTest, StrokePopupCornerMatchesChromeStadium)
   EXPECT_GT(AnnotationEditorStrokePopupCornerRadius, 8);
 }
 
+TEST(AnnotationOverlayTest, StrokePopupClosesWhenSwitchingToMosaicOrText)
+{
+  EXPECT_TRUE(annotationEditorStrokePopupClosesOnTool(AnnotationTool::Mosaic));
+  EXPECT_TRUE(annotationEditorStrokePopupClosesOnTool(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorStrokePopupClosesOnTool(AnnotationTool::None));
+  EXPECT_FALSE(annotationEditorStrokePopupClosesOnTool(AnnotationTool::Pen));
+  EXPECT_FALSE(annotationEditorStrokePopupClosesOnTool(AnnotationTool::Arrow));
+  EXPECT_FALSE(
+      annotationEditorStrokePopupClosesOnTool(AnnotationTool::Rectangle));
+}
+
+TEST(AnnotationOverlayTest, HideStrokePopupAlsoHidesOwnedValueEdit)
+{
+  // 数字框是 WS_POPUP，不是分层弹层的子窗口；只藏父窗会留下右下角白底「9」。
+  EXPECT_TRUE(AnnotationEditorStrokePopupValueIsOwnedPopup);
+
+  AnnotationEditorStrokePopupWindowState state{};
+  annotationEditorPlaceStrokePopupWindows(state, 120, 240);
+  EXPECT_TRUE(state.popup_visible);
+  EXPECT_TRUE(state.value_visible);
+
+  state.popup_visible = false;
+  annotationEditorHideStrokePopupWindows(state);
+  EXPECT_FALSE(state.popup_visible);
+  EXPECT_FALSE(state.value_visible);
+}
+
+TEST(AnnotationOverlayTest, ShowStrokePopupRepositionsOwnedValueEdit)
+{
+  AnnotationEditorStrokePopupWindowState state{};
+  annotationEditorPlaceStrokePopupWindows(state, 10, 20);
+  const int old_value_x = state.value_screen_x;
+  const AnnotationEditorStrokePopupLayout layout =
+      annotationEditorStrokePopupLayout();
+
+  annotationEditorPlaceStrokePopupWindows(state, 400, 500);
+  EXPECT_TRUE(state.popup_visible);
+  EXPECT_TRUE(state.value_visible);
+  EXPECT_NE(state.value_screen_x, old_value_x);
+  EXPECT_EQ(state.value_screen_x, 400 + layout.value.left);
+  EXPECT_EQ(state.value_screen_y, 500 + layout.value.top);
+}
+
+TEST(AnnotationOverlayTest, StrokePopupStaysOpenWhenFocusMovesToValueEdit)
+{
+  EXPECT_FALSE(annotationEditorStrokePopupHidesOnDeactivate(
+      AnnotationEditorStrokePopupDeactivateTarget::ValueEdit));
+  EXPECT_FALSE(annotationEditorStrokePopupHidesOnDeactivate(
+      AnnotationEditorStrokePopupDeactivateTarget::Popup));
+  EXPECT_TRUE(annotationEditorStrokePopupHidesOnDeactivate(
+      AnnotationEditorStrokePopupDeactivateTarget::Outside));
+}
+
+TEST(AnnotationOverlayTest, StrokePopupEditNotificationMatchesHwndEvenIfIdZero)
+{
+  constexpr unsigned int kEditId = 21;
+  EXPECT_TRUE(annotationEditorStrokePopupAcceptsEditNotification(0, kEditId, true));
+  EXPECT_FALSE(
+      annotationEditorStrokePopupAcceptsEditNotification(0, kEditId, false));
+  EXPECT_TRUE(
+      annotationEditorStrokePopupAcceptsEditNotification(kEditId, kEditId, false));
+}
+
+TEST(AnnotationOverlayTest, StrokePopupFormatWidthTextFollowsSliderValue)
+{
+  wchar_t text[AnnotationEditorStrokePopupValueTextMaxChars]{};
+  EXPECT_TRUE(annotationEditorStrokePopupFormatWidthText(9, text,
+      AnnotationEditorStrokePopupValueTextMaxChars));
+  EXPECT_STREQ(text, L"9");
+  EXPECT_TRUE(annotationEditorStrokePopupFormatWidthText(12, text,
+      AnnotationEditorStrokePopupValueTextMaxChars));
+  EXPECT_STREQ(text, L"12");
+}
+
 TEST(AnnotationOverlayTest, InPlacePlacementPinsImageOriginToSelection)
 {
   constexpr int kSelX = 100;

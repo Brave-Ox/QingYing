@@ -604,6 +604,112 @@ inline AnnotationEditorStrokePopupLayout annotationEditorStrokePopupLayout()
   return layout;
 }
 
+// UpdateLayeredWindow 弹层不能托管可编辑 EDIT 子窗，数字框只能做独立 WS_POPUP。
+inline constexpr bool AnnotationEditorStrokePopupValueIsOwnedPopup = true;
+
+struct AnnotationEditorStrokePopupWindowState
+{
+  bool popup_visible{false};
+  bool value_visible{false};
+  int popup_screen_x{0};
+  int popup_screen_y{0};
+  int value_screen_x{0};
+  int value_screen_y{0};
+};
+
+inline bool annotationEditorStrokePopupClosesOnTool(AnnotationTool tool)
+{
+  return !annotationEditorPropertyBarShowsStroke(tool);
+}
+
+inline void annotationEditorHideStrokePopupWindows(
+    AnnotationEditorStrokePopupWindowState& state)
+{
+  state.popup_visible = false;
+  state.value_visible = false;
+}
+
+inline void annotationEditorStrokePopupValueScreenOrigin(int popup_screen_x,
+                                                         int popup_screen_y,
+                                                         int& out_x, int& out_y)
+{
+  const AnnotationEditorStrokePopupLayout layout =
+      annotationEditorStrokePopupLayout();
+  out_x = popup_screen_x + layout.value.left;
+  out_y = popup_screen_y + layout.value.top;
+}
+
+inline void annotationEditorPlaceStrokePopupWindows(
+    AnnotationEditorStrokePopupWindowState& state, int popup_screen_x,
+    int popup_screen_y)
+{
+  state.popup_visible = true;
+  state.value_visible = AnnotationEditorStrokePopupValueIsOwnedPopup;
+  state.popup_screen_x = popup_screen_x;
+  state.popup_screen_y = popup_screen_y;
+  annotationEditorStrokePopupValueScreenOrigin(
+      popup_screen_x, popup_screen_y, state.value_screen_x,
+      state.value_screen_y);
+}
+
+inline constexpr int AnnotationEditorStrokePopupValueTextMaxChars = 8;
+
+enum class AnnotationEditorStrokePopupDeactivateTarget
+{
+  Outside = 0,
+  Popup = 1,
+  ValueEdit = 2,
+};
+
+inline bool annotationEditorStrokePopupHidesOnDeactivate(
+    AnnotationEditorStrokePopupDeactivateTarget target)
+{
+  return target == AnnotationEditorStrokePopupDeactivateTarget::Outside;
+}
+
+inline bool annotationEditorStrokePopupAcceptsEditNotification(
+    unsigned int control_id, unsigned int expected_id, bool hwnd_matches_edit)
+{
+  return hwnd_matches_edit || control_id == expected_id;
+}
+
+inline bool annotationEditorStrokePopupFormatWidthText(int width, wchar_t* out,
+                                                       int out_chars)
+{
+  if (out == nullptr || out_chars < 2)
+  {
+    return false;
+  }
+
+  const int clamped = annotationEditorClampStrokeWidthPx(width);
+  wchar_t digits[AnnotationEditorStrokeWidthParseMaxDigits]{};
+  int count = 0;
+  int remain = clamped;
+  do
+  {
+    if (count >= AnnotationEditorStrokeWidthParseMaxDigits)
+    {
+      out[0] = L'\0';
+      return false;
+    }
+    digits[count] = static_cast<wchar_t>(L'0' + (remain % 10));
+    ++count;
+    remain /= 10;
+  } while (remain > 0);
+
+  if (count >= out_chars)
+  {
+    out[0] = L'\0';
+    return false;
+  }
+  for (int i = 0; i < count; ++i)
+  {
+    out[i] = digits[count - 1 - i];
+  }
+  out[count] = L'\0';
+  return true;
+}
+
 struct AnnotationEditorTextChrome
 {
   AnnotationEditorRect frame{};

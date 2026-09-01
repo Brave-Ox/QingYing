@@ -104,8 +104,7 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
   }
   if (key == VK_ESCAPE)
   {
-    if (data->m_stroke_popup != nullptr &&
-        IsWindowVisible(data->m_stroke_popup) != FALSE)
+    if (strokePopupIsVisible(data))
     {
       hideStrokePopup(data);
       return true;
@@ -393,9 +392,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       ScreenToClient(hwnd, &pt);
       const int delta =
           static_cast<int>(static_cast<short>(HIWORD(wparam)));
-      if (hitTestStrokeChip(data, pt.x, pt.y) ||
-          (data->m_stroke_popup != nullptr &&
-           IsWindowVisible(data->m_stroke_popup) != FALSE))
+      if (hitTestStrokeChip(data, pt.x, pt.y) || strokePopupIsVisible(data))
       {
         (void)handleStrokeChipWheel(data, delta);
         return 0;
@@ -449,6 +446,10 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const UINT id = LOWORD(wparam);
       const UINT code = HIWORD(wparam);
       const HWND combo = reinterpret_cast<HWND>(lparam);
+      if (handleStrokePopupEditCommand(data, id, code, combo))
+      {
+        return 0;
+      }
       if ((id == kFontComboId || combo == data->m_font_combo) &&
           (code == CBN_SELCHANGE || code == CBN_SELENDOK))
       {

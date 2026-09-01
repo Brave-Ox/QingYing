@@ -29,19 +29,127 @@ void syncStrokePopupEdit(AnnotationEditorHost* data)
     return;
   }
 
-  wchar_t wanted[8]{};
-  (void)swprintf_s(wanted, L"%d", currentStrokeWidthPx(data));
-  wchar_t current[16]{};
-  GetWindowTextW(data->m_stroke_popup_edit, current,
-                 static_cast<int>(sizeof(current) / sizeof(current[0])));
+  wchar_t wanted[AnnotationEditorStrokePopupValueTextMaxChars]{};
+  if (!annotationEditorStrokePopupFormatWidthText(
+          currentStrokeWidthPx(data), wanted,
+          AnnotationEditorStrokePopupValueTextMaxChars))
+  {
+    return;
+  }
+  wchar_t current[AnnotationEditorStrokePopupValueTextMaxChars]{};
+  if (GetWindowTextW(data->m_stroke_popup_edit, current,
+                     AnnotationEditorStrokePopupValueTextMaxChars) < 0)
+  {
+    current[0] = L'\0';
+  }
   if (lstrcmpW(current, wanted) == 0)
   {
     return;
   }
 
   data->m_stroke_syncing = true;
-  SetWindowTextW(data->m_stroke_popup_edit, wanted);
+  if (SetWindowTextW(data->m_stroke_popup_edit, wanted) == FALSE)
+  {
+    data->m_stroke_syncing = false;
+    return;
+  }
+  if (InvalidateRect(data->m_stroke_popup_edit, nullptr, FALSE) == FALSE)
+  {
+    // 文本已写入，重绘失败时下次滑条/失焦会再刷。
+  }
   data->m_stroke_syncing = false;
+}
+
+void applyStrokeFromPopupEdit(AnnotationEditorHost* data)
+{
+  if (data == nullptr || data->m_stroke_popup_edit == nullptr ||
+      data->m_stroke_syncing)
+  {
+    return;
+  }
+
+  wchar_t text[AnnotationEditorStrokePopupValueTextMaxChars]{};
+  if (GetWindowTextW(data->m_stroke_popup_edit, text,
+                     AnnotationEditorStrokePopupValueTextMaxChars) <= 0)
+  {
+    return;
+  }
+
+  int width = 0;
+  if (!annotationEditorParseStrokeWidthText(text, width))
+  {
+    return;
+  }
+  applyEditorStrokeWidth(data, width);
+}
+
+bool handleStrokePopupEditCommand(AnnotationEditorHost* data, UINT id, UINT code,
+                                  HWND control)
+{
+  if (data == nullptr || data->m_stroke_popup_edit == nullptr)
+  {
+    return false;
+  }
+  const bool hwnd_matches = control == data->m_stroke_popup_edit;
+  if (!annotationEditorStrokePopupAcceptsEditNotification(
+          id, kStrokePopupEditId, hwnd_matches))
+  {
+    return false;
+  }
+  if (code == EN_CHANGE)
+  {
+    applyStrokeFromPopupEdit(data);
+    return true;
+  }
+  if (code == EN_KILLFOCUS)
+  {
+    syncStrokePopupEdit(data);
+    return true;
+  }
+  return false;
+}
+
+LRESULT CALLBACK strokePopupEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
+                                             LPARAM lparam, UINT_PTR subclass_id,
+                                             DWORD_PTR ref_data)
+{
+  AnnotationEditorHost* data =
+      reinterpret_cast<AnnotationEditorHost*>(ref_data);
+  if (msg == WM_NCDESTROY)
+  {
+    if (RemoveWindowSubclass(hwnd, strokePopupEditSubclassProc, subclass_id) ==
+        FALSE)
+    {
+      // 销毁路径上子类可能已卸。
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+  }
+
+  const LRESULT result = DefSubclassProc(hwnd, msg, wparam, lparam);
+  if (msg == WM_CHAR || msg == WM_CUT || msg == WM_PASTE || msg == WM_CLEAR ||
+      msg == WM_UNDO)
+  {
+    applyStrokeFromPopupEdit(data);
+  }
+  return result;
+}
+
+AnnotationEditorStrokePopupDeactivateTarget strokePopupDeactivateTarget(
+    const AnnotationEditorHost* data, HWND activated)
+{
+  if (data == nullptr)
+  {
+    return AnnotationEditorStrokePopupDeactivateTarget::Outside;
+  }
+  if (activated == data->m_stroke_popup_edit)
+  {
+    return AnnotationEditorStrokePopupDeactivateTarget::ValueEdit;
+  }
+  if (activated == data->m_stroke_popup)
+  {
+    return AnnotationEditorStrokePopupDeactivateTarget::Popup;
+  }
+  return AnnotationEditorStrokePopupDeactivateTarget::Outside;
 }
 
 void applyEditorStrokeWidth(AnnotationEditorHost* data, int width)
@@ -80,6 +188,62 @@ bool handleStrokeChipWheel(AnnotationEditorHost* data, int delta)
   return true;
 }
 
+bool strokePopupIsVisible(const AnnotationEditorHost* data)
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+  if (data->m_stroke_popup != nullptr &&
+      IsWindowVisible(data->m_stroke_popup) != FALSE)
+  {
+    return true;
+  }
+  return data->m_stroke_popup_edit != nullptr &&
+         IsWindowVisible(data->m_stroke_popup_edit) != FALSE;
+}
+
+void hideStrokePopupValueEdit(AnnotationEditorHost* data)
+{
+  if (data == nullptr || data->m_stroke_popup_edit == nullptr)
+  {
+    return;
+  }
+  if (ShowWindow(data->m_stroke_popup_edit, SW_HIDE) == 0)
+  {
+    // 已隐藏时返回 0，残留由 destroyStrokePopup 再收口。
+  }
+}
+
+void positionStrokePopupValueEdit(AnnotationEditorHost* data)
+{
+  if (data == nullptr || data->m_stroke_popup == nullptr ||
+      data->m_stroke_popup_edit == nullptr)
+  {
+    return;
+  }
+
+  RECT popup_rect{};
+  if (GetWindowRect(data->m_stroke_popup, &popup_rect) == FALSE)
+  {
+    return;
+  }
+
+  int edit_x = 0;
+  int edit_y = 0;
+  annotationEditorStrokePopupValueScreenOrigin(popup_rect.left, popup_rect.top,
+                                               edit_x, edit_y);
+  const AnnotationEditorStrokePopupLayout layout =
+      annotationEditorStrokePopupLayout();
+  const RECT value = toWinRect(layout.value);
+  if (SetWindowPos(data->m_stroke_popup_edit, HWND_TOPMOST, edit_x, edit_y,
+                   value.right - value.left, value.bottom - value.top,
+                   SWP_NOACTIVATE) == FALSE)
+  {
+    // 定位失败时数字框可能暂时错位，下次 show/hide 会再对齐。
+  }
+}
+
 void hideStrokePopup(AnnotationEditorHost* data)
 {
   if (data == nullptr)
@@ -87,9 +251,14 @@ void hideStrokePopup(AnnotationEditorHost* data)
     return;
   }
   data->m_stroke_slider_dragging = false;
+  // 数字框是独立 WS_POPUP，必须先于分层弹层隐藏，否则会留下白底粗细值。
+  hideStrokePopupValueEdit(data);
   if (data->m_stroke_popup != nullptr)
   {
-    ShowWindow(data->m_stroke_popup, SW_HIDE);
+    if (ShowWindow(data->m_stroke_popup, SW_HIDE) == 0)
+    {
+      // 已隐藏时返回 0。
+    }
   }
 }
 
@@ -100,7 +269,21 @@ void destroyStrokePopup(AnnotationEditorHost* data)
     return;
   }
   data->m_stroke_slider_dragging = false;
-  data->m_stroke_popup_edit = nullptr;
+  hideStrokePopupValueEdit(data);
+  if (data->m_stroke_popup_edit != nullptr)
+  {
+    if (RemoveWindowSubclass(data->m_stroke_popup_edit,
+                             strokePopupEditSubclassProc,
+                             kStrokePopupEditSubclassId) == FALSE)
+    {
+      // 未装子类或已卸。
+    }
+    if (DestroyWindow(data->m_stroke_popup_edit) == FALSE)
+    {
+      // 窗口可能已随 owner 销毁。
+    }
+    data->m_stroke_popup_edit = nullptr;
+  }
   if (data->m_stroke_popup != nullptr)
   {
     DestroyWindow(data->m_stroke_popup);
@@ -165,6 +348,7 @@ void paintStrokePopup(HWND hwnd, AnnotationEditorHost* data)
       annotationEditorStrokePopupLayout();
   RECT label = toWinRect(layout.label);
   RECT slider = toWinRect(layout.slider);
+  RECT value_rect = toWinRect(layout.value);
   RECT hint = toWinRect(layout.hint);
 
   HFONT font = data->m_combo_font.asFont();
@@ -178,12 +362,12 @@ void paintStrokePopup(HWND hwnd, AnnotationEditorHost* data)
   fillRoundRect(mem_dc, slider, kStrokeSliderTrackColor, kStrokeSliderTrackColor,
                 slider.bottom - slider.top);
 
-  const int value = currentStrokeWidthPx(data);
+  const int width_px = currentStrokeWidthPx(data);
   const int track_w =
       (std::max)(AnnotationEditorStrokeSliderMinExtentPx,
                  static_cast<int>(slider.right - slider.left));
   const int thumb_x =
-      annotationEditorStrokeSliderX(value, slider.left, track_w);
+      annotationEditorStrokeSliderX(width_px, slider.left, track_w);
   RECT fill = slider;
   fill.right =
       (std::max)(static_cast<int>(slider.left) +
@@ -214,6 +398,13 @@ void paintStrokePopup(HWND hwnd, AnnotationEditorHost* data)
     DeleteObject(thumb_brush);
   }
 
+  wchar_t value_text[AnnotationEditorStrokePopupValueTextMaxChars]{};
+  if (annotationEditorStrokePopupFormatWidthText(
+          width_px, value_text, AnnotationEditorStrokePopupValueTextMaxChars))
+  {
+    DrawTextW(mem_dc, value_text, -1, &value_rect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  }
   SetTextColor(mem_dc, kStrokePopupHintColor);
   DrawTextW(mem_dc, L"\x4E5F\x53EF\x4EE5\x7528\x6EDA\x8F6E\x8C03\x6574\x3002",
             -1, &hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -301,42 +492,31 @@ LRESULT CALLBACK strokePopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     case WM_COMMAND:
     {
-      if (data == nullptr || data->m_stroke_syncing)
+      if (data == nullptr)
       {
         return 0;
       }
-      const UINT id = LOWORD(wparam);
-      const UINT code = HIWORD(wparam);
-      if (id != kStrokePopupEditId)
+      if (handleStrokePopupEditCommand(data, LOWORD(wparam), HIWORD(wparam),
+                                       reinterpret_cast<HWND>(lparam)))
       {
         return 0;
-      }
-      if (code == EN_CHANGE)
-      {
-        wchar_t text[16]{};
-        GetWindowTextW(data->m_stroke_popup_edit, text,
-                       static_cast<int>(sizeof(text) / sizeof(text[0])));
-        int width = 0;
-        if (annotationEditorParseStrokeWidthText(text, width))
-        {
-          applyEditorStrokeWidth(data, width);
-        }
-      }
-      else if (code == EN_KILLFOCUS)
-      {
-        syncStrokePopupEdit(data);
       }
       return 0;
     }
     case WM_ACTIVATE:
       if (data != nullptr && LOWORD(wparam) == WA_INACTIVE)
       {
-        POINT pt{};
-        GetCursorPos(&pt);
-        ScreenToClient(data->m_overlay, &pt);
-        if (!hitTestStrokeChip(data, pt.x, pt.y))
+        const HWND activated = reinterpret_cast<HWND>(lparam);
+        if (annotationEditorStrokePopupHidesOnDeactivate(
+                strokePopupDeactivateTarget(data, activated)))
         {
-          hideStrokePopup(data);
+          POINT pt{};
+          GetCursorPos(&pt);
+          ScreenToClient(data->m_overlay, &pt);
+          if (!hitTestStrokeChip(data, pt.x, pt.y))
+          {
+            hideStrokePopup(data);
+          }
         }
       }
       return 0;
@@ -393,16 +573,30 @@ void showStrokePopup(AnnotationEditorHost* data)
         annotationEditorStrokePopupLayout();
     const RECT value = toWinRect(layout.value);
     POINT edit_origin{value.left, value.top};
-    ClientToScreen(data->m_stroke_popup, &edit_origin);
+    if (ClientToScreen(data->m_stroke_popup, &edit_origin) == FALSE)
+    {
+      edit_origin.x = origin.x + value.left;
+      edit_origin.y = origin.y + value.top;
+    }
     data->m_stroke_popup_edit = CreateWindowExW(
         WS_EX_TOOLWINDOW, L"EDIT", L"",
-        WS_POPUP | WS_VISIBLE | ES_NUMBER | ES_CENTER, edit_origin.x,
-        edit_origin.y, value.right - value.left, value.bottom - value.top,
-        data->m_stroke_popup, nullptr, instance, nullptr);
+        WS_POPUP | ES_NUMBER | ES_CENTER, edit_origin.x, edit_origin.y,
+        value.right - value.left, value.bottom - value.top, data->m_stroke_popup,
+        nullptr, instance, nullptr);
     if (data->m_stroke_popup_edit != nullptr)
     {
-      SetWindowLongPtrW(data->m_stroke_popup_edit, GWLP_ID,
-                        static_cast<LONG_PTR>(kStrokePopupEditId));
+      if (SetWindowLongPtrW(data->m_stroke_popup_edit, GWLP_ID,
+                            static_cast<LONG_PTR>(kStrokePopupEditId)) == 0)
+      {
+        // ID 仅用于 WM_COMMAND；HWND 比对仍可识别该编辑框。
+      }
+      if (SetWindowSubclass(data->m_stroke_popup_edit,
+                            strokePopupEditSubclassProc,
+                            kStrokePopupEditSubclassId,
+                            reinterpret_cast<DWORD_PTR>(data)) == FALSE)
+      {
+        // 子类失败时仍走 owner/overlay 的 WM_COMMAND。
+      }
     }
     if (data->m_stroke_popup_edit != nullptr && data->m_combo_font)
     {
@@ -412,13 +606,27 @@ void showStrokePopup(AnnotationEditorHost* data)
   }
   else
   {
-    SetWindowPos(data->m_stroke_popup, HWND_TOPMOST, origin.x, origin.y,
-                 AnnotationEditorStrokePopupWidth,
-                 AnnotationEditorStrokePopupHeight, SWP_NOACTIVATE);
+    if (SetWindowPos(data->m_stroke_popup, HWND_TOPMOST, origin.x, origin.y,
+                     AnnotationEditorStrokePopupWidth,
+                     AnnotationEditorStrokePopupHeight, SWP_NOACTIVATE) == FALSE)
+    {
+      return;
+    }
   }
 
   syncStrokePopupEdit(data);
-  ShowWindow(data->m_stroke_popup, SW_SHOW);
+  if (ShowWindow(data->m_stroke_popup, SW_SHOW) == 0)
+  {
+    // 先前已显示时返回 0。
+  }
+  positionStrokePopupValueEdit(data);
+  if (data->m_stroke_popup_edit != nullptr)
+  {
+    if (ShowWindow(data->m_stroke_popup_edit, SW_SHOW) == 0)
+    {
+      // 先前已显示时返回 0。
+    }
+  }
   SetForegroundWindow(data->m_stroke_popup);
   if (data->m_stroke_popup_edit != nullptr)
   {

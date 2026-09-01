@@ -538,7 +538,7 @@ void resizeEditorChrome(AnnotationEditorHost* data)
 
   const AnnotationTool tool = data->m_controller.tool();
   fillSizeCombo(data);
-  if (!annotationEditorPropertyBarShowsStroke(tool))
+  if (annotationEditorStrokePopupClosesOnTool(tool))
   {
     hideStrokePopup(data);
   }
@@ -841,8 +841,7 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
 
   if (hitTestStrokeChip(data, x, y))
   {
-    if (data->m_stroke_popup != nullptr &&
-        IsWindowVisible(data->m_stroke_popup) != FALSE)
+    if (strokePopupIsVisible(data))
     {
       hideStrokePopup(data);
     }
@@ -977,8 +976,7 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
                      data->m_property_bar_rect.bottom - 8);
 
   const RECT& chip = data->m_stroke_chip_rect;
-  const bool popup_open = data->m_stroke_popup != nullptr &&
-                          IsWindowVisible(data->m_stroke_popup) != FALSE;
+  const bool popup_open = strokePopupIsVisible(data);
   if (data->m_stroke_chip_hover || popup_open)
   {
     fillRoundRect(hdc, chip,
@@ -1311,6 +1309,7 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
     return;
   }
 
+  hideStrokePopup(data);
   if (id != kButtonTextId)
   {
     commitInlineText(data);
