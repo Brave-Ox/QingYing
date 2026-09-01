@@ -110,7 +110,11 @@ endif()
 add_library(qingying_longshot STATIC
   src/longshot/longshot_engine.cpp
   src/longshot/image_stitcher.cpp
+  src/longshot/longshot_profile.cpp
+  src/longshot/longshot_profile_registry.cpp
   src/longshot/notepad_longshot_profile.cpp
+  src/longshot/explorer_longshot_profile.cpp
+  src/longshot/win32_scroll_helpers.cpp
 )
 target_include_directories(qingying_longshot
   PUBLIC ${CMAKE_SOURCE_DIR}/include
@@ -191,8 +195,8 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
-# GoogleTest via vcpkg (relative to repo root)
-#   <repo>/../thirdparty_install/vcpkg  (仓库同级目录，不入库)
+# 通过 vcpkg 引入 GoogleTest（相对于仓库根目录）
+#   <repo>/../thirdparty_install/vcpkg  （仓库同级目录，不入库）
 # ---------------------------------------------------------------------------
 option(QINGYING_BUILD_TESTS "Build GoogleTest unit tests" ON)
 

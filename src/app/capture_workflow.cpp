@@ -11,6 +11,7 @@
 #include "qingying/export/export_service.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/pin/pin_manager.hpp"
+#include "qingying/window/window_detector.hpp"
 
 #include <Windows.h>
 #include <commdlg.h>
@@ -32,7 +33,7 @@ const wchar_t* longShotFailureText(int error_code) {
   return L"长截图失败，请重新框选后再试。";
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 CaptureWorkflowRoute decideCaptureWorkflowRoute(
     const SelectionResult& selection,
@@ -93,8 +94,12 @@ struct CaptureWorkflow::Impl {
     const bool shown = selection_overlay.show(
         selection_background,
         [this](const SelectionResult& region) {
+          const std::uintptr_t target_window =
+              region.action == SelectionAction::LongShot
+                  ? ownerWindowAtSelection(region)
+                  : recorded_owner_window;
           pending_longshot_request =
-              makeLongShotRequest(recorded_owner_window, region);
+              makeLongShotRequest(target_window, region);
           if (region.action == SelectionAction::LongShot) {
             runCapturePipeline(region);
             return;
@@ -112,6 +117,24 @@ struct CaptureWorkflow::Impl {
       stage = WorkflowStage::Idle;
       active = false;
     }
+  }
+
+  std::uintptr_t ownerWindowAtSelection(
+      const SelectionResult& region) const noexcept {
+    if (region.width <= 0 || region.height <= 0) {
+      return recorded_owner_window;
+    }
+
+    const int center_x = region.x + region.width / 2;
+    const int center_y = region.y + region.height / 2;
+    HWND detected_window = nullptr;
+    WindowRect detected_rect;
+    if (window_detector.detectAt(center_x, center_y, detected_window,
+                                 detected_rect) &&
+        detected_window != nullptr) {
+      return reinterpret_cast<std::uintptr_t>(detected_window);
+    }
+    return recorded_owner_window;
   }
 
   Image captureDesktopBackground() {
@@ -261,8 +284,8 @@ struct CaptureWorkflow::Impl {
 
     ActionResult capture_result;
     {
-      // Pin windows are ordinary topmost windows, so GDI desktop capture would
-      // otherwise copy their border and image into the new screenshot.
+      // Pin 窗口属于普通置顶窗口；否则 GDI 桌面捕获会把它的边框和图像
+      // 一并复制到新截图中。
       auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
       capture_result = dispatcher.dispatch(capture_request);
     }
@@ -304,8 +327,7 @@ struct CaptureWorkflow::Impl {
       session.setResult(std::move(completion_image));
       longshot_result_ready = true;
 
-      // Keep the current behavior: the first completed result is available
-      // immediately, while the overlay remains open for further actions.
+      // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
       ActionRequest copy_request;
       copy_request.type = ActionType::Copy;
       const ActionResult copy_result = dispatcher.dispatch(copy_request);
@@ -337,9 +359,8 @@ struct CaptureWorkflow::Impl {
     }
     active = true;
 
-    // Capture the original top-level target before any capture/overlay work
-    // can change the foreground window. LongShotEngine consumes this recorded
-    // handle later; it must not infer the target from the foreground window.
+    // 在捕获或遮罩操作可能改变前台窗口之前，先记录原始顶层目标。
+    // LongShotEngine 后续使用这个句柄，不能再从前台窗口推断目标。
     HWND target = GetForegroundWindow();
     if (target != nullptr) {
       const HWND root = GetAncestor(target, GA_ROOT);
@@ -410,8 +431,8 @@ struct CaptureWorkflow::Impl {
     copy_request.type = ActionType::Copy;
     (void)dispatcher.dispatch(copy_request);
 
-    // 编辑器关闭后重新抓桌面，并把合成图贴回原选区，恢复统一的
-    // Copy / Save / Pin 结果工具栏。Overlay 不再负责抓图或创建编辑器。
+    // 编辑器关闭后重新捕获桌面，并把合成图贴回原选区，恢复统一的
+    // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
     selection_background = captureDesktopBackground();
     (void)composeCapturePreview(selection_background,
                                 pending_selection.annotated_image,
@@ -446,8 +467,8 @@ struct CaptureWorkflow::Impl {
       return;
     }
 
-    // Never open a modal dialog while the topmost fullscreen overlay exists.
-    // Long-shot failure first closes the overlay; only then is the error shown.
+    // 顶层全屏遮罩存在时，不能打开模态对话框。
+    // 长截图失败时先关闭遮罩，再显示错误信息。
     std::wstring error = std::move(pending_overlay_error);
     pending_overlay_error.clear();
     if (!error.empty() && IsWindow(owner_window)) {
@@ -505,6 +526,7 @@ struct CaptureWorkflow::Impl {
   PinManager& pin_manager;
   SelectionOverlay& selection_overlay;
   AnnotationOverlay annotation_overlay;
+  WindowDetector window_detector;
   HWND owner_window{nullptr};
   WorkflowStage stage{WorkflowStage::Idle};
   std::uintptr_t recorded_owner_window{0};
@@ -567,4 +589,4 @@ bool CaptureWorkflow::active() const noexcept {
   return impl_->active;
 }
 
-}  // namespace qingying
+}  // qingying 命名空间

@@ -220,7 +220,7 @@ CaptureWorkflow 预先记录 owner_window
   → 用户点击“长截图”
   → Overlay 保留在屏幕上，选区孔洞切换为捕获透传
   → LongShotController 启动 longshot worker
-  → Notepad profile 校验 owner / 内容区 / 滚动目标
+  → LongShotProfileRegistry 选择 Notepad / Explorer profile，校验 owner / 内容区 / 滚动目标
   → CaptureEngine 重复截取同一矩形
   → ImageStitcher 去重拼接
   → worker 向 Overlay 投递实时预览
@@ -238,7 +238,7 @@ CaptureWorkflow 预先记录 owner_window
 - 用户停止或应用退出；
 - 目标窗口、选区或捕获失败。
 
-当前只实现记事本 profile；资源管理器和 Edge 尚未实现。
+当前已实现记事本与文件资源管理器 profile；Edge profile 尚未实现，资源管理器仍需真实窗口人工验收。
 
 ---
 
@@ -302,7 +302,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | F3 标注 | workflow + capture + AnnotationOverlay + overlay | 六类工具与撤销可用，Copy / Save / Pin / 再编辑代码回流已接通；重做 UI 和人工验收待补 |
 | F4 导出 | export + action | 已实现 |
 | F5 钉图 | pin + action | 代码基本完成，人工验收待做 |
-| F6 长截图 | workflow + overlay + longshot + capture | 记事本路径与 LongShotController 已接入；另外两应用未实现 |
+| F6 长截图 | workflow + overlay + longshot + capture | profile registry、记事本 / 资源管理器路径与 LongShotController 已接入；Edge 未实现 |
 | F7 托盘热键 | app | 已实现 |
 | F8 口令 | command → action / workflow | Stub |
 | F9 MCP | mcp → action / workflow | Stub |

@@ -1,32 +1,28 @@
 ﻿#pragma once
 
-#include <cstdint>
+#include "qingying/longshot/longshot_profile.hpp"
 
 namespace qingying {
 
-// A supported application's scroll target and content bounds. The bounds use
-// physical screen pixels and are only used to validate the user's selection;
-// they never replace the requested capture rectangle.
-struct LongShotProfileResult {
-  std::uintptr_t scroll_target{0};
-  int content_x{0};
-  int content_y{0};
-  int content_width{0};
-  int content_height{0};
+class NotepadLongShotProfile final : public LongShotProfile {
+ public:
+  const char* name() const noexcept override { return "notepad"; }
 
-  bool valid() const;
-  bool containsSelection(int x, int y, int width, int height) const;
+  bool resolve(const LongShotRequest& request,
+               LongShotProfileResult& out) const override;
+  bool scrollDown(const LongShotRequest& request,
+                  const LongShotProfileResult& profile) const override;
+  bool queryScrollState(const LongShotProfileResult& profile,
+                        LongShotScrollState& out) const override;
 };
 
-// Resolves only the supplied top-level window. This function never queries the
-// foreground window and never chooses a capture rectangle for the caller.
+// 只解析传入的顶层窗口。该函数不会查询前台窗口，也不会替调用方选择捕获矩形。
 bool resolveNotepadProfile(std::uintptr_t owner_window,
                            LongShotProfileResult& out);
 
-// Reads the vertical scroll bar of the resolved target. Returns false when
-// the target does not expose a queryable scroll range; in that case the
-// caller must use another stop condition instead of treating it as bottom.
+// 读取已解析目标的垂直滚动条。目标没有提供可查询的滚动范围时返回 false；
+// 此时调用方必须使用其他停止条件，不能将其误判为已经到底。
 bool queryNotepadScrollAtBottom(const LongShotProfileResult& profile,
                                 bool& at_bottom);
 
-}  // namespace qingying
+}  // qingying 命名空间

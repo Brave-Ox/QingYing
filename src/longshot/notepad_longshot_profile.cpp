@@ -1,5 +1,7 @@
 ﻿#include "qingying/longshot/notepad_longshot_profile.hpp"
 
+#include "win32_scroll_helpers.hpp"
+
 #include <Windows.h>
 
 #include <cstdint>
@@ -65,8 +67,8 @@ BOOL CALLBACK findNotepadProcess(HWND window, LPARAM parameter) {
 }
 
 bool ownerBelongsToNotepad(HWND owner) {
-  // Classic and current Win32 Notepad use this top-level class. The process
-  // fallback also covers versions hosted below a system frame window.
+  // 经典版和当前 Win32 版记事本都使用这个顶层类名。
+  // 进程回退判断也能覆盖托管在系统框架窗口下的版本。
   if (classNameEquals(owner, L"Notepad") || executableIsNotepad(owner)) {
     return true;
   }
@@ -147,35 +149,7 @@ BOOL CALLBACK findLargestEditor(HWND window, LPARAM parameter) {
   return TRUE;
 }
 
-}  // namespace
-
-bool LongShotProfileResult::valid() const {
-  return scroll_target != 0 && content_width > 0 && content_height > 0;
-}
-
-bool LongShotProfileResult::containsSelection(int x, int y, int width,
-                                              int height) const {
-  if (!valid() || width <= 0 || height <= 0) {
-    return false;
-  }
-
-  const std::int64_t selection_left = x;
-  const std::int64_t selection_top = y;
-  const std::int64_t selection_right =
-      selection_left + static_cast<std::int64_t>(width);
-  const std::int64_t selection_bottom =
-      selection_top + static_cast<std::int64_t>(height);
-  const std::int64_t content_left = content_x;
-  const std::int64_t content_top = content_y;
-  const std::int64_t content_right =
-      content_left + static_cast<std::int64_t>(content_width);
-  const std::int64_t content_bottom =
-      content_top + static_cast<std::int64_t>(content_height);
-
-  return selection_left >= content_left && selection_top >= content_top &&
-         selection_right <= content_right &&
-         selection_bottom <= content_bottom;
-}
+}  // 匿名命名空间
 
 bool resolveNotepadProfile(std::uintptr_t owner_window,
                            LongShotProfileResult& out) {
@@ -210,33 +184,35 @@ bool resolveNotepadProfile(std::uintptr_t owner_window,
   return true;
 }
 
+bool NotepadLongShotProfile::resolve(const LongShotRequest& request,
+                                     LongShotProfileResult& out) const {
+  if (!resolveNotepadProfile(request.owner_window, out)) {
+    return false;
+  }
+  return out.containsSelection(request.x, request.y, request.width,
+                               request.height);
+}
+
+bool NotepadLongShotProfile::scrollDown(
+    const LongShotRequest& request,
+    const LongShotProfileResult& profile) const {
+  return longshot_detail::sendWheelDown(request, profile);
+}
+
+bool NotepadLongShotProfile::queryScrollState(
+    const LongShotProfileResult& profile, LongShotScrollState& out) const {
+  return longshot_detail::queryVerticalScrollState(profile, out);
+}
+
 bool queryNotepadScrollAtBottom(const LongShotProfileResult& profile,
                                 bool& at_bottom) {
-  at_bottom = false;
-  if (!profile.valid()) {
+  LongShotScrollState state;
+  if (!longshot_detail::queryVerticalScrollState(profile, state)) {
+    at_bottom = false;
     return false;
   }
-
-  const HWND scroll_target = reinterpret_cast<HWND>(profile.scroll_target);
-  if (scroll_target == nullptr || !IsWindow(scroll_target)) {
-    return false;
-  }
-
-  SCROLLINFO scroll_info{};
-  scroll_info.cbSize = sizeof(scroll_info);
-  scroll_info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-  if (!GetScrollInfo(scroll_target, SB_VERT, &scroll_info) ||
-      scroll_info.nPage == 0) {
-    return false;
-  }
-
-  // nMax is inclusive. With a page size, the last legal position is
-  // nMax - nPage + 1. Use 64-bit arithmetic for defensive overflow safety.
-  const std::int64_t last_position =
-      static_cast<std::int64_t>(scroll_info.nMax) -
-      static_cast<std::int64_t>(scroll_info.nPage) + 1;
-  at_bottom = static_cast<std::int64_t>(scroll_info.nPos) >= last_position;
+  at_bottom = state.atBottom();
   return true;
 }
 
-}  // namespace qingying
+}  // qingying 命名空间

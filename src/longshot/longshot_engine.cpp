@@ -2,13 +2,9 @@
 
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/image_stitcher.hpp"
-#include "qingying/longshot/notepad_longshot_profile.hpp"
-
-#include <Windows.h>
 
 #include <chrono>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -18,7 +14,6 @@ namespace qingying {
 namespace {
 
 constexpr auto kInitialScrollSettleDelay = std::chrono::milliseconds(150);
-constexpr UINT kScrollDispatchTimeoutMs = 500;
 
 ActionResult makeFailure(int error_code, const char* message) {
   ActionResult result;
@@ -36,27 +31,29 @@ ActionResult makeSuccess() {
 }
 
 ActionResult validateRequest(const LongShotRequest& request,
-                             LongShotProfileResult& profile) {
+                             const LongShotProfileRegistry& profiles,
+                             const LongShotProfile*& profile,
+                             LongShotProfileResult& profile_result) {
+  profile = nullptr;
   if (!request.valid()) {
     return makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: owner window and selection are required");
   }
-  if (!resolveNotepadProfile(request.owner_window, profile)) {
+
+  profile = profiles.resolve(request, profile_result);
+  if (profile == nullptr) {
     return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: target is not a supported Notepad window");
-  }
-  if (!profile.containsSelection(request.x, request.y, request.width,
-                                 request.height)) {
-    return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: selection must stay inside Notepad content");
+                       "longshot: target application is not supported");
   }
   return makeSuccess();
 }
 
 bool sameProfileGeometry(const LongShotProfileResult& before,
                          const LongShotProfileResult& after) {
-  return before.scroll_target == after.scroll_target &&
-         before.content_x == after.content_x &&
+  // 某些视图在滚动后会重建子 HWND（尤其是 Explorer 的现代文件列表）。
+  // profile 已经重新校验应用和选区，因此这里应保持稳定的是可见内容几何范围，
+  // 而不是这个临时 HWND 的身份。
+  return before.content_x == after.content_x &&
          before.content_y == after.content_y &&
          before.content_width == after.content_width &&
          before.content_height == after.content_height;
@@ -73,58 +70,75 @@ bool imageMatchesRequest(const Image& image, const LongShotRequest& request) {
   return image.pixels.size() == expected_pixels;
 }
 
-bool sendOneWheelDown(const LongShotRequest& request,
-                      const LongShotProfileResult& profile) {
-  const HWND scroll_target = reinterpret_cast<HWND>(profile.scroll_target);
-  if (scroll_target == nullptr || !IsWindow(scroll_target)) {
+bool readScrollState(const LongShotProfile& profile,
+                     const LongShotProfileResult& profile_result,
+                     LongShotScrollState& out) {
+  out = LongShotScrollState{};
+  if (!profile.queryScrollState(profile_result, out) || !out.valid) {
+    out = LongShotScrollState{};
     return false;
   }
-
-  const std::int64_t center_x =
-      static_cast<std::int64_t>(request.x) + request.width / 2;
-  const std::int64_t center_y =
-      static_cast<std::int64_t>(request.y) + request.height / 2;
-  if (center_x < (std::numeric_limits<int>::min)() ||
-      center_x > (std::numeric_limits<int>::max)() ||
-      center_y < (std::numeric_limits<int>::min)() ||
-      center_y > (std::numeric_limits<int>::max)()) {
-    return false;
-  }
-
-  const WORD wheel_delta = static_cast<WORD>(static_cast<SHORT>(-WHEEL_DELTA));
-  const WPARAM wheel_parameters = MAKEWPARAM(0, wheel_delta);
-  const LPARAM screen_point =
-      MAKELPARAM(static_cast<WORD>(static_cast<int>(center_x)),
-                 static_cast<WORD>(static_cast<int>(center_y)));
-  DWORD_PTR message_result = 0;
-  return SendMessageTimeoutW(scroll_target, WM_MOUSEWHEEL, wheel_parameters,
-                             screen_point, SMTO_ABORTIFHUNG | SMTO_BLOCK,
-                             kScrollDispatchTimeoutMs, &message_result) != 0;
+  return true;
 }
 
 ActionResult captureNextFrame(CaptureEngine& capture,
+                              const LongShotProfile& profile,
                               const LongShotRequest& request,
                               const LongShotProfileResult& before_profile,
+                              const LongShotScrollState* before_scroll_state,
                               Image& frame,
-                              LongShotProfileResult* after_profile_out) {
-  if (!sendOneWheelDown(request, before_profile)) {
+                              LongShotProfileResult* after_profile_out,
+                              LongShotScrollState* after_scroll_state_out,
+                              bool* has_after_scroll_state_out,
+                              bool* stable_scroll_out) {
+  if (after_scroll_state_out != nullptr) {
+    *after_scroll_state_out = LongShotScrollState{};
+  }
+  if (has_after_scroll_state_out != nullptr) {
+    *has_after_scroll_state_out = false;
+  }
+  if (stable_scroll_out != nullptr) {
+    *stable_scroll_out = false;
+  }
+
+  if (!profile.scrollDown(request, before_profile)) {
     return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: scroll target did not accept wheel input");
+                       "longshot: profile did not accept wheel input");
   }
   std::this_thread::sleep_for(kInitialScrollSettleDelay);
 
   LongShotProfileResult after_profile;
-  ActionResult result = validateRequest(request, after_profile);
-  if (!result.ok) {
-    return result;
+  if (!profile.resolve(request, after_profile)) {
+    return makeFailure(ErrorCode::kLongShotUnsupported,
+                       "longshot: target disappeared during capture");
   }
   if (!sameProfileGeometry(before_profile, after_profile)) {
     return makeFailure(ErrorCode::kLongShotUnsupported,
                        "longshot: target moved or resized during capture");
   }
 
-  result = capture.captureRegion(request.x, request.y, request.width,
-                                 request.height, frame);
+  LongShotScrollState after_scroll_state;
+  const bool has_after_scroll_state =
+      readScrollState(profile, after_profile, after_scroll_state);
+  if (after_scroll_state_out != nullptr && has_after_scroll_state) {
+    *after_scroll_state_out = after_scroll_state;
+  }
+  if (has_after_scroll_state_out != nullptr) {
+    *has_after_scroll_state_out = has_after_scroll_state;
+  }
+  if (before_scroll_state != nullptr && has_after_scroll_state &&
+      before_scroll_state->position == after_scroll_state.position) {
+    // 已投递滚轮消息不代表应用一定发生了滚动。如果 profile 能观察到稳定的位置，
+    // 就在捕获重复帧之前停止。
+    if (stable_scroll_out != nullptr) {
+      *stable_scroll_out = true;
+    }
+    return makeSuccess();
+  }
+
+  ActionResult result = capture.captureRegion(request.x, request.y,
+                                              request.width, request.height,
+                                              frame);
   if (!result.ok) {
     return result;
   }
@@ -138,18 +152,27 @@ ActionResult captureNextFrame(CaptureEngine& capture,
   return makeSuccess();
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 struct LongShotEngine::Impl {
-  explicit Impl(CaptureEngine& capture_engine, LongShotLimits capture_limits)
-      : capture(&capture_engine), limits(capture_limits) {}
+  Impl(CaptureEngine& capture_engine, LongShotProfileRegistry profile_registry,
+       LongShotLimits capture_limits)
+      : capture(&capture_engine),
+        profiles(std::move(profile_registry)),
+        limits(capture_limits) {}
 
   CaptureEngine* capture{nullptr};
+  LongShotProfileRegistry profiles;
   LongShotLimits limits;
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
-    : impl_(std::make_unique<Impl>(capture, limits)) {}
+    : LongShotEngine(capture, LongShotProfileRegistry{}, limits) {}
+
+LongShotEngine::LongShotEngine(CaptureEngine& capture,
+                               LongShotProfileRegistry profiles,
+                               LongShotLimits limits)
+    : impl_(std::make_unique<Impl>(capture, std::move(profiles), limits)) {}
 
 LongShotEngine::~LongShotEngine() = default;
 
@@ -187,8 +210,10 @@ ActionResult LongShotEngine::captureSelection(
                        "longshot: selection exceeds maximum output height");
   }
 
+  const LongShotProfile* profile = nullptr;
   LongShotProfileResult current_profile;
-  ActionResult result = validateRequest(request, current_profile);
+  ActionResult result = validateRequest(request, impl_->profiles, profile,
+                                        current_profile);
   if (!result.ok) {
     return result;
   }
@@ -208,15 +233,16 @@ ActionResult LongShotEngine::captureSelection(
     on_progress(stitched);
   }
 
-  // A user stop is a clean completion: the frames already accumulated are a
-  // valid long-shot result and should remain available for copy/save/pin.
+  // 用户主动停止属于正常完成：已经累计的帧构成有效长截图结果，仍可继续复制、
+  // 保存或 Pin。
   if (should_continue && !should_continue()) {
     out = std::move(stitched);
     return makeSuccess();
   }
 
-  bool at_bottom = false;
-  if (queryNotepadScrollAtBottom(current_profile, at_bottom) && at_bottom) {
+  LongShotScrollState current_scroll_state;
+  if (readScrollState(*profile, current_profile, current_scroll_state) &&
+      current_scroll_state.atBottom()) {
     out = std::move(stitched);
     return makeSuccess();
   }
@@ -228,12 +254,30 @@ ActionResult LongShotEngine::captureSelection(
     if (should_continue && !should_continue()) {
       break;
     }
+
+    LongShotScrollState before_scroll_state;
+    const bool has_before_scroll_state =
+        readScrollState(*profile, current_profile, before_scroll_state);
+    if (has_before_scroll_state && before_scroll_state.atBottom()) {
+      break;
+    }
+
     Image next_frame;
     LongShotProfileResult after_profile;
-    result = captureNextFrame(*impl_->capture, request, current_profile,
-                              next_frame, &after_profile);
+    LongShotScrollState after_scroll_state;
+    bool has_after_scroll_state = false;
+    bool stable_scroll = false;
+    result = captureNextFrame(*impl_->capture, *profile, request,
+                              current_profile,
+                              has_before_scroll_state ? &before_scroll_state
+                                                      : nullptr,
+                              next_frame, &after_profile, &after_scroll_state,
+                              &has_after_scroll_state, &stable_scroll);
     if (!result.ok) {
       return result;
+    }
+    if (stable_scroll) {
+      break;
     }
 
     int next_overlap_rows = 0;
@@ -241,6 +285,11 @@ ActionResult LongShotEngine::captureSelection(
       return makeFailure(ErrorCode::kCaptureFailed,
                          "longshot: failed to inspect next overlap");
     }
+    // 整帧重叠表示本次滚动没有显示新的内容。
+    if (next_overlap_rows == next_frame.height) {
+      break;
+    }
+
     const std::int64_t next_height =
         static_cast<std::int64_t>(stitched.height) +
         static_cast<std::int64_t>(next_frame.height) -
@@ -259,13 +308,9 @@ ActionResult LongShotEngine::captureSelection(
     if (on_progress) {
       on_progress(stitched);
     }
-    if (next_overlap_rows == next_frame.height) {
-      break;
-    }
 
     current_profile = after_profile;
-    if (queryNotepadScrollAtBottom(current_profile, at_bottom) &&
-        at_bottom) {
+    if (has_after_scroll_state && after_scroll_state.atBottom()) {
       break;
     }
   }
@@ -278,8 +323,10 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
                                                 LongShotFramePair& out) {
   out.clear();
 
+  const LongShotProfile* profile = nullptr;
   LongShotProfileResult before_profile;
-  ActionResult result = validateRequest(request, before_profile);
+  ActionResult result = validateRequest(request, impl_->profiles, profile,
+                                        before_profile);
   if (!result.ok) {
     return result;
   }
@@ -296,8 +343,9 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   }
 
   Image second_frame;
-  result = captureNextFrame(*impl_->capture, request, before_profile,
-                            second_frame, nullptr);
+  result = captureNextFrame(*impl_->capture, *profile, request, before_profile,
+                            nullptr, second_frame, nullptr, nullptr, nullptr,
+                            nullptr);
   if (!result.ok) {
     return result;
   }
@@ -307,4 +355,4 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   return makeSuccess();
 }
 
-}  // namespace qingying
+}  // qingying 命名空间

@@ -1,4 +1,4 @@
-# QingYing unit tests (GoogleTest via vcpkg)
+# 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
   action_dispatcher_test.cpp
@@ -31,6 +31,7 @@ add_executable(qingying_tests
   longshot_stitcher_test.cpp
   longshot_engine_test.cpp
   notepad_longshot_profile_test.cpp
+  explorer_longshot_profile_test.cpp
   window_detector_test.cpp
   tray_notify_icon_test.cpp
   tray_context_menu_test.cpp
@@ -56,7 +57,7 @@ target_link_libraries(qingying_tests
     GTest::gtest_main
 )
 
-# Console subsystem (not WIN32) so gtest prints to stdout
+# 使用控制台子系统（不设置 WIN32），让 gtest 输出到标准输出
 if(MSVC)
   target_compile_options(qingying_tests PRIVATE /utf-8)
 endif()
@@ -68,7 +69,7 @@ gtest_discover_tests(qingying_tests
   DISCOVERY_TIMEOUT 60
 )
 
-# Ensure gtest DLLs are next to the test exe when using shared vcpkg libs
+# 使用 vcpkg 共享库时，确保 gtest 的 DLL 与测试程序放在一起
 if(WIN32)
   add_custom_command(TARGET qingying_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

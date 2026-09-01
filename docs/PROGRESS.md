@@ -19,11 +19,11 @@
 | F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；非模态编辑器确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
-| F6 长截图 | **记事本代码路径已接入** | 固定选区拼接、预览、暂停 / 继续 / 停止、失败清理；另两应用未实现 |
+| F6 长截图 | **记事本与资源管理器 profile 已接入，待人工验收** | 固定选区拼接、应用 profile 定位滚动控件、滚动状态 / 到底 / 无新增停止、预览、暂停 / 继续 / 停止、失败清理；Edge 未实现 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
 
-一句话：普通截图、窗口吸附、Pin、记事本长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是完整人工验收与重做 UI。
+一句话：普通截图、窗口吸附、Pin、记事本 / 资源管理器长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三应用真实验收与 Edge profile。
 
 ---
 
@@ -98,13 +98,16 @@
 - `CaptureGuard` 支持嵌套隐藏 / 恢复，普通截图和背景快照均排除 Pin；
 - 自动测试覆盖空图拒绝、多窗口、析构清理和不重叠排布。
 
-### 2.7 F6 记事本长截图
+### 2.7 F6 应用 profile 长截图
 
 已实现：
 
+- `LongShotProfile` / `LongShotProfileRegistry` 将应用识别、滚动控件、滚动输入和滚动状态查询与通用截图拼接循环分离；
+- 记事本 profile 与文件资源管理器 profile 已接入；资源管理器按选区定位 `DirectUIHWND`、`SysListView32` 或 `SysTreeView32`，不向无关窗口广播滚轮；
+
 - `LongShotRequest` 固定使用用户选中的物理像素矩形；
 - CaptureWorkflow 在 Overlay 前记录原前台顶层窗口；
-- Notepad profile 校验目标进程、编辑子窗口、内容区和滚动条；
+- Notepad / Explorer profile 校验目标窗口、选区所在内容控件、内容区和滚动状态；
 - 首帧、滚动后帧、重叠查找与追加拼接；
 - 到底、无新增内容、最大 30 帧和最大 30000 像素停止；
 - `LongShotController` 管理长截图 worker、暂停 / 停止 token 与 UI 线程完成消息；
@@ -115,7 +118,7 @@
 尚未完成：
 
 - 记事本真实长文手工闭环记录；
-- 资源管理器 profile；
+- 资源管理器真实长文手工闭环记录；
 - Edge profile；
 - 三应用完整验收。
 
