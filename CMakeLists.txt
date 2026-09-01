@@ -187,7 +187,7 @@ target_link_libraries(qingying PRIVATE
   qingying_workflow
 )
 if(WIN32)
-  target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32 comdlg32)
+  target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32 comdlg32 gdi32)
 endif()
 
 # ---------------------------------------------------------------------------

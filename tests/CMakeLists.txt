@@ -32,6 +32,8 @@ add_executable(qingying_tests
   longshot_engine_test.cpp
   notepad_longshot_profile_test.cpp
   window_detector_test.cpp
+  tray_notify_icon_test.cpp
+  tray_context_menu_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 
