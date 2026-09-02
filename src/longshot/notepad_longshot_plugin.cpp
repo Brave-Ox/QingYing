@@ -1,6 +1,6 @@
 ﻿#include "builtin_longshot_plugin_support.h"
 
-#include "qingying/longshot/notepad_longshot_profile.hpp"
+#include "notepad_longshot_resolver.h"
 
 namespace {
 
@@ -8,7 +8,8 @@ qingying::builtin_longshot_plugin::PluginContext g_context;
 
 bool resolveNotepadRequest(const qingying::LongShotRequest& request,
                            qingying::LongShotProfileResult& out) {
-  if (!qingying::resolveNotepadProfile(request.owner_window, out)) {
+  if (!qingying::longshot_detail::resolveNotepadTarget(
+          request.owner_window, out)) {
     return false;
   }
   return out.containsSelection(request.x, request.y, request.width,

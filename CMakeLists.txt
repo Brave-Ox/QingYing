@@ -115,7 +115,9 @@ add_library(qingying_longshot STATIC
   src/longshot/longshot_plugin_host.cpp
   src/longshot/longshot_profile.cpp
   src/longshot/longshot_profile_registry.cpp
+  src/longshot/notepad_longshot_resolver.cpp
   src/longshot/notepad_longshot_profile.cpp
+  src/longshot/explorer_longshot_resolver.cpp
   src/longshot/explorer_longshot_profile.cpp
   src/longshot/win32_scroll_helpers.cpp
 )
@@ -151,9 +153,8 @@ if(WIN32)
   add_library(qingying_notepad_longshot_plugin MODULE
     src/longshot/notepad_longshot_plugin.cpp
     src/longshot/builtin_longshot_plugin_support.cpp
-    src/longshot/notepad_longshot_profile.cpp
+    src/longshot/notepad_longshot_resolver.cpp
     src/longshot/longshot_profile.cpp
-    src/longshot/win32_scroll_helpers.cpp
   )
   qingying_configure_longshot_plugin(
     qingying_notepad_longshot_plugin
@@ -163,9 +164,8 @@ if(WIN32)
   add_library(qingying_explorer_longshot_plugin MODULE
     src/longshot/explorer_longshot_plugin.cpp
     src/longshot/builtin_longshot_plugin_support.cpp
-    src/longshot/explorer_longshot_profile.cpp
+    src/longshot/explorer_longshot_resolver.cpp
     src/longshot/longshot_profile.cpp
-    src/longshot/win32_scroll_helpers.cpp
   )
   qingying_configure_longshot_plugin(
     qingying_explorer_longshot_plugin

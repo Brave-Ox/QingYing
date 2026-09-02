@@ -1,6 +1,6 @@
 ﻿#include "builtin_longshot_plugin_support.h"
 
-#include "qingying/longshot/explorer_longshot_profile.hpp"
+#include "explorer_longshot_resolver.h"
 
 namespace {
 
@@ -8,7 +8,7 @@ qingying::builtin_longshot_plugin::PluginContext g_context;
 
 bool resolveExplorerRequest(const qingying::LongShotRequest& request,
                             qingying::LongShotProfileResult& out) {
-  return qingying::resolveExplorerProfile(request, out) &&
+  return qingying::longshot_detail::resolveExplorerTarget(request, out) &&
          out.containsSelection(request.x, request.y, request.width,
                                request.height);
 }
