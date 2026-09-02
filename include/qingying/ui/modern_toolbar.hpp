@@ -37,6 +37,7 @@ enum class ToolbarIconKind
   Confirm,
   Cancel,
   Move,
+  Eyedropper,
   LongShot,
   Pause,
   Resume,

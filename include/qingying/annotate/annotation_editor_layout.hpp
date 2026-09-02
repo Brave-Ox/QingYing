@@ -46,6 +46,28 @@ inline constexpr int AnnotationEditorMosaicSizeOptionCount = 4;
 inline constexpr int AnnotationEditorMosaicSizeOptions[
     AnnotationEditorMosaicSizeOptionCount] = {8, 12, 16, 24};
 inline constexpr int AnnotationEditorColorSwatchSize = 20;
+inline constexpr int AnnotationEditorCurrentColorSwatchSize =
+    AnnotationEditorColorSwatchSize;
+inline constexpr int AnnotationEditorColorPickerWidth = 300;
+inline constexpr int AnnotationEditorColorPickerHeight = 348;
+inline constexpr int AnnotationEditorColorPickerPadX = 12;
+inline constexpr int AnnotationEditorColorPickerPadY = 10;
+inline constexpr int AnnotationEditorColorPickerTitleHeight = 32;
+inline constexpr int AnnotationEditorColorPickerCloseSize = 16;
+inline constexpr int AnnotationEditorColorPickerSvHeight = 148;
+inline constexpr int AnnotationEditorColorPickerSliderHeight = 12;
+inline constexpr int AnnotationEditorColorPickerSliderGap = 8;
+inline constexpr int AnnotationEditorColorPickerEyedropperSize = 28;
+inline constexpr int AnnotationEditorColorPickerRowHeight = 26;
+inline constexpr int AnnotationEditorColorPickerButtonWidth = 72;
+inline constexpr int AnnotationEditorColorPickerButtonHeight = 28;
+inline constexpr int AnnotationEditorColorPickerFormatWidth = 64;
+inline constexpr int AnnotationEditorColorPickerHexEditWidth = 96;
+inline constexpr int AnnotationEditorColorPickerChannelEditWidth = 44;
+inline constexpr int AnnotationEditorColorPickerAlphaEditWidth = 48;
+inline constexpr int AnnotationEditorColorPickerHueMax = 360;
+inline constexpr int AnnotationEditorColorPickerPercentMax = 100;
+inline constexpr int AnnotationEditorColorPickerChannelMax = 255;
 inline constexpr int AnnotationEditorFrameBorderPx = 4;
 inline constexpr int AnnotationEditorHandleRadiusPx = 5;
 inline constexpr int AnnotationEditorFrameInsetPx = 6;
@@ -108,11 +130,16 @@ inline int annotationEditorButtonsWidth(int count)
          (count - 1) * AnnotationEditorButtonGap;
 }
 
+inline int annotationEditorColorSwatchesWidth()
+{
+  return AnnotationEditorCurrentColorSwatchSize + AnnotationEditorButtonGap +
+         AnnotationStylePresetColorCount * AnnotationEditorColorSwatchSize +
+         (AnnotationStylePresetColorCount - 1) * AnnotationEditorButtonGap;
+}
+
 inline int annotationEditorPropertyBarWidth()
 {
-  const int colors_width =
-      AnnotationStylePresetColorCount * AnnotationEditorColorSwatchSize +
-      (AnnotationStylePresetColorCount - 1) * AnnotationEditorButtonGap;
+  const int colors_width = annotationEditorColorSwatchesWidth();
   const int stroke_width = AnnotationEditorStrokeChipWidth;
   const int shape_width = annotationEditorButtonsWidth(2);
   const int fill_width = AnnotationEditorButtonWidth;
@@ -720,6 +747,182 @@ inline bool annotationEditorContains(const AnnotationEditorRect& rect, int x,
                                      int y)
 {
   return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+enum class AnnotationEditorColorPickerHit
+{
+  None,
+  Title,
+  Close,
+  Sv,
+  Hue,
+  Alpha,
+  Eyedropper,
+};
+
+struct AnnotationEditorColorPickerLayout
+{
+  AnnotationEditorRect title{};
+  AnnotationEditorRect close{};
+  AnnotationEditorRect sv{};
+  AnnotationEditorRect eyedropper{};
+  AnnotationEditorRect hue{};
+  AnnotationEditorRect alpha{};
+  AnnotationEditorRect format{};
+  AnnotationEditorRect hex_edit{};
+  AnnotationEditorRect channel_edits[3]{};
+  AnnotationEditorRect alpha_edit{};
+  AnnotationEditorRect confirm{};
+  AnnotationEditorRect cancel{};
+};
+
+inline AnnotationEditorColorPickerLayout annotationEditorColorPickerLayout()
+{
+  AnnotationEditorColorPickerLayout layout{};
+  const int pad_x = AnnotationEditorColorPickerPadX;
+  const int pad_y = AnnotationEditorColorPickerPadY;
+  const int width = AnnotationEditorColorPickerWidth;
+  const int height = AnnotationEditorColorPickerHeight;
+
+  layout.title = {0, 0, width, AnnotationEditorColorPickerTitleHeight};
+  layout.close = {width - pad_x - AnnotationEditorColorPickerCloseSize,
+                  (AnnotationEditorColorPickerTitleHeight -
+                   AnnotationEditorColorPickerCloseSize) /
+                      2,
+                  0, 0};
+  layout.close.right = layout.close.left + AnnotationEditorColorPickerCloseSize;
+  layout.close.bottom = layout.close.top + AnnotationEditorColorPickerCloseSize;
+
+  layout.sv = {pad_x, AnnotationEditorColorPickerTitleHeight + pad_y, width - pad_x,
+               AnnotationEditorColorPickerTitleHeight + pad_y +
+                   AnnotationEditorColorPickerSvHeight};
+
+  const int slider_left =
+      pad_x + AnnotationEditorColorPickerEyedropperSize + AnnotationEditorButtonGap;
+  int slider_top = layout.sv.bottom + pad_y;
+  layout.eyedropper = {pad_x, slider_top,
+                       pad_x + AnnotationEditorColorPickerEyedropperSize,
+                       slider_top + AnnotationEditorColorPickerEyedropperSize};
+  layout.hue = {slider_left, slider_top, width - pad_x,
+                slider_top + AnnotationEditorColorPickerSliderHeight};
+  slider_top += AnnotationEditorColorPickerSliderHeight +
+                AnnotationEditorColorPickerSliderGap;
+  layout.alpha = {slider_left, slider_top, width - pad_x,
+                  slider_top + AnnotationEditorColorPickerSliderHeight};
+
+  const int row_top = layout.eyedropper.bottom + pad_y;
+  const int row_bottom = row_top + AnnotationEditorColorPickerRowHeight;
+  layout.format = {pad_x, row_top, pad_x + AnnotationEditorColorPickerFormatWidth,
+                   row_bottom};
+
+  int edit_x = layout.format.right + AnnotationEditorButtonGap;
+  layout.hex_edit = {edit_x, row_top,
+                     edit_x + AnnotationEditorColorPickerHexEditWidth, row_bottom};
+  layout.channel_edits[0] = {
+      edit_x, row_top, edit_x + AnnotationEditorColorPickerChannelEditWidth,
+      row_bottom};
+  edit_x = layout.channel_edits[0].right + AnnotationEditorButtonGap;
+  layout.channel_edits[1] = {
+      edit_x, row_top, edit_x + AnnotationEditorColorPickerChannelEditWidth,
+      row_bottom};
+  edit_x = layout.channel_edits[1].right + AnnotationEditorButtonGap;
+  layout.channel_edits[2] = {
+      edit_x, row_top, edit_x + AnnotationEditorColorPickerChannelEditWidth,
+      row_bottom};
+
+  layout.alpha_edit = {width - pad_x - AnnotationEditorColorPickerAlphaEditWidth,
+                       row_top, width - pad_x, row_bottom};
+
+  layout.cancel = {width - pad_x - AnnotationEditorColorPickerButtonWidth,
+                   height - pad_y - AnnotationEditorColorPickerButtonHeight,
+                   width - pad_x,
+                   height - pad_y};
+  layout.confirm = {layout.cancel.left - AnnotationEditorButtonGap -
+                        AnnotationEditorColorPickerButtonWidth,
+                    layout.cancel.top,
+                    layout.cancel.left - AnnotationEditorButtonGap,
+                    layout.cancel.bottom};
+  return layout;
+}
+
+inline AnnotationEditorColorPickerHit annotationEditorHitColorPicker(
+    const AnnotationEditorColorPickerLayout& layout, int x, int y)
+{
+  if (annotationEditorContains(layout.close, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Close;
+  }
+  if (annotationEditorContains(layout.sv, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Sv;
+  }
+  if (annotationEditorContains(layout.hue, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Hue;
+  }
+  if (annotationEditorContains(layout.alpha, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Alpha;
+  }
+  if (annotationEditorContains(layout.eyedropper, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Eyedropper;
+  }
+  if (annotationEditorContains(layout.title, x, y))
+  {
+    return AnnotationEditorColorPickerHit::Title;
+  }
+  return AnnotationEditorColorPickerHit::None;
+}
+
+inline int annotationEditorColorPickerRatio(int pos, int left, int right,
+                                            int max_value)
+{
+  const int width = right - left;
+  if (width <= 1)
+  {
+    return 0;
+  }
+  int offset = pos - left;
+  if (offset < 0)
+  {
+    offset = 0;
+  }
+  if (offset > width)
+  {
+    offset = width;
+  }
+  return (offset * max_value + width / 2) / width;
+}
+
+inline void annotationEditorColorPickerSvAt(
+    const AnnotationEditorRect& sv, int x, int y, int& saturation, int& value)
+{
+  saturation = annotationEditorColorPickerRatio(
+      x, sv.left, sv.right, AnnotationEditorColorPickerPercentMax);
+  value = AnnotationEditorColorPickerPercentMax -
+          annotationEditorColorPickerRatio(
+              y, sv.top, sv.bottom, AnnotationEditorColorPickerPercentMax);
+}
+
+inline void annotationEditorPlaceColorPicker(int anchor_x, int anchor_y,
+                                             int /*anchor_w*/, int anchor_h,
+                                             int bound_left, int bound_top,
+                                             int bound_right, int bound_bottom,
+                                             int& out_x, int& out_y)
+{
+  const int picker_w = AnnotationEditorColorPickerWidth;
+  const int picker_h = AnnotationEditorColorPickerHeight;
+  int x = anchor_x;
+  int y = anchor_y - AnnotationEditorButtonGap - picker_h;
+  if (y < bound_top)
+  {
+    y = anchor_y + (std::max)(1, anchor_h) + AnnotationEditorButtonGap;
+  }
+  annotationEditorClampRectOrigin(x, y, picker_w, picker_h, bound_left, bound_top,
+                                  bound_right, bound_bottom);
+  out_x = x;
+  out_y = y;
 }
 
 inline AnnotationEditorTextChrome annotationEditorTextChrome(

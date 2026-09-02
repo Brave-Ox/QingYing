@@ -111,6 +111,12 @@ void bindPropertyBarTooltips(AnnotationEditorHost* data)
                      data->m_tooltip_text[kStrokeTooltipSlot],
                      kToolbarTooltipMaxChars);
 
+  bindToolbarTooltip(tooltip, overlay, kTipCurrentColorId,
+                     data->m_current_color_rect,
+                     L"\x5F53\x524D\x989C\x8272",
+                     data->m_tooltip_text[kCurrentColorTooltipSlot],
+                     kToolbarTooltipMaxChars);
+
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
     bindToolbarTooltip(tooltip, overlay, kTipColorBaseId + static_cast<UINT>(i),
@@ -278,6 +284,7 @@ void resetPropertyBarRects(AnnotationEditorHost* data)
   }
   data->m_stroke_chip_rect = {};
   data->m_size_combo_rect = {};
+  data->m_current_color_rect = {};
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
     data->m_color_swatch_rects[static_cast<std::size_t>(i)] = {};
@@ -483,6 +490,9 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
   int combo_x = x;
   if (annotationEditorPropertyBarShowsColor(tool))
   {
+    const int current = AnnotationEditorCurrentColorSwatchSize;
+    data->m_current_color_rect = {x, swatch_y, x + current, swatch_y + current};
+    x += current + AnnotationEditorButtonGap;
     for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
     {
       data->m_color_swatch_rects[static_cast<std::size_t>(i)] = {
@@ -542,6 +552,10 @@ void resizeEditorChrome(AnnotationEditorHost* data)
   {
     hideStrokePopup(data);
   }
+  if (!annotationEditorPropertyBarShowsColor(tool))
+  {
+    hideColorPicker(data, false);
+  }
   if (data->m_font_combo != nullptr)
   {
     // 全屏 UpdateLayeredWindow 会盖住 WS_POPUP ComboBox；字号改由 overlay 绘制/命中。
@@ -569,6 +583,17 @@ int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y)
     }
   }
   return -1;
+}
+
+bool hitTestCurrentColorSwatch(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarShowsColor(data->m_controller.tool()))
+  {
+    return false;
+  }
+  const POINT pt{x, y};
+  return PtInRect(&data->m_current_color_rect, pt) != FALSE;
 }
 
 bool hitTestSizeCombo(const AnnotationEditorHost* data, int x, int y)
@@ -818,6 +843,7 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
   const int color_index = hitTestColorSwatch(data, x, y);
   if (color_index >= 0)
   {
+    hideColorPicker(data, false);
     data->m_controller.setColor(
         AnnotationStylePresetColors[static_cast<std::size_t>(color_index)]);
     applyLiveTextStyle(data);
@@ -828,6 +854,20 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
     if (data->m_controller.isDrawing())
     {
       invalidateImageArea(data);
+    }
+    invalidateToolbar(data);
+    return;
+  }
+
+  if (hitTestCurrentColorSwatch(data, x, y))
+  {
+    if (colorPickerIsVisible(data))
+    {
+      hideColorPicker(data, false);
+    }
+    else
+    {
+      showColorPicker(data);
     }
     invalidateToolbar(data);
     return;
@@ -867,6 +907,7 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
   ScreenToClient(data->m_overlay, &pt);
   return hitTestEditorToolbar(data, pt.x, pt.y) >= 0 ||
          hitTestChromeBar(data, pt.x, pt.y) ||
+         hitTestCurrentColorSwatch(data, pt.x, pt.y) ||
          hitTestColorSwatch(data, pt.x, pt.y) >= 0 ||
          hitTestSizeCombo(data, pt.x, pt.y) ||
          hitTestStrokeChip(data, pt.x, pt.y) ||
@@ -927,12 +968,39 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
 
   if (annotationEditorPropertyBarShowsColor(tool))
   {
+    const RECT& current = data->m_current_color_rect;
+    if (current.right > current.left)
+    {
+      const bool custom = !colorMatchesAnyPresetRgb(style.color);
+      const bool picker_open = colorPickerIsVisible(data);
+      fillRoundRect(hdc, current, colorBgraToRef(style.color),
+                    picker_open ? kSwatchSelectedBorderColor : kSwatchBorderColor,
+                    kSwatchCornerRadius);
+      if (custom)
+      {
+        constexpr int kRainbowHueCount = 3;
+        constexpr int kRainbowHues[kRainbowHueCount] = {0, 120, 240};
+        for (int i = 0; i < kRainbowHueCount; ++i)
+        {
+          RECT ring = current;
+          InflateRect(&ring, i + 1, i + 1);
+          const ColorBgra hue_color =
+              hsvToRgb(kRainbowHues[i], ColorPercentMax, ColorPercentMax,
+                       static_cast<std::uint8_t>(ColorChannelMax));
+          const GdiObject brush(CreateSolidBrush(colorBgraToRef(hue_color)));
+          if (brush)
+          {
+            FrameRect(hdc, &ring, brush.asBrush());
+          }
+        }
+      }
+    }
     for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
     {
       const ColorBgra& preset =
           AnnotationStylePresetColors[static_cast<std::size_t>(i)];
       const RECT& cell = data->m_color_swatch_rects[static_cast<std::size_t>(i)];
-      const bool selected = colorsMatch(style.color, preset);
+      const bool selected = colorsMatchRgb(style.color, preset);
       fillRoundRect(hdc, cell, colorBgraToRef(preset),
                     selected ? kSwatchSelectedBorderColor : kSwatchBorderColor,
                     kSwatchCornerRadius);
@@ -1224,6 +1292,7 @@ void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int /*x*/, int /*y*/
   data->m_chrome_drag_origin_x = data->m_chrome_offset_x;
   data->m_chrome_drag_origin_y = data->m_chrome_offset_y;
   hideStrokePopup(data);
+  hideColorPicker(data, false);
   SetCapture(hwnd);
 }
 
@@ -1310,6 +1379,7 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
   }
 
   hideStrokePopup(data);
+  hideColorPicker(data, false);
   if (id != kButtonTextId)
   {
     commitInlineText(data);

@@ -11,12 +11,14 @@
 #include "qingying/annotate/annotation_renderer.hpp"
 #include "qingying/annotate/annotation_result.hpp"
 #include "qingying/annotate/annotation_types.hpp"
+#include "qingying/annotate/color_picker_state.hpp"
 #include "qingying/ui/modern_toolbar.hpp"
 
 namespace qingying {
 
 inline constexpr wchar_t kOverlayClassName[] = L"QingYingAnnotationOverlay";
 inline constexpr wchar_t kStrokePopupClassName[] = L"QingYingStrokePopup";
+inline constexpr wchar_t kColorPickerClassName[] = L"QingYingColorPicker";
 inline constexpr wchar_t kInlineEditHostClassName[] = L"QingYingInlineEditHost";
 inline constexpr wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
@@ -35,12 +37,22 @@ inline constexpr UINT kInlineEditId = 10;
 inline constexpr UINT kFontComboId = 20;
 inline constexpr UINT kStrokePopupEditId = 21;
 inline constexpr UINT_PTR kStrokePopupEditSubclassId = 1;
+inline constexpr UINT kColorPickerFormatComboId = 30;
+inline constexpr UINT kColorPickerHexEditId = 31;
+inline constexpr UINT kColorPickerChannel0Id = 32;
+inline constexpr UINT kColorPickerChannel1Id = 33;
+inline constexpr UINT kColorPickerChannel2Id = 34;
+inline constexpr UINT kColorPickerAlphaEditId = 35;
+inline constexpr UINT kColorPickerOkId = 36;
+inline constexpr UINT kColorPickerCancelId = 37;
+inline constexpr UINT_PTR kColorPickerEditSubclassId = 2;
 inline constexpr UINT kSizeMenuBaseId = 400;
 inline constexpr UINT kTipShapeRectId = 200;
 inline constexpr UINT kTipShapeEllipseId = 201;
 inline constexpr UINT kTipFillId = 202;
 inline constexpr UINT kTipLineStyleBaseId = 210;
 inline constexpr UINT kTipStrokeId = 220;
+inline constexpr UINT kTipCurrentColorId = 229;
 inline constexpr UINT kTipColorBaseId = 230;
 inline constexpr int kComboFontPx = 13;
 
@@ -60,7 +72,8 @@ inline constexpr int kFillTooltipSlot = kShapeTooltipSlot + kGeometryShapeCount;
 inline constexpr int kLineStyleTooltipSlot = kFillTooltipSlot + 1;
 inline constexpr int kStrokeTooltipSlot =
     kLineStyleTooltipSlot + AnnotationLineStyleCount;
-inline constexpr int kColorTooltipSlot = kStrokeTooltipSlot + 1;
+inline constexpr int kCurrentColorTooltipSlot = kStrokeTooltipSlot + 1;
+inline constexpr int kColorTooltipSlot = kCurrentColorTooltipSlot + 1;
 inline constexpr int kTooltipSlotCount =
     kColorTooltipSlot + AnnotationStylePresetColorCount;
 inline constexpr COLORREF kStrokeSliderTrackColor = RGB(226, 229, 234);
@@ -145,6 +158,7 @@ class AnnotationEditorHost
   float m_text_drag_x{0.0f};
   float m_text_drag_y{0.0f};
   EditorToolbarItem m_toolbar_items[kToolbarIconItemCount]{};
+  RECT m_current_color_rect{};
   RECT m_color_swatch_rects[AnnotationStylePresetColorCount]{};
   RECT m_stroke_chip_rect{};
   RECT m_shape_rects[kGeometryShapeCount]{};
@@ -157,6 +171,27 @@ class AnnotationEditorHost
   HWND m_stroke_popup_edit{nullptr};
   bool m_stroke_syncing{false};
   bool m_stroke_slider_dragging{false};
+  ColorPickerState m_color_picker_state;
+  HWND m_color_picker{nullptr};
+  HWND m_color_format_combo{nullptr};
+  HWND m_color_hex_edit{nullptr};
+  HWND m_color_channel_edits[3]{};
+  HWND m_color_alpha_edit{nullptr};
+  HWND m_color_ok{nullptr};
+  HWND m_color_cancel{nullptr};
+  bool m_color_picker_syncing{false};
+  bool m_color_picker_dragging{false};
+  bool m_color_picker_moved{false};
+  bool m_color_picker_eyedropping{false};
+  bool m_color_sv_dragging{false};
+  bool m_color_hue_dragging{false};
+  bool m_color_alpha_dragging{false};
+  int m_color_picker_drag_start_x{0};
+  int m_color_picker_drag_start_y{0};
+  int m_color_picker_drag_origin_x{0};
+  int m_color_picker_drag_origin_y{0};
+  int m_color_picker_screen_x{0};
+  int m_color_picker_screen_y{0};
   int m_toolbar_divider_x[AnnotationEditorDividerCount]{};
   HWND m_tooltip{nullptr};
   wchar_t m_tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};
@@ -231,6 +266,12 @@ void applyLiveTextStyle(AnnotationEditorHost* data);
 void syncStyleFromAnnotation(AnnotationEditorHost* data,
                             const Annotation& annotation);
 int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y);
+bool hitTestCurrentColorSwatch(const AnnotationEditorHost* data, int x, int y);
+bool colorPickerIsVisible(const AnnotationEditorHost* data);
+void hideColorPicker(AnnotationEditorHost* data, bool apply);
+void destroyColorPicker(AnnotationEditorHost* data);
+void showColorPicker(AnnotationEditorHost* data);
+bool handleColorPickerEyedropperClick(AnnotationEditorHost* data, int x, int y);
 bool hitTestSizeCombo(const AnnotationEditorHost* data, int x, int y);
 void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value);
 void pickSizeFromOverlayMenu(AnnotationEditorHost* data);

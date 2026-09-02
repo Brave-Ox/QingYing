@@ -104,6 +104,20 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
   }
   if (key == VK_ESCAPE)
   {
+    if (data->m_color_picker_eyedropping)
+    {
+      data->m_color_picker_eyedropping = false;
+      if (data->m_color_picker != nullptr)
+      {
+        InvalidateRect(data->m_color_picker, nullptr, FALSE);
+      }
+      return true;
+    }
+    if (colorPickerIsVisible(data))
+    {
+      hideColorPicker(data, false);
+      return true;
+    }
     if (strokePopupIsVisible(data))
     {
       hideStrokePopup(data);
@@ -128,6 +142,11 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
       return true;
     }
     requestClose(data, false);
+    return true;
+  }
+  if (key == VK_RETURN && colorPickerIsVisible(data))
+  {
+    hideColorPicker(data, true);
     return true;
   }
   if ((key == VK_DELETE || key == VK_BACK) && data->m_inline_edit == nullptr)
@@ -198,6 +217,11 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 1;
     case WM_SETCURSOR:
     {
+      if (data != nullptr && data->m_color_picker_eyedropping)
+      {
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32515)));  // IDC_CROSS
+        return TRUE;
+      }
       if (data != nullptr && data->m_toolbar_hover >= 0 &&
           data->m_toolbar_items[static_cast<std::size_t>(data->m_toolbar_hover)]
                   .id == kButtonMoveId)
@@ -241,6 +265,11 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      if (data->m_color_picker_eyedropping)
+      {
+        (void)handleColorPickerEyedropperClick(data, x, y);
+        return 0;
+      }
       const int hit = hitTestEditorToolbar(data, x, y);
       if (hit >= 0 &&
           data->m_toolbar_items[static_cast<std::size_t>(hit)].id ==
@@ -263,6 +292,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (hitTestTextAnnotation(data, x, y) != kInvalidAnnotationIndex)
       {
+        hideColorPicker(data, false);
         data->m_controller.setTool(AnnotationTool::Text);
         resizeEditorChrome(data);
         beginOrEditTextAt(data, hwnd, x, y);
@@ -270,6 +300,15 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (!pointInImageArea(data, x, y))
       {
+        if (colorPickerIsVisible(data))
+        {
+          hideColorPicker(data, false);
+        }
+        return 0;
+      }
+      if (colorPickerIsVisible(data))
+      {
+        hideColorPicker(data, false);
         return 0;
       }
       if (data->m_controller.tool() == AnnotationTool::Text)
@@ -519,6 +558,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->m_tooltip = nullptr;
         }
         destroyInlineEdit(data);
+        destroyColorPicker(data);
         destroyStrokePopup(data);
         data->m_combo_font.reset();
         finishAndNotify(data);

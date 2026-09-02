@@ -329,6 +329,50 @@ TEST(AnnotationOverlayTest, MosaicPropertyBarShowsSizeNotColorStrokeOrFont)
   EXPECT_TRUE(annotationEditorPropertyBarShowsColor(AnnotationTool::Text));
 }
 
+TEST(AnnotationOverlayTest, PropertyBarWidthIncludesCurrentColorSwatch)
+{
+  const int presets_only =
+      AnnotationStylePresetColorCount * AnnotationEditorColorSwatchSize +
+      (AnnotationStylePresetColorCount - 1) * AnnotationEditorButtonGap;
+  EXPECT_EQ(annotationEditorColorSwatchesWidth(),
+            presets_only + AnnotationEditorCurrentColorSwatchSize +
+                AnnotationEditorButtonGap);
+  EXPECT_GE(annotationEditorPropertyBarWidth(),
+            annotationEditorColorSwatchesWidth());
+}
+
+TEST(AnnotationOverlayTest, ColorPickerLayoutHitTestsTitleNotControls)
+{
+  const AnnotationEditorColorPickerLayout layout =
+      annotationEditorColorPickerLayout();
+  EXPECT_EQ(annotationEditorHitColorPicker(layout, layout.title.left + 4,
+                                           layout.title.top + 4),
+            AnnotationEditorColorPickerHit::Title);
+  EXPECT_EQ(annotationEditorHitColorPicker(layout, layout.close.left + 1,
+                                           layout.close.top + 1),
+            AnnotationEditorColorPickerHit::Close);
+  EXPECT_EQ(annotationEditorHitColorPicker(layout, layout.sv.left + 2,
+                                           layout.sv.top + 2),
+            AnnotationEditorColorPickerHit::Sv);
+  EXPECT_EQ(annotationEditorHitColorPicker(layout, layout.hue.left + 2,
+                                           layout.hue.top + 1),
+            AnnotationEditorColorPickerHit::Hue);
+}
+
+TEST(AnnotationOverlayTest, ColorPickerPlacesAboveAnchorThenClamps)
+{
+  int x = 0;
+  int y = 0;
+  annotationEditorPlaceColorPicker(40, 400, 20, 20, 0, 0, 800, 600, x, y);
+  EXPECT_EQ(x, 40);
+  EXPECT_EQ(y, 400 - AnnotationEditorButtonGap -
+                    AnnotationEditorColorPickerHeight);
+
+  annotationEditorPlaceColorPicker(40, 10, 20, 20, 0, 0, 800, 600, x, y);
+  EXPECT_GE(y, 10 + 20);
+  EXPECT_LE(y + AnnotationEditorColorPickerHeight, 600);
+}
+
 TEST(AnnotationOverlayTest, SizeComboShownForTextAndMosaicOnly)
 {
   EXPECT_TRUE(annotationEditorPropertyBarShowsSizeCombo(AnnotationTool::Text));

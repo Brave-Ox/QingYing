@@ -9,6 +9,8 @@ add_executable(qingying_tests
   annotation_interaction_controller_test.cpp
   annotation_overlay_test.cpp
   annotation_renderer_test.cpp
+  color_convert_test.cpp
+  color_picker_state_test.cpp
   longshot_request_adapter_test.cpp
   longshot_controller_test.cpp
   capture_engine_test.cpp

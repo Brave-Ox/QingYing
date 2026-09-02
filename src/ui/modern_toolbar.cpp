@@ -106,6 +106,7 @@ constexpr bool kUseSvgMosaicIcon = true;
 constexpr bool kUseSvgStrokeWidthIcon = true;
 constexpr bool kUseSvgPinIcon = true;
 constexpr bool kUseSvgMoveIcon = true;
+constexpr bool kUseSvgEyedropperIcon = true;
 constexpr int kSvgFigureMaxPoints = 192;
 
 // 由 qrc/pencil-minus.svg 路径展平得到。kUseSvgPenIcon 设为 false 即可退回旧画笔。
@@ -481,6 +482,51 @@ constexpr float kMoveSvgMinY = 1.225f;
 constexpr float kMoveSvgMaxX = 1022.762f;
 constexpr float kMoveSvgMaxY = 1022.675f;
 
+// 由 qrc/取色器.svg 路径展平得到。kUseSvgEyedropperIcon 设为 false 即可退回旧吸管。
+const Gdiplus::PointF kEyedropperSvgPoints[] = {
+    {1017.640f, 165.366f}, {1017.056f, 155.839f}, {1015.354f, 146.385f},
+    {1012.609f, 137.081f}, {1008.894f, 128.000f}, {1004.286f, 119.217f},
+    {998.857f, 110.807f}, {992.683f, 102.845f}, {985.839f, 95.404f},
+    {922.236f, 31.801f}, {906.832f, 19.280f}, {889.640f, 10.335f},
+    {871.255f, 4.969f}, {852.273f, 3.180f}, {833.292f, 4.969f},
+    {814.907f, 10.335f}, {797.714f, 19.280f}, {782.311f, 31.801f},
+    {642.385f, 178.087f}, {572.422f, 108.124f}, {432.497f, 248.050f},
+    {489.739f, 305.292f}, {101.764f, 686.907f}, {92.807f, 696.745f},
+    {84.969f, 707.180f}, {78.174f, 718.211f}, {72.348f, 729.839f},
+    {67.416f, 742.062f}, {63.304f, 754.882f}, {59.938f, 768.298f},
+    {57.242f, 782.311f}, {31.801f, 807.752f}, {15.106f, 827.925f},
+    {3.180f, 849.888f}, {-3.975f, 873.043f}, {-6.360f, 896.795f},
+    {-3.975f, 920.547f}, {3.180f, 943.702f}, {15.106f, 965.665f},
+    {31.801f, 985.839f}, {51.975f, 1002.534f}, {73.938f, 1014.460f},
+    {97.093f, 1021.615f}, {120.845f, 1024.000f}, {144.596f, 1021.615f},
+    {167.752f, 1014.460f}, {189.714f, 1002.534f}, {209.888f, 985.839f},
+    {235.329f, 960.398f}, {249.342f, 959.528f}, {262.758f, 957.019f},
+    {275.578f, 953.019f}, {287.801f, 947.677f}, {299.429f, 941.143f},
+    {310.460f, 933.565f}, {320.894f, 925.093f}, {330.733f, 915.876f},
+    {718.708f, 527.901f}, {775.950f, 585.143f}, {915.876f, 445.217f},
+    {845.913f, 375.255f}, {985.839f, 235.329f}, {992.683f, 227.888f},
+    {998.857f, 219.925f}, {1004.286f, 211.516f}, {1008.894f, 202.733f},
+    {1012.609f, 193.652f}, {1015.354f, 184.348f}, {1017.056f, 174.894f},
+    {1017.640f, 165.366f}, {267.130f, 852.273f}, {259.702f, 858.559f},
+    {251.826f, 863.205f}, {243.652f, 866.360f}, {235.329f, 868.174f},
+    {227.006f, 868.795f}, {218.832f, 868.373f}, {210.957f, 867.056f},
+    {203.528f, 864.994f}, {146.286f, 922.236f}, {140.969f, 926.410f},
+    {134.758f, 929.391f}, {127.950f, 931.180f}, {120.845f, 931.776f},
+    {113.739f, 931.180f}, {106.932f, 929.391f}, {100.720f, 926.410f},
+    {95.404f, 922.236f}, {91.230f, 916.919f}, {88.248f, 910.708f},
+    {86.460f, 903.901f}, {85.863f, 896.795f}, {86.460f, 889.689f},
+    {88.248f, 882.882f}, {91.230f, 876.671f}, {95.404f, 871.354f},
+    {152.646f, 814.112f}, {149.019f, 806.683f}, {147.478f, 798.807f},
+    {147.727f, 790.634f}, {149.466f, 782.311f}, {152.398f, 773.988f},
+    {156.224f, 765.814f}, {160.646f, 757.938f}, {165.366f, 750.509f},
+    {553.342f, 362.534f}, {655.106f, 464.298f}, {267.130f, 852.273f},
+};
+constexpr int kEyedropperSvgFigureCounts[] = {70, 38};
+constexpr float kEyedropperSvgMinX = -6.360f;
+constexpr float kEyedropperSvgMinY = 3.180f;
+constexpr float kEyedropperSvgMaxX = 1017.640f;
+constexpr float kEyedropperSvgMaxY = 1024.000f;
+
 struct SvgGlyph
 {
   const Gdiplus::PointF* points;
@@ -583,6 +629,16 @@ void drawLegacyPinIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen, float cx,
   graphics.DrawEllipse(&pen, cx - 3.0f, cy - s, 6.0f, 6.0f);
   graphics.DrawLine(&pen, cx - s + 2.0f, cy - 2.0f, cx + s - 2.0f, cy - 2.0f);
   graphics.DrawLine(&pen, cx, cy - 2.0f, cx, cy + s);
+}
+
+void drawLegacyEyedropperIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen,
+                              float cx, float cy, float s)
+{
+  graphics.DrawLine(&pen, cx - s + 2.0f, cy + s - 2.0f, cx + s - 2.0f,
+                    cy - s + 2.0f);
+  graphics.DrawEllipse(&pen, cx + s - 5.5f, cy - s + 0.5f, 4.5f, 4.5f);
+  graphics.DrawLine(&pen, cx - s + 1.0f, cy + s - 4.5f, cx - s + 5.0f,
+                    cy + s - 0.5f);
 }
 
 void drawLegacyMoveIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen, float cx,
@@ -804,6 +860,22 @@ SvgGlyph makeMoveSvgGlyph()
   return glyph;
 }
 
+SvgGlyph makeEyedropperSvgGlyph()
+{
+  SvgGlyph glyph{};
+  glyph.points = kEyedropperSvgPoints;
+  glyph.point_count = static_cast<int>(sizeof(kEyedropperSvgPoints) /
+                                       sizeof(kEyedropperSvgPoints[0]));
+  glyph.figure_counts = kEyedropperSvgFigureCounts;
+  glyph.figure_count = static_cast<int>(sizeof(kEyedropperSvgFigureCounts) /
+                                        sizeof(kEyedropperSvgFigureCounts[0]));
+  glyph.min_x = kEyedropperSvgMinX;
+  glyph.min_y = kEyedropperSvgMinY;
+  glyph.max_x = kEyedropperSvgMaxX;
+  glyph.max_y = kEyedropperSvgMaxY;
+  return glyph;
+}
+
 bool drawSvgPenIcon(Gdiplus::Graphics& graphics, const Gdiplus::SolidBrush& brush,
                     float cx, float cy, float s)
 {
@@ -909,6 +981,15 @@ bool drawSvgMoveIcon(Gdiplus::Graphics& graphics, const Gdiplus::SolidBrush& bru
                      float cx, float cy, float s)
 {
   return drawSvgFilledGlyph(graphics, brush, makeMoveSvgGlyph(), cx, cy, s);
+}
+
+bool drawSvgEyedropperIcon(Gdiplus::Graphics& graphics,
+                           const Gdiplus::SolidBrush& brush, float cx, float cy,
+                           float s)
+{
+  // 外轮廓与吸头内腔必须一次 Alternate 填充，才能得到吸管镂空。
+  return drawSvgFilledGlyph(graphics, brush, makeEyedropperSvgGlyph(), cx, cy,
+                            s);
 }
 
 void configureIconGraphics(Gdiplus::Graphics& graphics)
@@ -1261,6 +1342,13 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
         drawLegacyMoveIcon(graphics, pen, cx, cy, s);
       }
       break;
+    case ToolbarIconKind::Eyedropper:
+      if (!kUseSvgEyedropperIcon ||
+          !drawSvgEyedropperIcon(graphics, brush, cx, cy, s))
+      {
+        drawLegacyEyedropperIcon(graphics, pen, cx, cy, s);
+      }
+      break;
     case ToolbarIconKind::Rectangle:
       drawLegacyGeometryIcon(graphics, pen, cx, cy, s);
       break;
@@ -1506,6 +1594,8 @@ const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
       return L"\x53D6\x6D88";
     case ToolbarIconKind::Move:
       return L"\x79FB\x52A8";
+    case ToolbarIconKind::Eyedropper:
+      return L"\x53D6\x8272\x5668";
     case ToolbarIconKind::LongShot:
       return L"\x957F\x622A\x56FE";
     case ToolbarIconKind::Pause:

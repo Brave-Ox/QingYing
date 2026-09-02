@@ -1,4 +1,5 @@
 ﻿#include "qingying/annotate/annotation_renderer.hpp"
+#include "qingying/annotate/color_convert.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -56,7 +57,8 @@ void setPixel(Image& target, int x, int y, std::uint32_t value)
   const std::size_t index = static_cast<std::size_t>(y) *
                                 static_cast<std::size_t>(target.width) +
                             static_cast<std::size_t>(x);
-  target.pixels.at(index) = value;
+  target.pixels.at(index) =
+      blendSrcOver(target.pixels.at(index), unpackColorBgra(value));
 }
 
 // 描边画在矩形内缘：距任意一条边不足 thickness 的像素属于边框。

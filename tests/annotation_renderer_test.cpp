@@ -200,6 +200,36 @@ TEST(AnnotationRendererTest, FilledRectanglePaintsInterior)
   EXPECT_EQ(pixelAt(out, 17, 12), kRedPx);
 }
 
+TEST(AnnotationRendererTest, SemiTransparentFillBlendsOverWhite)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedRectangle();
+  annotation.style.filled = true;
+  annotation.style.color.a = 128;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 17, 12), makeBgra(127, 127, 255, 255));
+}
+
+TEST(AnnotationRendererTest, ZeroAlphaFillLeavesBackground)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedRectangle();
+  annotation.style.filled = true;
+  annotation.style.color.a = 0;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_EQ(pixelAt(out, 17, 12), kWhitePx);
+}
+
 TEST(AnnotationRendererTest, DashedRectangleTopEdgeHasGaps)
 {
   const AnnotationRenderer renderer;

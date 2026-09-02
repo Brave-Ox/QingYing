@@ -1,5 +1,7 @@
 ﻿#include "qingying/ui/modern_toolbar.hpp"
 
+#include <cstdint>
+
 #include <gtest/gtest.h>
 
 namespace qingying {
@@ -74,6 +76,8 @@ TEST(ModernToolbarTest, IconLabelsAreChineseTooltips)
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Confirm), L"\x5B8C\x6210");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Cancel), L"\x53D6\x6D88");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Move), L"\x79FB\x52A8");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Eyedropper),
+               L"\x53D6\x8272\x5668");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LongShot), L"\x957F\x622A\x56FE");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Pause), L"\x6682\x505C");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Resume), L"\x7EE7\x7EED");
@@ -107,6 +111,96 @@ TEST(ModernToolbarTest, CornerRadiusMakesStadiumOnDefaultBarHeight)
 {
   EXPECT_EQ(DefaultModernToolbarMetrics.corner_radius * 2,
             modernToolbarHeight(DefaultModernToolbarMetrics));
+}
+
+TEST(ModernToolbarTest, EyedropperIconFillsDropperBodyFromSvg)
+{
+  constexpr int kSize = 28;
+  constexpr int kCellMid = 14;
+  constexpr int kMinInkPixels = 80;
+  constexpr int kInkLumaDelta = 120;
+  constexpr int kHandleMaxLuma = 400;
+  constexpr int kCavityLumaGap = 80;
+  constexpr int kHandleX = 21;
+  constexpr int kHandleY = 8;
+  constexpr int kCavityX = 12;
+  constexpr int kCavityY = 16;
+  constexpr COLORREF kInk = RGB(55, 59, 66);
+  constexpr int kWhiteLuma = 255 * 3;
+  void* bits = nullptr;
+  const HBITMAP dib = createTopDownArgbDib(kSize, kSize, &bits);
+  ASSERT_NE(dib, nullptr);
+  ASSERT_NE(bits, nullptr);
+
+  HDC dc = CreateCompatibleDC(nullptr);
+  ASSERT_NE(dc, nullptr);
+  const HGDIOBJ old = SelectObject(dc, dib);
+  RECT cell{0, 0, kSize, kSize};
+  const HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
+  ASSERT_NE(white, nullptr);
+  FillRect(dc, &cell, white);
+  DeleteObject(white);
+  drawToolbarIcon(dc, cell, ToolbarIconKind::Eyedropper, kInk);
+  SelectObject(dc, old);
+  DeleteDC(dc);
+
+  const std::uint32_t* pixels = static_cast<const std::uint32_t*>(bits);
+  int ink_pixels = 0;
+  int upper_right = 0;
+  int lower_left = 0;
+  int upper_left = 0;
+  int lower_right = 0;
+  for (int y = 0; y < kSize; ++y)
+  {
+    for (int x = 0; x < kSize; ++x)
+    {
+      const std::uint32_t packed =
+          pixels[static_cast<std::size_t>(y) * kSize +
+                  static_cast<std::size_t>(x)];
+      const int luma = static_cast<int>(packed & 0xFFu) +
+                       static_cast<int>((packed >> 8) & 0xFFu) +
+                       static_cast<int>((packed >> 16) & 0xFFu);
+      if (kWhiteLuma - luma < kInkLumaDelta)
+      {
+        continue;
+      }
+      ++ink_pixels;
+      if (x >= kCellMid && y < kCellMid)
+      {
+        ++upper_right;
+      }
+      else if (x < kCellMid && y >= kCellMid)
+      {
+        ++lower_left;
+      }
+      else if (x < kCellMid && y < kCellMid)
+      {
+        ++upper_left;
+      }
+      else
+      {
+        ++lower_right;
+      }
+    }
+  }
+
+  const std::uint32_t handle =
+      pixels[kHandleY * kSize + kHandleX];
+  const std::uint32_t cavity =
+      pixels[kCavityY * kSize + kCavityX];
+  const int handle_luma = static_cast<int>(handle & 0xFFu) +
+                          static_cast<int>((handle >> 8) & 0xFFu) +
+                          static_cast<int>((handle >> 16) & 0xFFu);
+  const int cavity_luma = static_cast<int>(cavity & 0xFFu) +
+                           static_cast<int>((cavity >> 8) & 0xFFu) +
+                           static_cast<int>((cavity >> 16) & 0xFFu);
+
+  DeleteObject(dib);
+
+  EXPECT_GE(ink_pixels, kMinInkPixels);
+  EXPECT_GT(upper_right + lower_left, upper_left + lower_right);
+  EXPECT_LT(handle_luma, kHandleMaxLuma);
+  EXPECT_GT(cavity_luma, handle_luma + kCavityLumaGap);
 }
 
 }  // namespace qingying
