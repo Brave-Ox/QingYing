@@ -1,5 +1,5 @@
 ﻿#include "qingying/capture/capture_engine.hpp"
-#include "qingying/longshot/explorer_longshot_profile.hpp"
+#include "builtin_longshot_test_helpers.h"
 #include "qingying/longshot/longshot_engine.hpp"
 #include "qingying/longshot/longshot_profile_registry.hpp"
 
@@ -119,12 +119,6 @@ LongShotRequest requestForPane(const TestExplorerWindow& window) {
           rect.right - rect.left, rect.bottom - rect.top};
 }
 
-LongShotProfileRegistry makeExplorerProfileRegistry() {
-  LongShotProfileRegistry registry;
-  registry.add(std::make_unique<ExplorerLongShotProfile>());
-  return registry;
-}
-
 }  // 匿名命名空间
 
 TEST(ExplorerLongShotProfileTest, ResolvesSelectionToContainingContentPane) {
@@ -133,10 +127,11 @@ TEST(ExplorerLongShotProfileTest, ResolvesSelectionToContainingContentPane) {
   ASSERT_NE(window.pane(), nullptr);
 
   const LongShotRequest request = requestForPane(window);
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
 
-  ASSERT_TRUE(profile.resolve(request, result));
+  ASSERT_TRUE(context.profile().resolve(request, result));
   EXPECT_EQ(result.scroll_target,
             reinterpret_cast<std::uintptr_t>(window.pane()));
   EXPECT_TRUE(result.containsSelection(request.x, request.y, request.width,
@@ -152,10 +147,11 @@ TEST(ExplorerLongShotProfileTest, RejectsSelectionMostlyOutsideContentPane) {
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), rect.left - 101,
       rect.top, rect.right - rect.left, rect.bottom - rect.top};
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
 
-  EXPECT_FALSE(profile.resolve(request, result));
+  EXPECT_FALSE(context.profile().resolve(request, result));
   EXPECT_FALSE(result.valid());
 }
 
@@ -169,10 +165,11 @@ TEST(ExplorerLongShotProfileTest,
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), rect.left,
       rect.top - 20, rect.right - rect.left, rect.bottom - rect.top + 20};
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
 
-  EXPECT_TRUE(profile.resolve(request, result));
+  EXPECT_TRUE(context.profile().resolve(request, result));
   EXPECT_FALSE(result.containsSelection(request.x, request.y, request.width,
                                         request.height));
 }
@@ -187,10 +184,11 @@ TEST(ExplorerLongShotProfileTest, RejectsSelectionSpanningSeparatePane) {
       reinterpret_cast<std::uintptr_t>(window.root()), rect.left - 100,
       rect.top - 100, rect.right - rect.left + 200,
       rect.bottom - rect.top + 200};
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
 
-  EXPECT_FALSE(profile.resolve(request, result));
+  EXPECT_FALSE(context.profile().resolve(request, result));
   EXPECT_FALSE(result.valid());
 }
 
@@ -200,11 +198,12 @@ TEST(ExplorerLongShotProfileTest, SendsWheelOnlyToResolvedPane) {
   ASSERT_NE(window.pane(), nullptr);
 
   const LongShotRequest request = requestForPane(window);
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
-  ASSERT_TRUE(profile.resolve(request, result));
+  ASSERT_TRUE(context.profile().resolve(request, result));
 
-  EXPECT_TRUE(profile.scrollDown(request, result));
+  EXPECT_TRUE(context.profile().scrollDown(request, result));
   EXPECT_EQ(window.wheelMessageCount(), 1);
 }
 
@@ -215,12 +214,13 @@ TEST(ExplorerLongShotProfileTest, ReadsVerticalScrollState) {
   window.setVerticalScrollInfo(0, 99, 20, 80);
 
   const LongShotRequest request = requestForPane(window);
-  ExplorerLongShotProfile profile;
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult result;
-  ASSERT_TRUE(profile.resolve(request, result));
+  ASSERT_TRUE(context.profile().resolve(request, result));
 
   LongShotScrollState state;
-  ASSERT_TRUE(profile.queryScrollState(result, state));
+  ASSERT_TRUE(context.profile().queryScrollState(result, state));
   EXPECT_TRUE(state.valid);
   EXPECT_EQ(state.position, 80);
   EXPECT_TRUE(state.atBottom());
@@ -232,12 +232,14 @@ TEST(LongShotProfileRegistryTest, ResolvesAnExplicitlyRegisteredProfile) {
   ASSERT_NE(window.pane(), nullptr);
 
   const LongShotRequest request = requestForPane(window);
-  LongShotProfileRegistry registry = makeExplorerProfileRegistry();
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
+  LongShotProfileRegistry registry = context.takeRegistry();
   LongShotProfileResult result;
 
   const LongShotProfile* profile = registry.resolve(request, result);
   ASSERT_NE(profile, nullptr);
-  EXPECT_STREQ(profile->name(), "explorer");
+  EXPECT_STREQ(profile->name(), "builtin.explorer");
   EXPECT_EQ(result.scroll_target,
             reinterpret_cast<std::uintptr_t>(window.pane()));
 }
@@ -276,8 +278,10 @@ TEST(LongShotEngineProfileIntegrationTest,
   window.setVerticalScrollInfo(0, 99, 20, 10);
 
   const LongShotRequest request = requestForPane(window);
+  test_support::BuiltinLongShotProfileContext context("builtin.explorer");
+  ASSERT_TRUE(context.ready());
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeExplorerProfileRegistry());
+  LongShotEngine engine(capture, context.takeRegistry());
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);

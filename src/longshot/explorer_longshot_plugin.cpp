@@ -8,9 +8,7 @@ qingying::builtin_longshot_plugin::PluginContext g_context;
 
 bool resolveExplorerRequest(const qingying::LongShotRequest& request,
                             qingying::LongShotProfileResult& out) {
-  return qingying::longshot_detail::resolveExplorerTarget(request, out) &&
-         out.containsSelection(request.x, request.y, request.width,
-                               request.height);
+  return qingying::longshot_detail::resolveExplorerTarget(request, out);
 }
 
 }  // namespace
@@ -23,4 +21,3 @@ QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
       host, plugin, g_context, "builtin.explorer",
       "QingYing Explorer LongShot", 100, &resolveExplorerRequest);
 }
-

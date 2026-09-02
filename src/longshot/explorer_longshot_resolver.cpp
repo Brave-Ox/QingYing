@@ -351,4 +351,3 @@ bool resolveExplorerTarget(const LongShotRequest& request,
 }
 
 }  // namespace qingying::longshot_detail
-

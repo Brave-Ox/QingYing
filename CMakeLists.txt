@@ -116,9 +116,7 @@ add_library(qingying_longshot STATIC
   src/longshot/longshot_profile.cpp
   src/longshot/longshot_profile_registry.cpp
   src/longshot/notepad_longshot_resolver.cpp
-  src/longshot/notepad_longshot_profile.cpp
   src/longshot/explorer_longshot_resolver.cpp
-  src/longshot/explorer_longshot_profile.cpp
   src/longshot/win32_scroll_helpers.cpp
 )
 target_include_directories(qingying_longshot

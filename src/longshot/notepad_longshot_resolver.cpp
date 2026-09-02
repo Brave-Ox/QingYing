@@ -183,4 +183,3 @@ bool resolveNotepadTarget(std::uintptr_t owner_window,
 }
 
 }  // namespace qingying::longshot_detail
-

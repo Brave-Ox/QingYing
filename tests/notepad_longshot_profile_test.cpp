@@ -1,4 +1,4 @@
-﻿#include "qingying/longshot/notepad_longshot_profile.hpp"
+﻿#include "builtin_longshot_test_helpers.h"
 
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/longshot_engine.hpp"
@@ -125,12 +125,6 @@ class TestEditorWindow {
   int wheel_message_count_{0};
 };
 
-LongShotProfileRegistry makeNotepadProfileRegistry() {
-  LongShotProfileRegistry registry;
-  registry.add(std::make_unique<NotepadLongShotProfile>());
-  return registry;
-}
-
 }  // namespace
 
 TEST(NotepadLongShotProfileTest, ResolvesSuppliedNotepadEditorClientArea) {
@@ -138,11 +132,16 @@ TEST(NotepadLongShotProfileTest, ResolvesSuppliedNotepadEditorClientArea) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
-  LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
-
   const RECT expected = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), expected.left,
+      expected.top, expected.right - expected.left,
+      expected.bottom - expected.top};
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
+  LongShotProfileResult profile;
+  ASSERT_TRUE(context.profile().resolve(request, profile));
+
   EXPECT_EQ(profile.scroll_target,
             reinterpret_cast<std::uintptr_t>(window.editor()));
   EXPECT_EQ(profile.content_x, expected.left);
@@ -179,9 +178,12 @@ TEST(NotepadLongShotProfileTest, InvalidOrOverflowingSelectionIsRejected) {
 }
 
 TEST(NotepadLongShotProfileTest, InvalidWindowClearsPreviousResult) {
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile{1, 10, 20, 30, 40};
+  const LongShotRequest request{0, 10, 20, 30, 40};
 
-  EXPECT_FALSE(resolveNotepadProfile(0, profile));
+  EXPECT_FALSE(context.profile().resolve(request, profile));
   EXPECT_FALSE(profile.valid());
   EXPECT_EQ(profile.scroll_target, 0u);
 }
@@ -191,9 +193,14 @@ TEST(NotepadLongShotProfileTest, NonNotepadWindowIsRejected) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile{1, 10, 20, 30, 40};
-  EXPECT_FALSE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  EXPECT_FALSE(context.profile().resolve(request, profile));
   EXPECT_FALSE(profile.valid());
 }
 
@@ -202,9 +209,14 @@ TEST(NotepadLongShotProfileTest, ChildHandleCannotReplaceRecordedRootWindow) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  EXPECT_FALSE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.editor()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.editor()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  EXPECT_FALSE(context.profile().resolve(request, profile));
   EXPECT_FALSE(profile.valid());
 }
 
@@ -213,14 +225,20 @@ TEST(NotepadLongShotProfileTest, QueriesVerticalScrollPositionAtBottom) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
   window.setVerticalScrollInfo(0, 99, 20, 80);
 
-  bool at_bottom = false;
-  EXPECT_TRUE(queryNotepadScrollAtBottom(profile, at_bottom));
-  EXPECT_TRUE(at_bottom);
+  LongShotScrollState state;
+  EXPECT_TRUE(context.profile().queryScrollState(profile, state));
+  EXPECT_TRUE(state.valid);
+  EXPECT_TRUE(state.atBottom());
 }
 
 TEST(NotepadLongShotProfileTest, QueriesVerticalScrollPositionBeforeBottom) {
@@ -228,14 +246,20 @@ TEST(NotepadLongShotProfileTest, QueriesVerticalScrollPositionBeforeBottom) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
   window.setVerticalScrollInfo(0, 99, 20, 79);
 
-  bool at_bottom = true;
-  EXPECT_TRUE(queryNotepadScrollAtBottom(profile, at_bottom));
-  EXPECT_FALSE(at_bottom);
+  LongShotScrollState state;
+  EXPECT_TRUE(context.profile().queryScrollState(profile, state));
+  EXPECT_TRUE(state.valid);
+  EXPECT_FALSE(state.atBottom());
 }
 
 TEST(LongShotEngineProfileIntegrationTest,
@@ -244,15 +268,17 @@ TEST(LongShotEngineProfileIntegrationTest,
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
-  const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
-      profile.content_y, profile.content_width, profile.content_height};
+  LongShotEngine engine(capture, context.takeRegistry());
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);
@@ -274,16 +300,18 @@ TEST(LongShotEngineProfileIntegrationTest,
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
   window.setVerticalScrollInfo(0, 99, 20, 80);
 
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
-  const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
-      profile.content_y, profile.content_width, profile.content_height};
+  LongShotEngine engine(capture, context.takeRegistry());
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);
@@ -300,15 +328,17 @@ TEST(LongShotEngineProfileIntegrationTest,
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
-  const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
-      profile.content_y, profile.content_width, profile.content_height};
+  LongShotEngine engine(capture, context.takeRegistry());
   Image out;
   int progress_count = 0;
 
@@ -331,12 +361,17 @@ TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest resolved_request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(resolved_request, profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
+  LongShotEngine engine(capture, context.takeRegistry());
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
       profile.content_y, profile.content_width, profile.content_height};
@@ -355,17 +390,19 @@ TEST(LongShotEngineProfileIntegrationTest,
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(request, profile));
 
   LongShotLimits limits;
   limits.max_output_height = profile.content_height - 1;
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry(), limits);
-  const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
-      profile.content_y, profile.content_width, profile.content_height};
+  LongShotEngine engine(capture, context.takeRegistry(), limits);
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);
@@ -381,9 +418,14 @@ TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest resolved_request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(resolved_request, profile));
 
   constexpr int kSelectionWidth = 80;
   constexpr int kSelectionHeight = 60;
@@ -391,7 +433,7 @@ TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x + 10,
       profile.content_y + 10, kSelectionWidth, kSelectionHeight};
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
+  LongShotEngine engine(capture, context.takeRegistry());
   LongShotFramePair frames;
 
   const ActionResult result = engine.captureInitialPair(request, frames);
@@ -415,15 +457,20 @@ TEST(LongShotInitialPairTest, InvalidSelectionDoesNotScrollAndClearsFrames) {
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.editor(), nullptr);
 
+  test_support::BuiltinLongShotProfileContext context("builtin.notepad");
+  ASSERT_TRUE(context.ready());
   LongShotProfileResult profile;
-  ASSERT_TRUE(resolveNotepadProfile(
-      reinterpret_cast<std::uintptr_t>(window.root()), profile));
+  const RECT rect = window.editorScreenRect();
+  const LongShotRequest resolved_request{
+      reinterpret_cast<std::uintptr_t>(window.root()), rect.left, rect.top,
+      rect.right - rect.left, rect.bottom - rect.top};
+  ASSERT_TRUE(context.profile().resolve(resolved_request, profile));
 
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
       profile.content_y, profile.content_width, profile.content_height};
   CaptureEngine capture;
-  LongShotEngine engine(capture, makeNotepadProfileRegistry());
+  LongShotEngine engine(capture, context.takeRegistry());
   LongShotFramePair frames;
   frames.first_frame = Image{1, 1, {0xFFFFFFFFu}};
   frames.second_frame = Image{1, 1, {0xFFFFFFFFu}};

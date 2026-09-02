@@ -8,11 +8,9 @@ qingying::builtin_longshot_plugin::PluginContext g_context;
 
 bool resolveNotepadRequest(const qingying::LongShotRequest& request,
                            qingying::LongShotProfileResult& out) {
-  if (!qingying::longshot_detail::resolveNotepadTarget(
-          request.owner_window, out)) {
-    return false;
-  }
-  return out.containsSelection(request.x, request.y, request.width,
+  return qingying::longshot_detail::resolveNotepadTarget(
+             request.owner_window, out) &&
+         out.containsSelection(request.x, request.y, request.width,
                                request.height);
 }
 
@@ -26,4 +24,3 @@ QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
       host, plugin, g_context, "builtin.notepad", "QingYing Notepad LongShot",
       100, &resolveNotepadRequest);
 }
-

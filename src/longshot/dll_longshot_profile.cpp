@@ -193,9 +193,7 @@ bool DllLongShotProfile::resolve(const LongShotRequest& request,
   if (resolve_status != QINGYING_LONGSHOT_STATUS_OK ||
       !toCoreTarget(plugin_target, core_target) ||
       !impl_->plugin->isDescendant(plugin_request.owner_window,
-                                   plugin_target.scroll_target) ||
-      !core_target.containsSelection(request.x, request.y, request.width,
-                                     request.height)) {
+                                   plugin_target.scroll_target)) {
     closePluginSession(plugin, session_it->second.session);
     impl_->sessions.erase(session_it);
     return false;

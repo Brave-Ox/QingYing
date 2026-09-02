@@ -8,4 +8,3 @@ bool resolveExplorerTarget(const LongShotRequest& request,
                            LongShotProfileResult& out);
 
 }  // namespace qingying::longshot_detail
-

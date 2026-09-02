@@ -1,6 +1,4 @@
-﻿#include "qingying/longshot/longshot_plugin_host.h"
-
-#include <Windows.h>
+﻿#include "builtin_longshot_test_helpers.h"
 
 #include <gtest/gtest.h>
 
@@ -8,28 +6,9 @@
 #include <string>
 
 namespace qingying {
-namespace {
-
-std::wstring testPluginDirectory() {
-  wchar_t buffer[32768] = {};
-  const DWORD length = GetModuleFileNameW(
-      nullptr, buffer, static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0])));
-  if (length == 0 || length >= sizeof(buffer) / sizeof(buffer[0])) {
-    return {};
-  }
-
-  const std::wstring path(buffer, length);
-  const std::wstring::size_type separator = path.find_last_of(L"\\/");
-  if (separator == std::wstring::npos) {
-    return {};
-  }
-  return path.substr(0, separator + 1) + L"plugins\\longshot";
-}
-
-}  // namespace
 
 TEST(BuiltinLongShotPluginTest, LoadsPackagedNotepadAndExplorerProfiles) {
-  LongShotPluginHost host(testPluginDirectory());
+  LongShotPluginHost host(test_support::builtinLongShotPluginDirectory());
 
   ASSERT_EQ(host.loadDirectory(), 2u);
   ASSERT_EQ(host.plugins().size(), 2u);
@@ -49,4 +28,3 @@ TEST(BuiltinLongShotPluginTest, LoadsPackagedNotepadAndExplorerProfiles) {
 }
 
 }  // namespace qingying
-

@@ -80,9 +80,7 @@ bool resolveCoreTarget(const PluginContext& context,
                        LongShotProfileResult& target) {
   target = LongShotProfileResult{};
   if (context.resolve == nullptr || !context.resolve(request, target) ||
-      !target.valid() ||
-      !target.containsSelection(request.x, request.y, request.width,
-                                request.height)) {
+      !target.valid()) {
     target = LongShotProfileResult{};
     return false;
   }
