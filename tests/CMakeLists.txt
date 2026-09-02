@@ -34,6 +34,7 @@ add_executable(qingying_tests
   longshot_engine_test.cpp
   longshot_plugin_api_test.cpp
   longshot_plugin_host_test.cpp
+  dll_longshot_profile_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
   window_detector_test.cpp

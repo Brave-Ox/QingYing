@@ -342,7 +342,8 @@ bool LongShotPluginHost::loadFile(const std::wstring& plugin_path) {
   }
 
   impl_->plugins.push_back(std::unique_ptr<LoadedPlugin>(
-      new LoadedPlugin(full_path, reinterpret_cast<void*>(module), plugin)));
+      new LoadedPlugin(full_path, reinterpret_cast<void*>(module),
+                       &impl_->host_api, plugin)));
   return true;
 }
 

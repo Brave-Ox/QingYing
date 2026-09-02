@@ -3,15 +3,15 @@
 #include "qingying/longshot/longshot_plugin_api.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace qingying {
 
-// Loads long-shot profile DLLs and keeps their modules resident. The host does
-// not translate a plugin into a LongShotProfile yet; DllLongShotProfile will
-// consume the loaded descriptors in the next layer.
+// Loads long-shot profile DLLs and keeps their modules resident. Use
+// addDllLongShotProfiles() to adapt the loaded descriptors to LongShotProfile.
 class LongShotPluginHost {
  public:
   class LoadedPlugin {
@@ -24,15 +24,27 @@ class LongShotPluginHost {
     const std::wstring& path() const noexcept { return path_; }
     const QingYingLongShotPluginV1& api() const noexcept { return api_; }
 
+    bool isDescendant(std::uint64_t owner_window,
+                      std::uint64_t candidate_window) const noexcept {
+      return host_api_ != nullptr && host_api_->is_descendant != nullptr &&
+             host_api_->is_descendant(host_api_->user_data, owner_window,
+                                      candidate_window) != 0;
+    }
+
    private:
     friend class LongShotPluginHost;
 
     LoadedPlugin(std::wstring path, void* module,
+                 const QingYingLongShotHostV1* host_api,
                  QingYingLongShotPluginV1 api)
-        : path_(std::move(path)), module_(module), api_(api) {}
+        : path_(std::move(path)),
+          module_(module),
+          host_api_(host_api),
+          api_(api) {}
 
     std::wstring path_;
     void* module_{nullptr};
+    const QingYingLongShotHostV1* host_api_{nullptr};
     QingYingLongShotPluginV1 api_{};
   };
 
