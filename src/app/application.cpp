@@ -3,12 +3,9 @@
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/longshot/dll_longshot_profile.h"
-#include "qingying/longshot/explorer_longshot_profile.hpp"
-#include "qingying/longshot/notepad_longshot_profile.hpp"
 
 #include "resource.h"
 
-#include <memory>
 #include <string>
 
 namespace {
@@ -38,8 +35,6 @@ qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
   (void)plugin_host.loadDirectory();
 
   qingying::LongShotProfileRegistry profiles;
-  profiles.add(std::make_unique<qingying::NotepadLongShotProfile>());
-  profiles.add(std::make_unique<qingying::ExplorerLongShotProfile>());
   (void)qingying::addDllLongShotProfiles(plugin_host, profiles);
   return profiles;
 }
