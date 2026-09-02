@@ -127,6 +127,52 @@ if(WIN32)
   target_link_libraries(qingying_longshot PRIVATE user32)
 endif()
 
+if(WIN32)
+  # Transitional packaging step: compile the existing built-in profiles as
+  # standalone DLLs first. Application still keeps the native profiles as a
+  # fallback until the next migration step removes those static registrations.
+  function(qingying_configure_longshot_plugin target output_name)
+    target_include_directories(${target}
+      PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src/longshot
+    )
+    target_compile_definitions(${target}
+      PRIVATE QINGYING_LONGSHOT_PLUGIN_EXPORTS
+    )
+    target_link_libraries(${target} PRIVATE user32)
+    set_target_properties(${target} PROPERTIES
+      PREFIX ""
+      OUTPUT_NAME "${output_name}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    )
+  endfunction()
+
+  add_library(qingying_notepad_longshot_plugin MODULE
+    src/longshot/notepad_longshot_plugin.cpp
+    src/longshot/builtin_longshot_plugin_support.cpp
+    src/longshot/notepad_longshot_profile.cpp
+    src/longshot/longshot_profile.cpp
+    src/longshot/win32_scroll_helpers.cpp
+  )
+  qingying_configure_longshot_plugin(
+    qingying_notepad_longshot_plugin
+    qingying_notepad_longshot_plugin
+  )
+
+  add_library(qingying_explorer_longshot_plugin MODULE
+    src/longshot/explorer_longshot_plugin.cpp
+    src/longshot/builtin_longshot_plugin_support.cpp
+    src/longshot/explorer_longshot_profile.cpp
+    src/longshot/longshot_profile.cpp
+    src/longshot/win32_scroll_helpers.cpp
+  )
+  qingying_configure_longshot_plugin(
+    qingying_explorer_longshot_plugin
+    qingying_explorer_longshot_plugin
+  )
+endif()
+
 add_library(qingying_command STATIC
   src/command/command_parser.cpp
 )
@@ -195,6 +241,21 @@ target_link_libraries(qingying PRIVATE
 )
 if(WIN32)
   target_link_libraries(qingying PRIVATE shell32 ole32 uuid advapi32 comdlg32 gdi32)
+  add_dependencies(qingying
+    qingying_notepad_longshot_plugin
+    qingying_explorer_longshot_plugin
+  )
+  add_custom_command(TARGET qingying POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:qingying_notepad_longshot_plugin>
+      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:qingying_explorer_longshot_plugin>
+      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
+    COMMENT "Deploy built-in long-shot plugins next to qingying"
+  )
 endif()
 
 # ---------------------------------------------------------------------------
