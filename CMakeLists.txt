@@ -115,8 +115,6 @@ add_library(qingying_longshot STATIC
   src/longshot/longshot_plugin_host.cpp
   src/longshot/longshot_profile.cpp
   src/longshot/longshot_profile_registry.cpp
-  src/longshot/notepad_longshot_resolver.cpp
-  src/longshot/explorer_longshot_resolver.cpp
   src/longshot/win32_scroll_helpers.cpp
 )
 target_include_directories(qingying_longshot
@@ -128,9 +126,8 @@ if(WIN32)
 endif()
 
 if(WIN32)
-  # Transitional packaging step: compile the existing built-in profiles as
-  # standalone DLLs first. Application still keeps the native profiles as a
-  # fallback until the next migration step removes those static registrations.
+  # Built-in application adapters are standalone DLLs. The application links
+  # only the generic long-shot runtime and discovers these plugins at runtime.
   function(qingying_configure_longshot_plugin target output_name)
     target_include_directories(${target}
       PRIVATE
