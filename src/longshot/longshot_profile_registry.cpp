@@ -1,20 +1,19 @@
 ﻿#include "qingying/longshot/longshot_profile_registry.hpp"
 
-#include "qingying/longshot/explorer_longshot_profile.hpp"
-#include "qingying/longshot/notepad_longshot_profile.hpp"
-
 #include <utility>
 
 namespace qingying {
 
-LongShotProfileRegistry::LongShotProfileRegistry() {
-  profiles_.push_back(std::make_unique<NotepadLongShotProfile>());
-  profiles_.push_back(std::make_unique<ExplorerLongShotProfile>());
-}
-
 LongShotProfileRegistry::LongShotProfileRegistry(
     std::vector<std::unique_ptr<LongShotProfile>> profiles)
     : profiles_(std::move(profiles)) {}
+
+void LongShotProfileRegistry::add(
+    std::unique_ptr<LongShotProfile> profile) {
+  if (profile != nullptr) {
+    profiles_.push_back(std::move(profile));
+  }
+}
 
 const LongShotProfile* LongShotProfileRegistry::resolve(
     const LongShotRequest& request, LongShotProfileResult& out) const {

@@ -2,6 +2,7 @@
 
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/longshot_engine.hpp"
+#include "qingying/longshot/longshot_profile_registry.hpp"
 
 #include <Windows.h>
 
@@ -9,6 +10,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 namespace qingying {
 
@@ -122,6 +124,12 @@ class TestEditorWindow {
   HWND editor_{nullptr};
   int wheel_message_count_{0};
 };
+
+LongShotProfileRegistry makeNotepadProfileRegistry() {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<NotepadLongShotProfile>());
+  return registry;
+}
 
 }  // namespace
 
@@ -241,7 +249,7 @@ TEST(LongShotEngineProfileIntegrationTest,
       reinterpret_cast<std::uintptr_t>(window.root()), profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
       profile.content_y, profile.content_width, profile.content_height};
@@ -272,7 +280,7 @@ TEST(LongShotEngineProfileIntegrationTest,
   window.setVerticalScrollInfo(0, 99, 20, 80);
 
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
       profile.content_y, profile.content_width, profile.content_height};
@@ -297,7 +305,7 @@ TEST(LongShotEngineProfileIntegrationTest,
       reinterpret_cast<std::uintptr_t>(window.root()), profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
       profile.content_y, profile.content_width, profile.content_height};
@@ -328,7 +336,7 @@ TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
       reinterpret_cast<std::uintptr_t>(window.root()), profile));
 
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
       profile.content_y, profile.content_width, profile.content_height};
@@ -354,7 +362,7 @@ TEST(LongShotEngineProfileIntegrationTest,
   LongShotLimits limits;
   limits.max_output_height = profile.content_height - 1;
   CaptureEngine capture;
-  LongShotEngine engine(capture, limits);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry(), limits);
   const LongShotRequest request{
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x,
       profile.content_y, profile.content_width, profile.content_height};
@@ -383,7 +391,7 @@ TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x + 10,
       profile.content_y + 10, kSelectionWidth, kSelectionHeight};
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   LongShotFramePair frames;
 
   const ActionResult result = engine.captureInitialPair(request, frames);
@@ -415,7 +423,7 @@ TEST(LongShotInitialPairTest, InvalidSelectionDoesNotScrollAndClearsFrames) {
       reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
       profile.content_y, profile.content_width, profile.content_height};
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeNotepadProfileRegistry());
   LongShotFramePair frames;
   frames.first_frame = Image{1, 1, {0xFFFFFFFFu}};
   frames.second_frame = Image{1, 1, {0xFFFFFFFFu}};

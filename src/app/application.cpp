@@ -2,14 +2,29 @@
 
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/longshot/explorer_longshot_profile.hpp"
+#include "qingying/longshot/notepad_longshot_profile.hpp"
 
 #include "resource.h"
+
+#include <memory>
+
+namespace {
+
+qingying::LongShotProfileRegistry makeApplicationLongShotProfiles() {
+  qingying::LongShotProfileRegistry profiles;
+  profiles.add(std::make_unique<qingying::NotepadLongShotProfile>());
+  profiles.add(std::make_unique<qingying::ExplorerLongShotProfile>());
+  return profiles;
+}
+
+}  // namespace
 
 namespace qingying {
 
 Application::Application(HINSTANCE instance)
     : instance_(instance),
-      longshot_(capture_),
+      longshot_(capture_, makeApplicationLongShotProfiles()),
       longshot_controller_(longshot_, overlay_),
       capture_workflow_(dispatcher_, capture_, longshot_controller_,
                         export_service_, session_, pin_manager_, overlay_) {}

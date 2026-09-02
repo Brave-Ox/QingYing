@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 
 namespace qingying {
 
@@ -118,6 +119,12 @@ LongShotRequest requestForPane(const TestExplorerWindow& window) {
           rect.right - rect.left, rect.bottom - rect.top};
 }
 
+LongShotProfileRegistry makeExplorerProfileRegistry() {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<ExplorerLongShotProfile>());
+  return registry;
+}
+
 }  // 匿名命名空间
 
 TEST(ExplorerLongShotProfileTest, ResolvesSelectionToContainingContentPane) {
@@ -219,7 +226,23 @@ TEST(ExplorerLongShotProfileTest, ReadsVerticalScrollState) {
   EXPECT_TRUE(state.atBottom());
 }
 
-TEST(LongShotProfileRegistryTest, IncludesNotepadAndExplorerProfiles) {
+TEST(LongShotProfileRegistryTest, ResolvesAnExplicitlyRegisteredProfile) {
+  TestExplorerWindow window;
+  ASSERT_NE(window.root(), nullptr);
+  ASSERT_NE(window.pane(), nullptr);
+
+  const LongShotRequest request = requestForPane(window);
+  LongShotProfileRegistry registry = makeExplorerProfileRegistry();
+  LongShotProfileResult result;
+
+  const LongShotProfile* profile = registry.resolve(request, result);
+  ASSERT_NE(profile, nullptr);
+  EXPECT_STREQ(profile->name(), "explorer");
+  EXPECT_EQ(result.scroll_target,
+            reinterpret_cast<std::uintptr_t>(window.pane()));
+}
+
+TEST(LongShotProfileRegistryTest, EmptyRegistryRejectsSupportedWindow) {
   TestExplorerWindow window;
   ASSERT_NE(window.root(), nullptr);
   ASSERT_NE(window.pane(), nullptr);
@@ -228,11 +251,8 @@ TEST(LongShotProfileRegistryTest, IncludesNotepadAndExplorerProfiles) {
   LongShotProfileRegistry registry;
   LongShotProfileResult result;
 
-  const LongShotProfile* profile = registry.resolve(request, result);
-  ASSERT_NE(profile, nullptr);
-  EXPECT_STREQ(profile->name(), "explorer");
-  EXPECT_EQ(result.scroll_target,
-            reinterpret_cast<std::uintptr_t>(window.pane()));
+  EXPECT_EQ(registry.resolve(request, result), nullptr);
+  EXPECT_FALSE(result.valid());
 }
 
 TEST(LongShotProfileRegistryTest, RejectsUnsupportedOwnerWindow) {
@@ -257,7 +277,7 @@ TEST(LongShotEngineProfileIntegrationTest,
 
   const LongShotRequest request = requestForPane(window);
   CaptureEngine capture;
-  LongShotEngine engine(capture);
+  LongShotEngine engine(capture, makeExplorerProfileRegistry());
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);
