@@ -10,6 +10,7 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/longshot/longshot_engine.hpp"
+#include "qingying/longshot/longshot_plugin_host.h"
 #include "qingying/overlay/selection_overlay.hpp"
 #include "qingying/pin/pin_manager.hpp"
 
@@ -38,6 +39,7 @@ class Application {
   HotkeyManager hotkey_;
   ActionDispatcher dispatcher_;
   CaptureEngine capture_;
+  LongShotPluginHost longshot_plugin_host_;
   LongShotEngine longshot_;
   ExportService export_service_;
   CaptureSession session_;

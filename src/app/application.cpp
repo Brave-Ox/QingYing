@@ -2,19 +2,45 @@
 
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/longshot/dll_longshot_profile.h"
 #include "qingying/longshot/explorer_longshot_profile.hpp"
 #include "qingying/longshot/notepad_longshot_profile.hpp"
 
 #include "resource.h"
 
 #include <memory>
+#include <string>
 
 namespace {
 
-qingying::LongShotProfileRegistry makeApplicationLongShotProfiles() {
+std::wstring makeLongShotPluginDirectory(HINSTANCE instance) {
+  constexpr DWORD kPathCapacity = 32768;
+  wchar_t path[kPathCapacity] = {};
+  const HINSTANCE module =
+      instance != nullptr ? instance : GetModuleHandleW(nullptr);
+  const DWORD length = GetModuleFileNameW(module, path, kPathCapacity);
+  if (length == 0 || length >= kPathCapacity) {
+    return {};
+  }
+
+  const std::wstring executable_path(path, length);
+  const std::wstring::size_type separator =
+      executable_path.find_last_of(L"\\/");
+  if (separator == std::wstring::npos) {
+    return {};
+  }
+  return executable_path.substr(0, separator + 1) +
+         L"plugins\\longshot";
+}
+
+qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
+    qingying::LongShotPluginHost& plugin_host) {
+  (void)plugin_host.loadDirectory();
+
   qingying::LongShotProfileRegistry profiles;
   profiles.add(std::make_unique<qingying::NotepadLongShotProfile>());
   profiles.add(std::make_unique<qingying::ExplorerLongShotProfile>());
+  (void)qingying::addDllLongShotProfiles(plugin_host, profiles);
   return profiles;
 }
 
@@ -24,7 +50,9 @@ namespace qingying {
 
 Application::Application(HINSTANCE instance)
     : instance_(instance),
-      longshot_(capture_, makeApplicationLongShotProfiles()),
+      longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
+      longshot_(capture_, makeApplicationLongShotProfiles(
+                             longshot_plugin_host_)),
       longshot_controller_(longshot_, overlay_),
       capture_workflow_(dispatcher_, capture_, longshot_controller_,
                         export_service_, session_, pin_manager_, overlay_) {}
