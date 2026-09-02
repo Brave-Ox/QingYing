@@ -33,12 +33,34 @@ add_executable(qingying_tests
   longshot_stitcher_test.cpp
   longshot_engine_test.cpp
   longshot_plugin_api_test.cpp
+  longshot_plugin_host_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
   window_detector_test.cpp
   tray_notify_icon_test.cpp
   tray_context_menu_test.cpp
   ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
+)
+
+add_library(qingying_test_longshot_plugin MODULE
+  longshot_test_plugin.cpp
+)
+target_include_directories(qingying_test_longshot_plugin
+  PRIVATE ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_definitions(qingying_test_longshot_plugin
+  PRIVATE QINGYING_LONGSHOT_PLUGIN_EXPORTS
+)
+set_target_properties(qingying_test_longshot_plugin PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "qingying_test_longshot_plugin"
+)
+add_dependencies(qingying_tests qingying_test_longshot_plugin)
+add_custom_command(TARGET qingying_test_longshot_plugin POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:qingying_test_longshot_plugin>
+    $<TARGET_FILE_DIR:qingying_tests>
+  COMMENT "Copy test long-shot plugin next to qingying_tests"
 )
 
 target_include_directories(qingying_tests
