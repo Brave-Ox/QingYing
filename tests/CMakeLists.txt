@@ -32,6 +32,7 @@ add_executable(qingying_tests
   pin_manager_test.cpp
   longshot_stitcher_test.cpp
   longshot_engine_test.cpp
+  longshot_plugin_api_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
   window_detector_test.cpp
