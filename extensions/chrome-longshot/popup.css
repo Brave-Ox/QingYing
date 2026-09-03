@@ -1,0 +1,62 @@
+:root {
+  color: #1f2937;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
+body {
+  width: 272px;
+  margin: 0;
+  background: #f8fafc;
+}
+
+main {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 17px;
+}
+
+p {
+  margin: 4px 0 16px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
+output {
+  display: block;
+  min-height: 18px;
+  margin-top: 12px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+small {
+  display: block;
+  margin-top: 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 16px;
+}

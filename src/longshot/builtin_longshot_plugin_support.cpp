@@ -251,7 +251,8 @@ std::int32_t initializePlugin(const QingYingLongShotHostV1* host,
                               PluginContext& context, const char* id_utf8,
                               const char* display_name_utf8,
                               std::int32_t priority,
-                              ResolveFunction resolve_function) {
+                              ResolveFunction resolve_function,
+                              bool supports_native_scroll_state) {
   if (host == nullptr || plugin == nullptr || id_utf8 == nullptr ||
       id_utf8[0] == '\0' || display_name_utf8 == nullptr ||
       !hasStructSize(host->struct_size, sizeof(*host)) ||
@@ -273,7 +274,9 @@ std::int32_t initializePlugin(const QingYingLongShotHostV1* host,
 
   plugin->abi_version = QINGYING_LONGSHOT_PLUGIN_ABI_VERSION_V1;
   plugin->priority = priority;
-  plugin->capabilities = QINGYING_LONGSHOT_CAP_NATIVE_SCROLL_STATE;
+  plugin->capabilities = supports_native_scroll_state
+                             ? QINGYING_LONGSHOT_CAP_NATIVE_SCROLL_STATE
+                             : 0;
   plugin->id_utf8 = context.id_utf8;
   plugin->display_name_utf8 = context.display_name_utf8;
   plugin->plugin_context = &context;
@@ -281,7 +284,8 @@ std::int32_t initializePlugin(const QingYingLongShotHostV1* host,
   plugin->open = &open;
   plugin->resolve = &resolve;
   plugin->scroll_down = &scrollDown;
-  plugin->query_scroll_state = &queryScrollState;
+  plugin->query_scroll_state =
+      supports_native_scroll_state ? &queryScrollState : nullptr;
   plugin->close_session = &closeSession;
   plugin->shutdown = &shutdown;
   return QINGYING_LONGSHOT_STATUS_OK;

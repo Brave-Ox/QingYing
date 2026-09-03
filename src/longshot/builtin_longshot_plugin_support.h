@@ -23,7 +23,8 @@ std::int32_t initializePlugin(const QingYingLongShotHostV1* host,
                               PluginContext& context, const char* id_utf8,
                               const char* display_name_utf8,
                               std::int32_t priority,
-                              ResolveFunction resolve);
+                              ResolveFunction resolve,
+                              bool supports_native_scroll_state = true);
 
 }  // namespace qingying::builtin_longshot_plugin
 

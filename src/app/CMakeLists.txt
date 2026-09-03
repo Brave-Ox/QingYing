@@ -2,6 +2,7 @@ add_library(qingying_workflow STATIC
   capture_preview.cpp
   capture_workflow.cpp
   longshot_controller.cpp
+  browser_capture_receiver.cpp
 )
 
 target_include_directories(qingying_workflow
@@ -66,6 +67,7 @@ if(WIN32)
   add_dependencies(qingying
     qingying_notepad_longshot_plugin
     qingying_explorer_longshot_plugin
+    qingying_chrome_longshot_plugin
   )
 
   add_custom_command(TARGET qingying POST_BUILD

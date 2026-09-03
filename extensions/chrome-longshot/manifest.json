@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "\u8f7b\u6620 QingYing \u7f51\u9875\u957f\u622a\u56fe",
+  "description": "\u5728\u5f53\u524d Chrome \u7f51\u9875\u4e2d\u6eda\u52a8\u622a\u53d6\u5e76\u5bfc\u51fa\u5b8c\u6574 PNG \u957f\u622a\u56fe\u3002",
+  "version": "1.0.0",
+  "action": {
+    "default_title": "\u8f7b\u6620\u7f51\u9875\u957f\u622a\u56fe",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads",
+    "storage"
+  ]
+}

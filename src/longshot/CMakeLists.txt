@@ -63,4 +63,15 @@ if(WIN32)
     qingying_explorer_longshot_plugin
     qingying_explorer_longshot_plugin
   )
+
+  add_library(qingying_chrome_longshot_plugin MODULE
+    chrome_longshot_plugin.cpp
+    builtin_longshot_plugin_support.cpp
+    chrome_longshot_resolver.cpp
+    longshot_profile.cpp
+  )
+  qingying_configure_longshot_plugin(
+    qingying_chrome_longshot_plugin
+    qingying_chrome_longshot_plugin
+  )
 endif()

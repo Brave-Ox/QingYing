@@ -54,6 +54,7 @@ Application::Application(HINSTANCE instance)
 
 Application::~Application() {
   capture_workflow_.shutdown();
+  browser_capture_receiver_.stop();
   hotkey_.unregisterAll(tray_.hwnd());
 }
 
@@ -100,6 +101,14 @@ void Application::installMessageRouter() {
       *result = 0;
       return true;
     }
+    if (msg == WM_QINGYING_BROWSER_IMAGE) {
+      Image image;
+      if (browser_capture_receiver_.takeImage(image)) {
+        (void)capture_workflow_.presentExternalLongShot(std::move(image));
+      }
+      *result = 0;
+      return true;
+    }
     return false;
   });
 }
@@ -126,6 +135,7 @@ int Application::run() {
   }
   capture_workflow_.setOwnerWindow(
       reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
+  (void)browser_capture_receiver_.start(tray_.hwnd());
 
   installMessageRouter();
 

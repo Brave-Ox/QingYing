@@ -565,6 +565,32 @@ bool CaptureWorkflow::beginSelection() {
   return impl_->beginSelection();
 }
 
+bool CaptureWorkflow::presentExternalLongShot(Image image) {
+  if (image.empty() || impl_->active || impl_->shutting_down.load() ||
+      impl_->owner_window == nullptr) {
+    return false;
+  }
+  impl_->active = true;
+  impl_->stage = Impl::WorkflowStage::Selecting;
+  impl_->selection_background = impl_->captureDesktopBackground();
+  const coord::VirtualScreenRect screen = coord::getVirtualScreen();
+  const int width = (std::max)(80, (std::min)(screen.width / 3, image.width));
+  const int height = (std::max)(80, (std::min)(screen.height / 3, image.height));
+  impl_->initial_selection = SelectionResult{false,
+      screen.left + (screen.width - width) / 2,
+      screen.top + (screen.height - height) / 2, width, height};
+  impl_->pending_selection = SelectionResult{};
+  impl_->longshot_result_ready = true;
+  impl_->session.setResult(std::move(image));
+  ActionRequest copy_request;
+  copy_request.type = ActionType::Copy;
+  (void)impl_->dispatcher.dispatch(copy_request);
+  impl_->showSelectionOverlay();
+  if (!impl_->active) return false;
+  (void)impl_->selection_overlay.postLongShotPreview(impl_->session.result());
+  return true;
+}
+
 void CaptureWorkflow::continueWorkflow() {
   impl_->continueWorkflow();
 }
