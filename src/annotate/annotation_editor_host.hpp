@@ -110,26 +110,31 @@ struct EditorToolbarItem
   RECT rect{};
 };
 
-// 标注编辑器窗口状态。公开字段仅供 annotate 内部编译单元互调；
-// 第三人不得包含本头。所有权由 AnnotationOverlay 的 unique_ptr 持有。
-class AnnotationEditorHost
+struct AnnotationEditorCoreState
 {
- public:
-  AnnotationEditorHost() = default;
-  ~AnnotationEditorHost() = default;
-
-  AnnotationEditorHost(const AnnotationEditorHost&) = delete;
-  AnnotationEditorHost& operator=(const AnnotationEditorHost&) = delete;
-
   AnnotationEditorSession m_session;
   AnnotationInteractionController m_controller;
   AnnotationRenderer m_renderer;
+};
+
+struct AnnotationEditorWindowState
+{
   AnnotationCallback m_callback;
   HWND m_overlay{nullptr};
-  HWND m_font_combo{nullptr};
-  GdiObject m_combo_font;
-  bool m_size_combo_syncing{false};
-  RECT m_size_combo_rect{};
+  bool m_confirmed{false};
+  int m_client_width{0};
+  HWND* m_owner_hwnd{nullptr};
+  bool* m_owner_visible{nullptr};
+  bool* m_owner_suppress_callback{nullptr};
+  bool m_window_destroyed{false};
+  int m_image_origin_x{AnnotationEditorFrameInsetPx};
+  int m_image_origin_y{0};
+  int m_image_screen_x{0};
+  int m_image_screen_y{0};
+};
+
+struct AnnotationEditorInlineTextState
+{
   HWND m_inline_edit{nullptr};
   HWND m_inline_edit_host{nullptr};
   WNDPROC m_inline_edit_prev_proc{nullptr};
@@ -156,6 +161,14 @@ class AnnotationEditorHost
   float m_text_origin_y{0.0f};
   float m_text_drag_x{0.0f};
   float m_text_drag_y{0.0f};
+};
+
+struct AnnotationEditorChromeState
+{
+  HWND m_font_combo{nullptr};
+  GdiObject m_combo_font;
+  bool m_size_combo_syncing{false};
+  RECT m_size_combo_rect{};
   EditorToolbarItem m_toolbar_items[kToolbarIconItemCount]{};
   RECT m_current_color_rect{};
   RECT m_color_swatch_rects[AnnotationStylePresetColorCount]{};
@@ -166,10 +179,30 @@ class AnnotationEditorHost
   AnnotationTool m_last_geometry_tool{AnnotationTool::Rectangle};
   int m_toolbar_hover{-1};
   bool m_stroke_chip_hover{false};
+  int m_toolbar_divider_x[AnnotationEditorDividerCount]{};
+  HWND m_tooltip{nullptr};
+  wchar_t m_tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};
+  int m_chrome_offset_x{0};
+  int m_chrome_offset_y{0};
+  bool m_chrome_dragging{false};
+  int m_chrome_drag_start_x{0};
+  int m_chrome_drag_start_y{0};
+  int m_chrome_drag_origin_x{0};
+  int m_chrome_drag_origin_y{0};
+  RECT m_main_bar_rect{};
+  RECT m_property_bar_rect{};
+};
+
+struct AnnotationEditorStrokePopupState
+{
   HWND m_stroke_popup{nullptr};
   HWND m_stroke_popup_edit{nullptr};
   bool m_stroke_syncing{false};
   bool m_stroke_slider_dragging{false};
+};
+
+struct AnnotationEditorColorPickerState
+{
   ColorPickerState m_color_picker_state;
   HWND m_color_picker{nullptr};
   HWND m_color_format_combo{nullptr};
@@ -191,150 +224,63 @@ class AnnotationEditorHost
   int m_color_picker_drag_origin_y{0};
   int m_color_picker_screen_x{0};
   int m_color_picker_screen_y{0};
-  int m_toolbar_divider_x[AnnotationEditorDividerCount]{};
-  HWND m_tooltip{nullptr};
-  wchar_t m_tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};
-  bool m_confirmed{false};
-  int m_client_width{0};
-  HWND* m_owner_hwnd{nullptr};
-  bool* m_owner_visible{nullptr};
-  bool* m_owner_suppress_callback{nullptr};
-  bool m_window_destroyed{false};
-  int m_image_origin_x{AnnotationEditorFrameInsetPx};
-  int m_image_origin_y{0};
-  int m_image_screen_x{0};
-  int m_image_screen_y{0};
-  int m_chrome_offset_x{0};
-  int m_chrome_offset_y{0};
-  bool m_chrome_dragging{false};
-  int m_chrome_drag_start_x{0};
-  int m_chrome_drag_start_y{0};
-  int m_chrome_drag_origin_x{0};
-  int m_chrome_drag_origin_y{0};
-  RECT m_main_bar_rect{};
-  RECT m_property_bar_rect{};
 };
 
-void blitImage(HDC hdc, const Image& image, int dest_x, int dest_y);
+// 标注编辑器只对外暴露行为；各编译单元通过这些状态访问器获得自己需要的窄上下文。
+// 所有权由 AnnotationOverlay 的 unique_ptr 持有，GWLP_USERDATA 只保存观察指针。
+class AnnotationEditorHost
+{
+ public:
+  AnnotationEditorHost() = default;
+  ~AnnotationEditorHost() = default;
+
+  AnnotationEditorHost(const AnnotationEditorHost&) = delete;
+  AnnotationEditorHost& operator=(const AnnotationEditorHost&) = delete;
+
+  AnnotationEditorCoreState& core() noexcept { return core_state_; }
+  const AnnotationEditorCoreState& core() const noexcept { return core_state_; }
+  AnnotationEditorWindowState& window() noexcept { return window_state_; }
+  const AnnotationEditorWindowState& window() const noexcept {
+    return window_state_;
+  }
+  AnnotationEditorInlineTextState& inlineText() noexcept {
+    return inline_text_state_;
+  }
+  const AnnotationEditorInlineTextState& inlineText() const noexcept {
+    return inline_text_state_;
+  }
+  AnnotationEditorChromeState& chrome() noexcept { return chrome_state_; }
+  const AnnotationEditorChromeState& chrome() const noexcept {
+    return chrome_state_;
+  }
+  AnnotationEditorStrokePopupState& strokePopup() noexcept {
+    return stroke_popup_state_;
+  }
+  const AnnotationEditorStrokePopupState& strokePopup() const noexcept {
+    return stroke_popup_state_;
+  }
+  AnnotationEditorColorPickerState& colorPicker() noexcept {
+    return color_picker_state_;
+  }
+  const AnnotationEditorColorPickerState& colorPicker() const noexcept {
+    return color_picker_state_;
+  }
+
+ private:
+  AnnotationEditorCoreState core_state_;
+  AnnotationEditorWindowState window_state_;
+  AnnotationEditorInlineTextState inline_text_state_;
+  AnnotationEditorChromeState chrome_state_;
+  AnnotationEditorStrokePopupState stroke_popup_state_;
+  AnnotationEditorColorPickerState color_picker_state_;
+};
+
 void invalidateImageArea(const AnnotationEditorHost* data);
-void destroyInlineEdit(AnnotationEditorHost* data);
-bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size);
-void fillTextHitBounds(HWND hwnd, Annotation& annotation);
-void commitInlineText(AnnotationEditorHost* data);
-void cancelInlineText(AnnotationEditorHost* data);
-void resetTextGesture(AnnotationEditorHost* data);
-void clearTextSelection(AnnotationEditorHost* data);
-void selectTextAnnotation(AnnotationEditorHost* data, HWND hwnd,
-                          std::size_t index, int click_x, int click_y);
-bool isTextDoubleClick(const AnnotationEditorHost* data, std::size_t hit,
-                       int x, int y);
-bool deleteSelectedTextAnnotation(AnnotationEditorHost* data);
-void drawTextSelectionFrame(HDC hdc, AnnotationEditorHost* data);
-void paintEditor(AnnotationEditorHost* data, HDC hdc,
-                 bool draw_bar_shells = true, bool draw_bar_items = true);
-void paintEditorBuffered(AnnotationEditorHost* data, HDC hdc);
-void paintInlineEditFrame(HDC hdc, AnnotationEditorHost* data);
-void paintLiveInlineText(HDC hdc, AnnotationEditorHost* data);
-void placeInlineEditCaret(HWND edit, int caret, bool scroll_to_caret);
-void layoutInlineEdit(AnnotationEditorHost* data);
-void positionOwnedPopup(HWND popup, HWND owner, int client_x, int client_y,
-                        int width, int height);
-void applyInlineEditVisual(AnnotationEditorHost* data);
-bool registerInlineEditHostClass(HINSTANCE instance);
-LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                         LPARAM lparam);
-HBRUSH ensureInlineEditKeyBrush(AnnotationEditorHost* data);
-COLORREF colorBgraToRef(const ColorBgra& color);
-void paintEditorToolbar(HDC hdc, AnnotationEditorHost* data, bool draw_shell);
 void canvasFromClient(const AnnotationEditorHost* data, int x, int y,
                        float& out_x, float& out_y);
-void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell);
-void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data);
-void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data);
-void bindEditorTooltips(AnnotationEditorHost* data);
-void resizeEditorChrome(AnnotationEditorHost* data);
-bool hitTestChromeBar(const AnnotationEditorHost* data, int x, int y);
-void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int x, int y);
-void updateChromeDrag(AnnotationEditorHost* data, int x, int y);
-void endChromeDrag(AnnotationEditorHost* data);
-void syncGeometryButton(AnnotationEditorHost* data);
-int hitTestShapeToggle(const AnnotationEditorHost* data, int x, int y);
-bool hitTestFill(const AnnotationEditorHost* data, int x, int y);
-int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y);
-void applyLiveTextStyle(AnnotationEditorHost* data);
-void syncStyleFromAnnotation(AnnotationEditorHost* data,
-                            const Annotation& annotation);
-int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y);
-bool hitTestCurrentColorSwatch(const AnnotationEditorHost* data, int x, int y);
-bool colorPickerIsVisible(const AnnotationEditorHost* data);
-void hideColorPicker(AnnotationEditorHost* data, bool apply);
-void destroyColorPicker(AnnotationEditorHost* data);
-void showColorPicker(AnnotationEditorHost* data);
-bool handleColorPickerEyedropperClick(AnnotationEditorHost* data, int x, int y);
-bool hitTestSizeCombo(const AnnotationEditorHost* data, int x, int y);
-void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value);
-void pickSizeFromOverlayMenu(AnnotationEditorHost* data);
-bool handleSizeComboWheel(AnnotationEditorHost* data, int delta);
-bool hitTestStrokeChip(const AnnotationEditorHost* data, int x, int y);
-bool strokePopupIsVisible(const AnnotationEditorHost* data);
-void hideStrokePopup(AnnotationEditorHost* data);
-void destroyStrokePopup(AnnotationEditorHost* data);
-void showStrokePopup(AnnotationEditorHost* data);
-void applyEditorStrokeWidth(AnnotationEditorHost* data, int width);
-bool handleStrokeChipWheel(AnnotationEditorHost* data, int delta);
-void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y);
-void invalidateToolbar(AnnotationEditorHost* data);
-int hitTestEditorToolbar(const AnnotationEditorHost* data, int x, int y);
-void handleToolCommand(AnnotationEditorHost* data, UINT id);
-void handleToolbarItemClick(AnnotationEditorHost* data, UINT id);
-bool createButtons(HWND hwnd, AnnotationEditorHost* data);
-void fillSizeCombo(AnnotationEditorHost* data);
-void syncSizeFromCombo(AnnotationEditorHost* data);
-void bindSizeComboTooltip(AnnotationEditorHost* data);
-void bindPropertyBarTooltips(AnnotationEditorHost* data);
-void updateTextGesture(AnnotationEditorHost* data, int x, int y);
-void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
-                                 int client_y);
-void selectFontSizeInCombo(AnnotationEditorHost* data, int font_size);
-void measureTextHitSize(HDC hdc, const Annotation& annotation, int& out_width,
-                         int& out_height);
-AnnotationEditorTextChrome makeTextChrome(const AnnotationEditorHost* data,
-                                          const Annotation& annotation,
-                                          bool use_drag_position);
-std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y);
-bool isCtrlZKey(WPARAM key);
-LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                         LPARAM lparam);
-void invalidateInlineEditRegion(const AnnotationEditorHost* data);
-void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
-                       std::size_t edit_index);
-void beginOrEditTextAt(AnnotationEditorHost* data, HWND hwnd, int x, int y);
-void finishTextGesture(AnnotationEditorHost* data, HWND hwnd, int x, int y);
-void paintEditorFrame(HDC hdc, AnnotationEditorHost* data);
-bool colorsMatch(const ColorBgra& left, const ColorBgra& right);
-RECT toWinRect(const AnnotationEditorRect& rect);
-int currentStrokeWidthPx(const AnnotationEditorHost* data);
-void syncStrokePopupEdit(AnnotationEditorHost* data);
-void applyStrokeFromPopupEdit(AnnotationEditorHost* data);
-bool handleStrokePopupEditCommand(AnnotationEditorHost* data, UINT id, UINT code,
-                                  HWND control);
-void applyStrokeFromPopupSlider(AnnotationEditorHost* data, int client_x);
-void paintStrokePopup(HWND hwnd, AnnotationEditorHost* data);
-LRESULT CALLBACK strokePopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                       LPARAM lparam);
-bool registerStrokePopupClass(HINSTANCE instance);
-RECT takeToolbarButtonRect(int& x, int y);
-RECT takeToolbarSizedRect(int& x, int y, int width);
-void skipToolbarDivider(int& x);
-void resetPropertyBarRects(AnnotationEditorHost* data);
-void refreshInlineEditFont(AnnotationEditorHost* data);
-bool pointerHitsStyleChrome(const AnnotationEditorHost* data);
 void requestClose(AnnotationEditorHost* data, bool confirmed);
 void finishAndNotify(AnnotationEditorHost* data);
 bool pointInImageArea(const AnnotationEditorHost* data, int x, int y);
-RECT unionChromeRects(const RECT& main_bar, const RECT& property_bar);
-void invalidateChromeMove(HWND hwnd, const RECT& old_rect,
-                           const RECT& new_rect);
 bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key);
 LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                 LPARAM lparam);

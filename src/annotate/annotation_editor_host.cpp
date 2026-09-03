@@ -7,37 +7,44 @@
 #include <string>
 #include <utility>
 
+#include "annotate/annotation_editor_paint.h"
+
 #include <commctrl.h>
+
+#include "annotate/annotation_editor_chrome.h"
+#include "annotate/annotation_editor_color_picker.h"
+#include "annotate/annotation_editor_inline_text.h"
+#include "annotate/annotation_editor_stroke_popup.h"
 
 namespace qingying {
 
 void invalidateImageArea(const AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
-  const Image& source = data->m_session.source();
+  const Image& source = data->core().m_session.source();
   if (source.empty())
   {
     return;
   }
-  RECT rect{data->m_image_origin_x, data->m_image_origin_y,
-            data->m_image_origin_x + source.width,
-            data->m_image_origin_y + source.height};
+  RECT rect{data->window().m_image_origin_x, data->window().m_image_origin_y,
+            data->window().m_image_origin_x + source.width,
+            data->window().m_image_origin_y + source.height};
   (void)InflateRect(&rect, AnnotationEditorTextDeleteButtonPx,
                     AnnotationEditorTextDeleteButtonPx);
-  InvalidateRect(data->m_overlay, &rect, FALSE);
+  InvalidateRect(data->window().m_overlay, &rect, FALSE);
 }
 
 void requestClose(AnnotationEditorHost* data, bool confirmed)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
-  data->m_confirmed = confirmed;
-  PostMessageW(data->m_overlay, WM_CLOSE, 0, 0);
+  data->window().m_confirmed = confirmed;
+  PostMessageW(data->window().m_overlay, WM_CLOSE, 0, 0);
 }
 
 void finishAndNotify(AnnotationEditorHost* data)
@@ -48,9 +55,9 @@ void finishAndNotify(AnnotationEditorHost* data)
   }
 
   AnnotationFinishResult result;
-  if (data->m_confirmed)
+  if (data->window().m_confirmed)
   {
-    if (!data->m_session.finishConfirmed(result))
+    if (!data->core().m_session.finishConfirmed(result))
     {
       result.cancelled = true;
       result.rendered_image = Image{};
@@ -58,14 +65,14 @@ void finishAndNotify(AnnotationEditorHost* data)
   }
   else
   {
-    (void)data->m_session.finishCancelled(result);
+    (void)data->core().m_session.finishCancelled(result);
   }
 
-  if ((data->m_owner_suppress_callback == nullptr ||
-       !*data->m_owner_suppress_callback) &&
-      data->m_callback)
+  if ((data->window().m_owner_suppress_callback == nullptr ||
+       !*data->window().m_owner_suppress_callback) &&
+      data->window().m_callback)
   {
-    data->m_callback(result);
+    data->window().m_callback(result);
   }
 }
 
@@ -75,9 +82,9 @@ bool pointInImageArea(const AnnotationEditorHost* data, int x, int y)
   {
     return false;
   }
-  const Image& source = data->m_session.source();
-  const int local_x = x - data->m_image_origin_x;
-  const int local_y = y - data->m_image_origin_y;
+  const Image& source = data->core().m_session.source();
+  const int local_x = x - data->window().m_image_origin_x;
+  const int local_y = y - data->window().m_image_origin_y;
   return local_x >= 0 && local_y >= 0 && local_x < source.width &&
          local_y < source.height;
 }
@@ -91,8 +98,8 @@ void canvasFromClient(const AnnotationEditorHost* data, int x, int y, float& out
   {
     return;
   }
-  out_x = static_cast<float>(x - data->m_image_origin_x);
-  out_y = static_cast<float>(y - data->m_image_origin_y);
+  out_x = static_cast<float>(x - data->window().m_image_origin_x);
+  out_y = static_cast<float>(y - data->window().m_image_origin_y);
 }
 
 bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
@@ -103,12 +110,12 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
   }
   if (key == VK_ESCAPE)
   {
-    if (data->m_color_picker_eyedropping)
+    if (data->colorPicker().m_color_picker_eyedropping)
     {
-      data->m_color_picker_eyedropping = false;
-      if (data->m_color_picker != nullptr)
+      data->colorPicker().m_color_picker_eyedropping = false;
+      if (data->colorPicker().m_color_picker != nullptr)
       {
-        InvalidateRect(data->m_color_picker, nullptr, FALSE);
+        InvalidateRect(data->colorPicker().m_color_picker, nullptr, FALSE);
       }
       return true;
     }
@@ -122,19 +129,19 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
       hideStrokePopup(data);
       return true;
     }
-    if (data->m_inline_edit != nullptr)
+    if (data->inlineText().m_inline_edit != nullptr)
     {
       cancelInlineText(data);
       return true;
     }
-    if (data->m_text_gesture_active)
+    if (data->inlineText().m_text_gesture_active)
     {
       resetTextGesture(data);
       ReleaseCapture();
       invalidateImageArea(data);
       return true;
     }
-    if (data->m_selected_text_index != kInvalidAnnotationIndex)
+    if (data->inlineText().m_selected_text_index != kInvalidAnnotationIndex)
     {
       clearTextSelection(data);
       invalidateImageArea(data);
@@ -148,7 +155,7 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
     hideColorPicker(data, true);
     return true;
   }
-  if ((key == VK_DELETE || key == VK_BACK) && data->m_inline_edit == nullptr)
+  if ((key == VK_DELETE || key == VK_BACK) && data->inlineText().m_inline_edit == nullptr)
   {
     if (deleteSelectedTextAnnotation(data))
     {
@@ -157,12 +164,12 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
   }
   if (isCtrlZKey(key))
   {
-    if (data->m_inline_edit != nullptr)
+    if (data->inlineText().m_inline_edit != nullptr)
     {
       cancelInlineText(data);
     }
     clearTextSelection(data);
-    if (data->m_controller.undo(data->m_session.engine()))
+    if (data->core().m_controller.undo(data->core().m_session.engine()))
     {
       invalidateImageArea(data);
     }
@@ -189,7 +196,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                         reinterpret_cast<LONG_PTR>(create_data));
       if (create_data != nullptr)
       {
-        create_data->m_overlay = hwnd;
+        create_data->window().m_overlay = hwnd;
       }
       return TRUE;
     }
@@ -209,20 +216,24 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_PAINT:
     {
       const PaintGuard paint(hwnd);
-      paintEditorBuffered(data, paint.dc());
+      if (data != nullptr)
+      {
+        paintEditorBuffered(makeAnnotationEditorPaintSnapshot(*data),
+                            paint.dc());
+      }
       return 0;
     }
     case WM_ERASEBKGND:
       return 1;
     case WM_SETCURSOR:
     {
-      if (data != nullptr && data->m_color_picker_eyedropping)
+      if (data != nullptr && data->colorPicker().m_color_picker_eyedropping)
       {
         SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32515)));  // IDC_CROSS
         return TRUE;
       }
-      if (data != nullptr && data->m_toolbar_hover >= 0 &&
-          data->m_toolbar_items[static_cast<std::size_t>(data->m_toolbar_hover)]
+      if (data != nullptr && data->chrome().m_toolbar_hover >= 0 &&
+          data->chrome().m_toolbar_items[static_cast<std::size_t>(data->chrome().m_toolbar_hover)]
                   .id == kButtonMoveId)
       {
         SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32646)));  // IDC_SIZEALL
@@ -238,11 +249,11 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       break;
     case WM_CTLCOLOREDIT:
     {
-      if (data == nullptr || data->m_inline_edit == nullptr)
+      if (data == nullptr || data->inlineText().m_inline_edit == nullptr)
       {
         break;
       }
-      if (reinterpret_cast<HWND>(lparam) != data->m_inline_edit)
+      if (reinterpret_cast<HWND>(lparam) != data->inlineText().m_inline_edit)
       {
         break;
       }
@@ -264,14 +275,14 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      if (data->m_color_picker_eyedropping)
+      if (data->colorPicker().m_color_picker_eyedropping)
       {
         (void)handleColorPickerEyedropperClick(data, x, y);
         return 0;
       }
       const int hit = hitTestEditorToolbar(data, x, y);
       if (hit >= 0 &&
-          data->m_toolbar_items[static_cast<std::size_t>(hit)].id ==
+          data->chrome().m_toolbar_items[static_cast<std::size_t>(hit)].id ==
               kButtonMoveId)
       {
         beginChromeDrag(data, hwnd, x, y);
@@ -280,7 +291,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (hit >= 0)
       {
         handleToolbarItemClick(data,
-                               data->m_toolbar_items[static_cast<std::size_t>(hit)]
+                               data->chrome().m_toolbar_items[static_cast<std::size_t>(hit)]
                                    .id);
         return 0;
       }
@@ -292,7 +303,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (hitTestTextAnnotation(data, x, y) != kInvalidAnnotationIndex)
       {
         hideColorPicker(data, false);
-        data->m_controller.setTool(AnnotationTool::Text);
+        data->core().m_controller.setTool(AnnotationTool::Text);
         resizeEditorChrome(data);
         beginOrEditTextAt(data, hwnd, x, y);
         return 0;
@@ -310,7 +321,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         hideColorPicker(data, false);
         return 0;
       }
-      if (data->m_controller.tool() == AnnotationTool::Text)
+      if (data->core().m_controller.tool() == AnnotationTool::Text)
       {
         beginOrEditTextAt(data, hwnd, x, y);
         return 0;
@@ -319,7 +330,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       float canvas_x = 0.0f;
       float canvas_y = 0.0f;
       canvasFromClient(data, x, y, canvas_x, canvas_y);
-      if (data->m_controller.beginStroke(canvas_x, canvas_y))
+      if (data->core().m_controller.beginStroke(canvas_x, canvas_y))
       {
         SetCapture(hwnd);
         invalidateImageArea(data);
@@ -334,7 +345,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      if (data->m_controller.tool() != AnnotationTool::Text &&
+      if (data->core().m_controller.tool() != AnnotationTool::Text &&
           hitTestTextAnnotation(data, x, y) == kInvalidAnnotationIndex)
       {
         return 0;
@@ -349,7 +360,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const std::size_t hit = hitTestTextAnnotation(data, x, y);
       if (hit != kInvalidAnnotationIndex)
       {
-        data->m_controller.setTool(AnnotationTool::Text);
+        data->core().m_controller.setTool(AnnotationTool::Text);
         resizeEditorChrome(data);
         beginInlineText(data, hwnd, x, y, hit);
       }
@@ -363,21 +374,21 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      if (data->m_chrome_dragging)
+      if (data->chrome().m_chrome_dragging)
       {
         updateChromeDrag(data, x, y);
         return 0;
       }
       if (hitTestChromeBar(data, x, y) &&
-          !data->m_controller.isDrawing() && !data->m_text_gesture_active)
+          !data->core().m_controller.isDrawing() && !data->inlineText().m_text_gesture_active)
       {
         const int hit = hitTestEditorToolbar(data, x, y);
         const bool chip_hover = hitTestStrokeChip(data, x, y);
-        if (hit != data->m_toolbar_hover ||
-            chip_hover != data->m_stroke_chip_hover)
+        if (hit != data->chrome().m_toolbar_hover ||
+            chip_hover != data->chrome().m_stroke_chip_hover)
         {
-          data->m_toolbar_hover = hit;
-          data->m_stroke_chip_hover = chip_hover;
+          data->chrome().m_toolbar_hover = hit;
+          data->chrome().m_stroke_chip_hover = chip_hover;
           invalidateToolbar(data);
         }
         TRACKMOUSEEVENT track{};
@@ -387,34 +398,34 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         TrackMouseEvent(&track);
         return 0;
       }
-      if (data->m_toolbar_hover >= 0 || data->m_stroke_chip_hover)
+      if (data->chrome().m_toolbar_hover >= 0 || data->chrome().m_stroke_chip_hover)
       {
-        data->m_toolbar_hover = -1;
-        data->m_stroke_chip_hover = false;
+        data->chrome().m_toolbar_hover = -1;
+        data->chrome().m_stroke_chip_hover = false;
         invalidateToolbar(data);
       }
-      if (data->m_text_gesture_active)
+      if (data->inlineText().m_text_gesture_active)
       {
         updateTextGesture(data, x, y);
         return 0;
       }
-      if (!data->m_controller.isDrawing())
+      if (!data->core().m_controller.isDrawing())
       {
         return 0;
       }
       float canvas_x = 0.0f;
       float canvas_y = 0.0f;
       canvasFromClient(data, x, y, canvas_x, canvas_y);
-      data->m_controller.updateStroke(canvas_x, canvas_y);
+      data->core().m_controller.updateStroke(canvas_x, canvas_y);
       invalidateImageArea(data);
       return 0;
     }
     case WM_MOUSELEAVE:
       if (data != nullptr &&
-          (data->m_toolbar_hover >= 0 || data->m_stroke_chip_hover))
+          (data->chrome().m_toolbar_hover >= 0 || data->chrome().m_stroke_chip_hover))
       {
-        data->m_toolbar_hover = -1;
-        data->m_stroke_chip_hover = false;
+        data->chrome().m_toolbar_hover = -1;
+        data->chrome().m_stroke_chip_hover = false;
         invalidateToolbar(data);
       }
       return 0;
@@ -436,7 +447,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       if (annotationEditorWheelAdjustsSize(
-              data->m_controller.tool(), hitTestSizeCombo(data, pt.x, pt.y)))
+              data->core().m_controller.tool(), hitTestSizeCombo(data, pt.x, pt.y)))
       {
         (void)handleSizeComboWheel(data, delta);
         return 0;
@@ -451,25 +462,25 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
-      if (data->m_chrome_dragging)
+      if (data->chrome().m_chrome_dragging)
       {
         endChromeDrag(data);
         return 0;
       }
-      if (data->m_text_gesture_active)
+      if (data->inlineText().m_text_gesture_active)
       {
         finishTextGesture(data, hwnd, x, y);
         return 0;
       }
-      if (!data->m_controller.isDrawing())
+      if (!data->core().m_controller.isDrawing())
       {
         return 0;
       }
       float canvas_x = 0.0f;
       float canvas_y = 0.0f;
       canvasFromClient(data, x, y, canvas_x, canvas_y);
-      data->m_controller.updateStroke(canvas_x, canvas_y);
-      (void)data->m_controller.endStroke(data->m_session.engine());
+      data->core().m_controller.updateStroke(canvas_x, canvas_y);
+      (void)data->core().m_controller.endStroke(data->core().m_session.engine());
       ReleaseCapture();
       invalidateImageArea(data);
       return 0;
@@ -488,7 +499,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         return 0;
       }
-      if ((id == kFontComboId || combo == data->m_font_combo) &&
+      if ((id == kFontComboId || combo == data->chrome().m_font_combo) &&
           (code == CBN_SELCHANGE || code == CBN_SELENDOK))
       {
         syncSizeFromCombo(data);
@@ -502,7 +513,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (id == kInlineEditId && code == EN_KILLFOCUS)
       {
         const HWND focus = GetFocus();
-        if (focus == data->m_font_combo || pointerHitsStyleChrome(data))
+        if (focus == data->chrome().m_font_combo || pointerHitsStyleChrome(data))
         {
           return 0;
         }
@@ -535,7 +546,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         cancelInlineText(data);
         resetTextGesture(data);
         clearTextSelection(data);
-        data->m_confirmed = false;
+        data->window().m_confirmed = false;
         DestroyWindow(hwnd);
       }
       return 0;
@@ -551,29 +562,29 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         {
           RemovePropW(owner, kEditorHwndPropName);
         }
-        if (data->m_tooltip != nullptr)
+        if (data->chrome().m_tooltip != nullptr)
         {
-          DestroyWindow(data->m_tooltip);
-          data->m_tooltip = nullptr;
+          DestroyWindow(data->chrome().m_tooltip);
+          data->chrome().m_tooltip = nullptr;
         }
         destroyInlineEdit(data);
         destroyColorPicker(data);
         destroyStrokePopup(data);
-        data->m_combo_font.reset();
+        data->chrome().m_combo_font.reset();
         finishAndNotify(data);
-        data->m_session.reset();
-        data->m_callback = {};
-        if (data->m_owner_hwnd != nullptr)
+        data->core().m_session.reset();
+        data->window().m_callback = {};
+        if (data->window().m_owner_hwnd != nullptr)
         {
-          *data->m_owner_hwnd = nullptr;
+          *data->window().m_owner_hwnd = nullptr;
         }
-        if (data->m_owner_visible != nullptr)
+        if (data->window().m_owner_visible != nullptr)
         {
-          *data->m_owner_visible = false;
+          *data->window().m_owner_visible = false;
         }
-        if (data->m_owner_suppress_callback != nullptr)
+        if (data->window().m_owner_suppress_callback != nullptr)
         {
-          *data->m_owner_suppress_callback = false;
+          *data->window().m_owner_suppress_callback = false;
         }
       }
       return 0;
@@ -585,7 +596,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
   {
     if (data != nullptr)
     {
-      data->m_window_destroyed = true;
+      data->window().m_window_destroyed = true;
     }
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     return DefWindowProcW(hwnd, msg, wparam, lparam);

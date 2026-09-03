@@ -1,6 +1,8 @@
-#include "annotate/annotation_editor_host.hpp"
+﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
+
+#include "annotate/annotation_editor_paint.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -10,7 +12,100 @@
 
 #include <commctrl.h>
 
+#include "annotate/annotation_editor_chrome.h"
+#include "annotate/annotation_editor_inline_text.h"
+
 namespace qingying {
+
+AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
+    const AnnotationEditorHost& data)
+{
+  AnnotationEditorPaintSnapshot snapshot;
+  const AnnotationEditorCoreState& core = data.core();
+  const AnnotationEditorWindowState& window = data.window();
+  const AnnotationEditorInlineTextState& inline_text = data.inlineText();
+  const AnnotationEditorChromeState& chrome = data.chrome();
+  const AnnotationEditorStrokePopupState& stroke_popup = data.strokePopup();
+  const AnnotationEditorColorPickerState& color_picker = data.colorPicker();
+
+  snapshot.source = core.m_session.source();
+  snapshot.document = core.m_session.engine().document();
+  if (core.m_controller.hasPreview())
+  {
+    snapshot.preview = core.m_controller.preview();
+  }
+  snapshot.overlay = window.m_overlay;
+  snapshot.image_origin_x = window.m_image_origin_x;
+  snapshot.image_origin_y = window.m_image_origin_y;
+  snapshot.tool = core.m_controller.tool();
+  snapshot.style = core.m_controller.style();
+  snapshot.mosaic_block_size = core.m_controller.mosaicBlockSize();
+
+  std::copy(std::begin(chrome.m_toolbar_items),
+            std::end(chrome.m_toolbar_items),
+            std::begin(snapshot.toolbar_items));
+  snapshot.size_combo_rect = chrome.m_size_combo_rect;
+  snapshot.current_color_rect = chrome.m_current_color_rect;
+  std::copy(std::begin(chrome.m_color_swatch_rects),
+            std::end(chrome.m_color_swatch_rects),
+            std::begin(snapshot.color_swatch_rects));
+  snapshot.stroke_chip_rect = chrome.m_stroke_chip_rect;
+  std::copy(std::begin(chrome.m_shape_rects), std::end(chrome.m_shape_rects),
+            std::begin(snapshot.shape_rects));
+  snapshot.fill_rect = chrome.m_fill_rect;
+  std::copy(std::begin(chrome.m_line_style_rects),
+            std::end(chrome.m_line_style_rects),
+            std::begin(snapshot.line_style_rects));
+  snapshot.toolbar_hover = chrome.m_toolbar_hover;
+  snapshot.stroke_chip_hover = chrome.m_stroke_chip_hover;
+  std::copy(std::begin(chrome.m_toolbar_divider_x),
+            std::end(chrome.m_toolbar_divider_x),
+            std::begin(snapshot.toolbar_divider_x));
+  snapshot.main_bar_rect = chrome.m_main_bar_rect;
+  snapshot.property_bar_rect = chrome.m_property_bar_rect;
+  snapshot.combo_font = chrome.m_combo_font.asFont();
+  snapshot.color_picker_visible =
+      color_picker.m_color_picker != nullptr &&
+      IsWindowVisible(color_picker.m_color_picker) != FALSE;
+  snapshot.stroke_popup_visible =
+      stroke_popup.m_stroke_popup != nullptr &&
+      IsWindowVisible(stroke_popup.m_stroke_popup) != FALSE;
+
+  snapshot.text_dragging = inline_text.m_text_dragging;
+  snapshot.text_target_index = inline_text.m_text_target_index;
+  snapshot.text_drag_x = inline_text.m_text_drag_x;
+  snapshot.text_drag_y = inline_text.m_text_drag_y;
+  snapshot.text_anchor_x = inline_text.m_text_anchor_x;
+  snapshot.text_anchor_y = inline_text.m_text_anchor_y;
+  snapshot.editing_text_index = inline_text.m_editing_text_index;
+  snapshot.selected_text_index = inline_text.m_selected_text_index;
+  if (inline_text.m_inline_edit != nullptr)
+  {
+    snapshot.inline_edit_visible = true;
+    wchar_t buffer[kInlineTextMaxChars]{};
+    GetWindowTextW(inline_text.m_inline_edit, buffer, kInlineTextMaxChars);
+    snapshot.inline_text = buffer;
+
+    DWORD selection_start = 0;
+    DWORD selection_end = 0;
+    (void)SendMessageW(inline_text.m_inline_edit, EM_GETSEL,
+                       reinterpret_cast<WPARAM>(&selection_start),
+                       reinterpret_cast<LPARAM>(&selection_end));
+    const int text_length = static_cast<int>(snapshot.inline_text.size());
+    snapshot.inline_caret =
+        (std::min)(text_length, (std::max)(0, static_cast<int>(selection_start)));
+
+    RECT edit_rect{};
+    if (snapshot.overlay != nullptr &&
+        GetWindowRect(inline_text.m_inline_edit, &edit_rect) != FALSE)
+    {
+      MapWindowPoints(HWND_DESKTOP, snapshot.overlay,
+                      reinterpret_cast<POINT*>(&edit_rect), 2);
+      snapshot.inline_edit_rect = edit_rect;
+    }
+  }
+  return snapshot;
+}
 
 void blitImage(HDC hdc, const Image& image, int dest_x, int dest_y)
 {
@@ -33,16 +128,16 @@ void blitImage(HDC hdc, const Image& image, int dest_x, int dest_y)
                           image.pixels.data(), &bmi, DIB_RGB_COLORS);
 }
 
-void paintEditorFrame(HDC hdc, AnnotationEditorHost* data)
+void paintEditorFrame(HDC hdc, const AnnotationEditorPaintSnapshot& snapshot)
 {
-  if (hdc == nullptr || data == nullptr)
+  if (hdc == nullptr)
   {
     return;
   }
 
-  const Image& source = data->m_session.source();
-  const int origin_x = data->m_image_origin_x;
-  const int origin_y = data->m_image_origin_y;
+  const Image& source = snapshot.source;
+  const int origin_x = snapshot.image_origin_x;
+  const int origin_y = snapshot.image_origin_y;
   const int image_right = origin_x + source.width;
   const int image_bottom = origin_y + source.height;
 
@@ -116,86 +211,85 @@ void paintEditorFrame(HDC hdc, AnnotationEditorHost* data)
             DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
-void paintEditor(AnnotationEditorHost* data, HDC hdc, bool draw_bar_shells,
+void paintEditor(const AnnotationEditorPaintSnapshot& snapshot, HDC hdc,
+                 bool draw_bar_shells,
                  bool draw_bar_items)
 {
-  if (data == nullptr || hdc == nullptr)
+  if (hdc == nullptr || snapshot.overlay == nullptr)
   {
     return;
   }
 
   RECT client{};
-  GetClientRect(data->m_overlay, &client);
+  GetClientRect(snapshot.overlay, &client);
   fillToolbarColorKey(hdc, client);
 
   Image composed;
   const Annotation* preview =
-      data->m_controller.hasPreview() ? &data->m_controller.preview() : nullptr;
+      snapshot.preview.has_value() ? &*snapshot.preview : nullptr;
 
   const bool relocate =
-      data->m_text_dragging &&
-      data->m_text_target_index != kInvalidAnnotationIndex &&
-      data->m_text_target_index < data->m_session.engine().document().count();
+      snapshot.text_dragging &&
+      snapshot.text_target_index != kInvalidAnnotationIndex &&
+      snapshot.text_target_index < snapshot.document.count();
   const bool hide_editing =
-      data->m_inline_edit != nullptr &&
-      data->m_editing_text_index != kInvalidAnnotationIndex &&
-      data->m_editing_text_index < data->m_session.engine().document().count();
+      snapshot.inline_edit_visible &&
+      snapshot.editing_text_index != kInvalidAnnotationIndex &&
+      snapshot.editing_text_index < snapshot.document.count();
 
   if (relocate || hide_editing)
   {
     AnnotationDocument temp;
-    const auto& items = data->m_session.engine().document().items();
+    const auto& items = snapshot.document.items();
     for (std::size_t i = 0; i < items.size(); ++i)
     {
-      if (hide_editing && i == data->m_editing_text_index)
+      if (hide_editing && i == snapshot.editing_text_index)
       {
         continue;
       }
       Annotation item = items.at(i);
-      if (relocate && i == data->m_text_target_index)
+      if (relocate && i == snapshot.text_target_index)
       {
-        item.start.x = data->m_text_drag_x;
-        item.start.y = data->m_text_drag_y;
+        item.start.x = snapshot.text_drag_x;
+        item.start.y = snapshot.text_drag_y;
         item.bounds.x = item.start.x;
         item.bounds.y = item.start.y;
       }
       (void)temp.add(item);
     }
-    if (!data->m_renderer.rasterize(data->m_session.source(), temp, preview,
-                                  composed))
+    if (!snapshot.renderer.rasterize(snapshot.source, temp, preview, composed))
     {
       return;
     }
   }
-  else if (!data->m_renderer.rasterize(data->m_session.source(),
-                                     data->m_session.engine().document(), preview,
-                                     composed))
+  else if (!snapshot.renderer.rasterize(snapshot.source, snapshot.document,
+                                        preview, composed))
   {
     return;
   }
 
-  blitImage(hdc, composed, data->m_image_origin_x, data->m_image_origin_y);
-  paintLiveInlineText(hdc, data);
-  paintEditorFrame(hdc, data);
-  paintInlineEditFrame(hdc, data);
-  drawTextSelectionFrame(hdc, data);
+  blitImage(hdc, composed, snapshot.image_origin_x, snapshot.image_origin_y);
+  paintLiveInlineText(hdc, snapshot);
+  paintEditorFrame(hdc, snapshot);
+  paintInlineEditFrame(hdc, snapshot);
+  drawTextSelectionFrame(hdc, snapshot);
   if (draw_bar_items)
   {
-    paintEditorToolbar(hdc, data, draw_bar_shells);
-    paintPropertyBar(hdc, data, draw_bar_shells);
+    paintEditorToolbar(hdc, snapshot, draw_bar_shells);
+    paintPropertyBar(hdc, snapshot, draw_bar_shells);
   }
 }
 
-void paintEditorBuffered(AnnotationEditorHost* data, HDC hdc)
+void paintEditorBuffered(const AnnotationEditorPaintSnapshot& snapshot, HDC hdc)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (snapshot.overlay == nullptr)
   {
     return;
   }
   (void)hdc;
 
   RECT client{};
-  GetClientRect(data->m_overlay, &client);
+  GetClientRect(snapshot.overlay, &client);
   const int width = client.right - client.left;
   const int height = client.bottom - client.top;
   if (width <= 0 || height <= 0)
@@ -207,11 +301,11 @@ void paintEditorBuffered(AnnotationEditorHost* data, HDC hdc)
   const HBITMAP dib = createTopDownArgbDib(width, height, &bits);
   if (dib == nullptr || bits == nullptr)
   {
-    const HDC window_dc = GetDC(data->m_overlay);
+    const HDC window_dc = GetDC(snapshot.overlay);
     if (window_dc != nullptr)
     {
-      paintEditor(data, window_dc, true);
-      ReleaseDC(data->m_overlay, window_dc);
+      paintEditor(snapshot, window_dc, true);
+      ReleaseDC(snapshot.overlay, window_dc);
     }
     return;
   }
@@ -225,46 +319,48 @@ void paintEditorBuffered(AnnotationEditorHost* data, HDC hdc)
 
   const HGDIOBJ old_bitmap = SelectObject(mem_dc, dib);
   std::memset(bits, 0, static_cast<std::size_t>(width) *
-                           static_cast<std::size_t>(height) * 4u);
+                            static_cast<std::size_t>(height) * 4u);
   fillToolbarColorKey(mem_dc, client);
-  paintEditor(data, mem_dc, false, false);
+  paintEditor(snapshot, mem_dc, false, false);
   applyColorKeyAlpha(bits, width, height, kToolbarColorKey);
-  (void)drawToolbarBarOnArgbBits(bits, width, height, data->m_main_bar_rect);
-  if (data->m_property_bar_rect.right > data->m_property_bar_rect.left)
+  (void)drawToolbarBarOnArgbBits(bits, width, height, snapshot.main_bar_rect);
+  if (snapshot.property_bar_rect.right > snapshot.property_bar_rect.left)
   {
-    (void)drawToolbarBarOnArgbBits(bits, width, height, data->m_property_bar_rect);
+    (void)drawToolbarBarOnArgbBits(bits, width, height,
+                                   snapshot.property_bar_rect);
   }
-  paintEditorToolbar(mem_dc, data, false);
-  paintPropertyBar(mem_dc, data, false);
+  paintEditorToolbar(mem_dc, snapshot, false);
+  paintPropertyBar(mem_dc, snapshot, false);
   promoteRgbToOpaqueAlpha(bits, width, height);
-  (void)presentLayeredArgbWindow(data->m_overlay, mem_dc, width, height);
+  (void)presentLayeredArgbWindow(snapshot.overlay, mem_dc, width, height);
   SelectObject(mem_dc, old_bitmap);
   DeleteDC(mem_dc);
   DeleteObject(dib);
 }
 
-void drawTextSelectionFrame(HDC hdc, AnnotationEditorHost* data)
+void drawTextSelectionFrame(HDC hdc,
+                            const AnnotationEditorPaintSnapshot& snapshot)
 {
-  if (hdc == nullptr || data == nullptr ||
-      data->m_selected_text_index == kInvalidAnnotationIndex ||
-      data->m_selected_text_index >= data->m_session.engine().document().count() ||
-      data->m_inline_edit != nullptr)
+  if (hdc == nullptr ||
+      snapshot.selected_text_index == kInvalidAnnotationIndex ||
+      snapshot.selected_text_index >= snapshot.document.count() ||
+      snapshot.inline_edit_visible)
   {
     return;
   }
 
   Annotation annotation =
-      data->m_session.engine().document().items().at(data->m_selected_text_index);
+      snapshot.document.items().at(snapshot.selected_text_index);
   if (annotation.type != AnnotationType::Text)
   {
     return;
   }
 
   const bool dragging =
-      data->m_text_dragging &&
-      data->m_text_target_index == data->m_selected_text_index;
+      snapshot.text_dragging &&
+      snapshot.text_target_index == snapshot.selected_text_index;
   const AnnotationEditorTextChrome chrome =
-      makeTextChrome(data, annotation, dragging);
+      makeTextChrome(snapshot, annotation, dragging);
 
   const GdiObject pen(CreatePen(PS_SOLID, AnnotationEditorInlineEditBorderPx,
                                 kTextChromeBorderColor));

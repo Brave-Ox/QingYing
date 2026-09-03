@@ -34,7 +34,7 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
 
   if (data_ != nullptr)
   {
-    if (!data_->m_window_destroyed)
+    if (!data_->window().m_window_destroyed)
     {
       return false;
     }
@@ -42,21 +42,21 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   }
 
   auto data = std::make_unique<AnnotationEditorHost>();
-  if (!data->m_session.begin(source))
+  if (!data->core().m_session.begin(source))
   {
     return false;
   }
-  data->m_client_width = annotationEditorClientWidth(source.width);
-  data->m_image_origin_x = AnnotationEditorFrameInsetPx;
-  data->m_image_origin_y = annotationEditorTopInset();
-  data->m_image_screen_x = data->m_image_origin_x;
-  data->m_image_screen_y = data->m_image_origin_y;
-  data->m_controller.setCanvasSize(source.width, source.height);
-  data->m_controller.setTool(AnnotationTool::None);
-  data->m_callback = std::move(callback);
-  data->m_owner_hwnd = &m_hwnd;
-  data->m_owner_visible = &m_visible;
-  data->m_owner_suppress_callback = &m_suppress_callback;
+  data->window().m_client_width = annotationEditorClientWidth(source.width);
+  data->window().m_image_origin_x = AnnotationEditorFrameInsetPx;
+  data->window().m_image_origin_y = annotationEditorTopInset();
+  data->window().m_image_screen_x = data->window().m_image_origin_x;
+  data->window().m_image_screen_y = data->window().m_image_origin_y;
+  data->core().m_controller.setCanvasSize(source.width, source.height);
+  data->core().m_controller.setTool(AnnotationTool::None);
+  data->window().m_callback = std::move(callback);
+  data->window().m_owner_hwnd = &m_hwnd;
+  data->window().m_owner_visible = &m_visible;
+  data->window().m_owner_suppress_callback = &m_suppress_callback;
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   if (!registerEditorClass(instance))
@@ -70,27 +70,27 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
   const int desk_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
   if (screen_x < 0 || screen_y < 0)
   {
-    data->m_image_screen_x =
+    data->window().m_image_screen_x =
         (std::max)(0, (GetSystemMetrics(SM_CXSCREEN) - source.width) / 2);
-    data->m_image_screen_y =
+    data->window().m_image_screen_y =
         (std::max)(0, (GetSystemMetrics(SM_CYSCREEN) - source.height) / 2);
   }
   else
   {
-    data->m_image_screen_x = screen_x;
-    data->m_image_screen_y = screen_y;
+    data->window().m_image_screen_x = screen_x;
+    data->window().m_image_screen_y = screen_y;
   }
   const AnnotationEditorVirtualDesktopPlacement place =
       annotationEditorVirtualDesktopPlacement(
-          data->m_image_screen_x, data->m_image_screen_y, desk_left, desk_top,
+          data->window().m_image_screen_x, data->window().m_image_screen_y, desk_left, desk_top,
           desk_width, desk_height);
   const int x = place.window_x;
   const int y = place.window_y;
   const int window_width = place.window_width;
   const int window_height = place.window_height;
-  data->m_image_origin_x = place.image_origin_x;
-  data->m_image_origin_y = place.image_origin_y;
-  data->m_client_width = place.window_width;
+  data->window().m_image_origin_x = place.image_origin_x;
+  data->window().m_image_origin_y = place.image_origin_y;
+  data->window().m_client_width = place.window_width;
 
   const DWORD style = WS_POPUP | WS_VISIBLE;
   const HWND hwnd = CreateWindowExW(

@@ -1,4 +1,4 @@
-#include "annotate/annotation_editor_host.hpp"
+﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -8,89 +8,96 @@
 #include <string>
 #include <utility>
 
+#include "annotate/annotation_editor_paint.h"
+
 #include <commctrl.h>
+
+#include "annotate/annotation_editor_chrome.h"
+#include "annotate/annotation_editor_color_picker.h"
+#include "annotate/annotation_editor_inline_text.h"
+#include "annotate/annotation_editor_stroke_popup.h"
 
 namespace qingying {
 
 void fillSizeCombo(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_font_combo == nullptr)
+  if (data == nullptr || data->chrome().m_font_combo == nullptr)
   {
     return;
   }
 
   const bool mosaic =
-      annotationEditorPropertyBarShowsMosaicSize(data->m_controller.tool());
+      annotationEditorPropertyBarShowsMosaicSize(data->core().m_controller.tool());
   const int* options = mosaic ? AnnotationEditorMosaicSizeOptions
                               : AnnotationEditorFontSizeOptions;
   const int count = mosaic ? AnnotationEditorMosaicSizeOptionCount
                            : AnnotationEditorFontSizeOptionCount;
-  const int current = mosaic ? data->m_controller.mosaicBlockSize()
-                             : data->m_controller.style().font_size;
+  const int current = mosaic ? data->core().m_controller.mosaicBlockSize()
+                             : data->core().m_controller.style().font_size;
 
-  data->m_size_combo_syncing = true;
-  SendMessageW(data->m_font_combo, CB_RESETCONTENT, 0, 0);
+  data->chrome().m_size_combo_syncing = true;
+  SendMessageW(data->chrome().m_font_combo, CB_RESETCONTENT, 0, 0);
   int selected = 0;
   for (int i = 0; i < count; ++i)
   {
     wchar_t label[16]{};
     swprintf_s(label, L"%d", options[i]);
-    SendMessageW(data->m_font_combo, CB_ADDSTRING, 0,
+    SendMessageW(data->chrome().m_font_combo, CB_ADDSTRING, 0,
                  reinterpret_cast<LPARAM>(label));
     if (options[i] == current)
     {
       selected = i;
     }
   }
-  SendMessageW(data->m_font_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
+  SendMessageW(data->chrome().m_font_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
                0);
-  data->m_size_combo_syncing = false;
+  data->chrome().m_size_combo_syncing = false;
 }
 
 void bindSizeComboTooltip(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_tooltip == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->chrome().m_tooltip == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
 
-  RECT local = data->m_size_combo_rect;
+  RECT local = data->chrome().m_size_combo_rect;
   const bool show_combo =
-      annotationEditorPropertyBarPaintsSizeCombo(data->m_controller.tool()) &&
+      annotationEditorPropertyBarPaintsSizeCombo(data->core().m_controller.tool()) &&
       local.right > local.left;
 
   const wchar_t* tip = L"";
   if (show_combo)
   {
-    tip = annotationEditorPropertyBarShowsMosaicSize(data->m_controller.tool())
+    tip = annotationEditorPropertyBarShowsMosaicSize(data->core().m_controller.tool())
               ? L"\x5757\x5927\x5C0F"
               : L"\x5B57\x53F7";
   }
-  bindToolbarTooltip(data->m_tooltip, data->m_overlay, kFontComboId, local, tip,
-                     data->m_tooltip_text[kComboTooltipSlot],
+  bindToolbarTooltip(data->chrome().m_tooltip, data->window().m_overlay, kFontComboId, local, tip,
+                     data->chrome().m_tooltip_text[kComboTooltipSlot],
                      kToolbarTooltipMaxChars);
 }
 
 void bindPropertyBarTooltips(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_tooltip == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->chrome().m_tooltip == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
 
-  const HWND overlay = data->m_overlay;
-  const HWND tooltip = data->m_tooltip;
-  bindToolbarTooltip(tooltip, overlay, kTipShapeRectId, data->m_shape_rects[0],
+  const HWND overlay = data->window().m_overlay;
+  const HWND tooltip = data->chrome().m_tooltip;
+  bindToolbarTooltip(tooltip, overlay, kTipShapeRectId, data->chrome().m_shape_rects[0],
                      toolbarIconLabel(ToolbarIconKind::Rectangle),
-                     data->m_tooltip_text[kShapeTooltipSlot],
+                     data->chrome().m_tooltip_text[kShapeTooltipSlot],
                      kToolbarTooltipMaxChars);
-  bindToolbarTooltip(tooltip, overlay, kTipShapeEllipseId, data->m_shape_rects[1],
+  bindToolbarTooltip(tooltip, overlay, kTipShapeEllipseId, data->chrome().m_shape_rects[1],
                      toolbarIconLabel(ToolbarIconKind::Ellipse),
-                     data->m_tooltip_text[kShapeTooltipSlot + 1],
+                     data->chrome().m_tooltip_text[kShapeTooltipSlot + 1],
                      kToolbarTooltipMaxChars);
-  bindToolbarTooltip(tooltip, overlay, kTipFillId, data->m_fill_rect,
+  bindToolbarTooltip(tooltip, overlay, kTipFillId, data->chrome().m_fill_rect,
                      toolbarIconLabel(ToolbarIconKind::Fill),
-                     data->m_tooltip_text[kFillTooltipSlot],
+                     data->chrome().m_tooltip_text[kFillTooltipSlot],
                      kToolbarTooltipMaxChars);
 
   const ToolbarIconKind line_icons[AnnotationLineStyleCount] = {
@@ -100,29 +107,29 @@ void bindPropertyBarTooltips(AnnotationEditorHost* data)
   {
     bindToolbarTooltip(
         tooltip, overlay, kTipLineStyleBaseId + static_cast<UINT>(i),
-        data->m_line_style_rects[static_cast<std::size_t>(i)],
+        data->chrome().m_line_style_rects[static_cast<std::size_t>(i)],
         toolbarIconLabel(line_icons[static_cast<std::size_t>(i)]),
-        data->m_tooltip_text[kLineStyleTooltipSlot + i],
+        data->chrome().m_tooltip_text[kLineStyleTooltipSlot + i],
         kToolbarTooltipMaxChars);
   }
 
-  bindToolbarTooltip(tooltip, overlay, kTipStrokeId, data->m_stroke_chip_rect,
+  bindToolbarTooltip(tooltip, overlay, kTipStrokeId, data->chrome().m_stroke_chip_rect,
                      toolbarIconLabel(ToolbarIconKind::StrokeWidth),
-                     data->m_tooltip_text[kStrokeTooltipSlot],
+                     data->chrome().m_tooltip_text[kStrokeTooltipSlot],
                      kToolbarTooltipMaxChars);
 
   bindToolbarTooltip(tooltip, overlay, kTipCurrentColorId,
-                     data->m_current_color_rect,
+                     data->chrome().m_current_color_rect,
                      L"\x5F53\x524D\x989C\x8272",
-                     data->m_tooltip_text[kCurrentColorTooltipSlot],
+                     data->chrome().m_tooltip_text[kCurrentColorTooltipSlot],
                      kToolbarTooltipMaxChars);
 
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
     bindToolbarTooltip(tooltip, overlay, kTipColorBaseId + static_cast<UINT>(i),
-                       data->m_color_swatch_rects[static_cast<std::size_t>(i)],
+                       data->chrome().m_color_swatch_rects[static_cast<std::size_t>(i)],
                        toolbarColorPresetLabel(i),
-                       data->m_tooltip_text[kColorTooltipSlot + i],
+                       data->chrome().m_tooltip_text[kColorTooltipSlot + i],
                        kToolbarTooltipMaxChars);
   }
 
@@ -131,27 +138,27 @@ void bindPropertyBarTooltips(AnnotationEditorHost* data)
 
 void syncSizeFromCombo(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_font_combo == nullptr ||
-      data->m_size_combo_syncing)
+  if (data == nullptr || data->chrome().m_font_combo == nullptr ||
+      data->chrome().m_size_combo_syncing)
   {
     return;
   }
 
-  const LRESULT index = SendMessageW(data->m_font_combo, CB_GETCURSEL, 0, 0);
+  const LRESULT index = SendMessageW(data->chrome().m_font_combo, CB_GETCURSEL, 0, 0);
   if (index == CB_ERR || index < 0)
   {
     return;
   }
 
-  if (annotationEditorPropertyBarShowsMosaicSize(data->m_controller.tool()))
+  if (annotationEditorPropertyBarShowsMosaicSize(data->core().m_controller.tool()))
   {
     if (index >= AnnotationEditorMosaicSizeOptionCount)
     {
       return;
     }
-    data->m_controller.setMosaicBlockSize(
+    data->core().m_controller.setMosaicBlockSize(
         AnnotationEditorMosaicSizeOptions[static_cast<std::size_t>(index)]);
-    if (data->m_controller.isDrawing())
+    if (data->core().m_controller.isDrawing())
     {
       invalidateImageArea(data);
     }
@@ -163,25 +170,25 @@ void syncSizeFromCombo(AnnotationEditorHost* data)
     return;
   }
 
-  data->m_controller.setFontSize(
+  data->core().m_controller.setFontSize(
       AnnotationEditorFontSizeOptions[static_cast<std::size_t>(index)]);
-  if (data->m_inline_edit != nullptr)
+  if (data->inlineText().m_inline_edit != nullptr)
   {
-    data->m_inline_edit_font.reset(CreateFontW(
-        -data->m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+    data->inlineText().m_inline_edit_font.reset(CreateFontW(
+        -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
         FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
-    if (data->m_inline_edit_font)
+    if (data->inlineText().m_inline_edit_font)
     {
-      SendMessageW(data->m_inline_edit, WM_SETFONT,
-                   reinterpret_cast<WPARAM>(data->m_inline_edit_font.get()),
+      SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,
+                   reinterpret_cast<WPARAM>(data->inlineText().m_inline_edit_font.get()),
                    TRUE);
     }
     applyInlineEditVisual(data);
   }
-  if (data->m_inline_edit != nullptr)
+  if (data->inlineText().m_inline_edit != nullptr)
   {
-    SetFocus(data->m_inline_edit);
+    SetFocus(data->inlineText().m_inline_edit);
   }
   applyLiveTextStyle(data);
 }
@@ -204,14 +211,14 @@ void syncStyleFromAnnotation(AnnotationEditorHost* data,
   {
     return;
   }
-  data->m_controller.setColor(annotation.style.color);
+  data->core().m_controller.setColor(annotation.style.color);
   selectFontSizeInCombo(data, annotation.style.font_size);
   invalidateToolbar(data);
 }
 
 void applyLiveTextStyle(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
@@ -219,23 +226,23 @@ void applyLiveTextStyle(AnnotationEditorHost* data)
   applyInlineEditVisual(data);
 
   const std::size_t index = annotationEditorTextStyleTargetIndex(
-      data->m_selected_text_index, data->m_editing_text_index,
-      data->m_session.engine().document().count());
+      data->inlineText().m_selected_text_index, data->inlineText().m_editing_text_index,
+      data->core().m_session.engine().document().count());
   if (index == AnnotationEditorInvalidIndex)
   {
     return;
   }
 
-  Annotation updated = data->m_session.engine().document().items().at(index);
+  Annotation updated = data->core().m_session.engine().document().items().at(index);
   if (updated.type != AnnotationType::Text)
   {
     return;
   }
 
-  updated.style.color = data->m_controller.style().color;
-  updated.style.font_size = data->m_controller.style().font_size;
-  fillTextHitBounds(data->m_overlay, updated);
-  if (data->m_session.engine().replaceAt(index, updated))
+  updated.style.color = data->core().m_controller.style().color;
+  updated.style.font_size = data->core().m_controller.style().font_size;
+  fillTextHitBounds(data->window().m_overlay, updated);
+  if (data->core().m_session.engine().replaceAt(index, updated))
   {
     invalidateImageArea(data);
   }
@@ -275,19 +282,19 @@ void resetPropertyBarRects(AnnotationEditorHost* data)
 
   for (int i = 0; i < kGeometryShapeCount; ++i)
   {
-    data->m_shape_rects[static_cast<std::size_t>(i)] = {};
+    data->chrome().m_shape_rects[static_cast<std::size_t>(i)] = {};
   }
-  data->m_fill_rect = {};
+  data->chrome().m_fill_rect = {};
   for (int i = 0; i < AnnotationLineStyleCount; ++i)
   {
-    data->m_line_style_rects[static_cast<std::size_t>(i)] = {};
+    data->chrome().m_line_style_rects[static_cast<std::size_t>(i)] = {};
   }
-  data->m_stroke_chip_rect = {};
-  data->m_size_combo_rect = {};
-  data->m_current_color_rect = {};
+  data->chrome().m_stroke_chip_rect = {};
+  data->chrome().m_size_combo_rect = {};
+  data->chrome().m_current_color_rect = {};
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
-    data->m_color_swatch_rects[static_cast<std::size_t>(i)] = {};
+    data->chrome().m_color_swatch_rects[static_cast<std::size_t>(i)] = {};
   }
 }
 
@@ -297,18 +304,18 @@ void syncGeometryButton(AnnotationEditorHost* data)
   {
     return;
   }
-  if (annotationEditorIsGeometryTool(data->m_controller.tool()))
+  if (annotationEditorIsGeometryTool(data->core().m_controller.tool()))
   {
-    data->m_last_geometry_tool = data->m_controller.tool();
+    data->chrome().m_last_geometry_tool = data->core().m_controller.tool();
   }
   for (int i = 0; i < kToolbarIconItemCount; ++i)
   {
-    if (data->m_toolbar_items[static_cast<std::size_t>(i)].id != kButtonGeometryId)
+    if (data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].id != kButtonGeometryId)
     {
       continue;
     }
-    data->m_toolbar_items[static_cast<std::size_t>(i)].icon =
-        (data->m_last_geometry_tool == AnnotationTool::Ellipse)
+    data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].icon =
+        (data->chrome().m_last_geometry_tool == AnnotationTool::Ellipse)
             ? ToolbarIconKind::Ellipse
             : ToolbarIconKind::Rectangle;
     break;
@@ -322,36 +329,36 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
     return;
   }
 
-  const Image& source = data->m_session.source();
-  const int default_x = data->m_image_screen_x;
+  const Image& source = data->core().m_session.source();
+  const int default_x = data->window().m_image_screen_x;
   const int default_y =
-      data->m_image_screen_y + source.height + AnnotationEditorChromeImageGap;
+      data->window().m_image_screen_y + source.height + AnnotationEditorChromeImageGap;
   const int main_width = annotationEditorMainToolbarWidth();
   const int property_width =
-      annotationEditorShowsPropertyBar(data->m_controller.tool())
+      annotationEditorShowsPropertyBar(data->core().m_controller.tool())
           ? annotationEditorPropertyBarWidth()
           : 0;
   const int span_width =
       annotationEditorChromeSpanWidth(main_width, property_width);
   const int chrome_height =
-      annotationEditorChromeHeight(data->m_controller.tool()) -
+      annotationEditorChromeHeight(data->core().m_controller.tool()) -
       AnnotationEditorChromeImageGap;
   const int screen_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
   const int screen_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
   const int screen_right = screen_left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
   const int screen_bottom = screen_top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
-  annotationEditorClampChromeOffset(data->m_chrome_offset_x, data->m_chrome_offset_y,
+  annotationEditorClampChromeOffset(data->chrome().m_chrome_offset_x, data->chrome().m_chrome_offset_y,
                                     default_x, default_y, span_width,
                                     chrome_height, screen_left, screen_top,
                                     screen_right, screen_bottom);
 
-  const int chrome_screen_x = default_x + data->m_chrome_offset_x;
-  const int chrome_screen_y = default_y + data->m_chrome_offset_y;
+  const int chrome_screen_x = default_x + data->chrome().m_chrome_offset_x;
+  const int chrome_screen_y = default_y + data->chrome().m_chrome_offset_y;
   // 窗口已铺满虚拟屏，禁止再 SetWindowPos：拖栏时改窗口原点会让截图框先跟着走再被重绘拉回，边缘处明显抖动。
   const int bar_left = chrome_screen_x - screen_left;
   const int bar_top = chrome_screen_y - screen_top;
   const int bar_height = annotationEditorToolbarHeight();
-  data->m_main_bar_rect = {bar_left, bar_top, bar_left + main_width,
+  data->chrome().m_main_bar_rect = {bar_left, bar_top, bar_left + main_width,
                          bar_top + bar_height};
 
   const int y = bar_top + AnnotationEditorBarPadding;
@@ -374,27 +381,27 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
   int item_index = 0;
   for (const auto& spec : left_items)
   {
-    data->m_toolbar_items[static_cast<std::size_t>(item_index)].id = spec.id;
-    data->m_toolbar_items[static_cast<std::size_t>(item_index)].icon = spec.icon;
-    data->m_toolbar_items[static_cast<std::size_t>(item_index)].accent = spec.accent;
-    data->m_toolbar_items[static_cast<std::size_t>(item_index)].rect = {
+    data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)].id = spec.id;
+    data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)].icon = spec.icon;
+    data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)].accent = spec.accent;
+    data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)].rect = {
         x, y, x + AnnotationEditorButtonWidth, y + AnnotationEditorButtonHeight};
     x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
     ++item_index;
   }
 
-  data->m_toolbar_divider_x[0] =
+  data->chrome().m_toolbar_divider_x[0] =
       x - AnnotationEditorButtonGap + AnnotationEditorDividerGap / 2;
   x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
 
-  data->m_toolbar_items[static_cast<std::size_t>(item_index)] = {
+  data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)] = {
       kButtonUndoId,
       ToolbarIconKind::Undo,
       false,
       {x, y, x + AnnotationEditorButtonWidth, y + AnnotationEditorButtonHeight}};
   ++item_index;
   x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
-  data->m_toolbar_divider_x[1] =
+  data->chrome().m_toolbar_divider_x[1] =
       x - AnnotationEditorButtonGap + AnnotationEditorDividerGap / 2;
   x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
 
@@ -404,7 +411,7 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
       (std::max)(x, bar_left + main_width - action_total -
                         AnnotationEditorBarPadding);
 
-  data->m_toolbar_items[static_cast<std::size_t>(item_index)] = {
+  data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)] = {
       kButtonConfirmId,
       ToolbarIconKind::Confirm,
       true,
@@ -414,7 +421,7 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
 
   const int cancel_x =
       confirm_x + AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
-  data->m_toolbar_items[static_cast<std::size_t>(item_index)] = {
+  data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)] = {
       kButtonCancelId,
       ToolbarIconKind::Cancel,
       false,
@@ -424,7 +431,7 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
   layoutPropertyBar(hwnd, data);
   syncGeometryButton(data);
   bindEditorTooltips(data);
-  if (data->m_inline_edit != nullptr)
+  if (data->inlineText().m_inline_edit != nullptr)
   {
     layoutInlineEdit(data);
   }
@@ -437,22 +444,22 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
     return;
   }
 
-  data->m_property_bar_rect = {};
-  const AnnotationTool tool = data->m_controller.tool();
+  data->chrome().m_property_bar_rect = {};
+  const AnnotationTool tool = data->core().m_controller.tool();
   resetPropertyBarRects(data);
   if (!annotationEditorShowsPropertyBar(tool))
   {
-    if (data->m_font_combo != nullptr)
+    if (data->chrome().m_font_combo != nullptr)
     {
-      ShowWindow(data->m_font_combo, SW_HIDE);
+      ShowWindow(data->chrome().m_font_combo, SW_HIDE);
     }
     return;
   }
 
-  const int y = data->m_main_bar_rect.bottom + AnnotationEditorChromeStackGap +
+  const int y = data->chrome().m_main_bar_rect.bottom + AnnotationEditorChromeStackGap +
                 AnnotationEditorBarPadding;
-  const int bar_left = data->m_main_bar_rect.left;
-  const int bar_top = data->m_main_bar_rect.bottom + AnnotationEditorChromeStackGap;
+  const int bar_left = data->chrome().m_main_bar_rect.left;
+  const int bar_top = data->chrome().m_main_bar_rect.bottom + AnnotationEditorChromeStackGap;
   const int swatch = AnnotationEditorColorSwatchSize;
   const int swatch_y = y + (AnnotationEditorButtonHeight - swatch) / 2;
   int x = bar_left + AnnotationEditorBarPadding;
@@ -460,20 +467,20 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
 
   if (annotationEditorPropertyBarShowsShapeToggle(tool))
   {
-    data->m_shape_rects[0] = takeToolbarButtonRect(x, y);
-    data->m_shape_rects[1] = takeToolbarButtonRect(x, y);
+    data->chrome().m_shape_rects[0] = takeToolbarButtonRect(x, y);
+    data->chrome().m_shape_rects[1] = takeToolbarButtonRect(x, y);
     skipToolbarDivider(x);
   }
   if (annotationEditorPropertyBarShowsFill(tool))
   {
-    data->m_fill_rect = takeToolbarButtonRect(x, y);
+    data->chrome().m_fill_rect = takeToolbarButtonRect(x, y);
     skipToolbarDivider(x);
   }
   if (annotationEditorPropertyBarShowsLineStyle(tool))
   {
     for (int i = 0; i < AnnotationLineStyleCount; ++i)
     {
-      data->m_line_style_rects[static_cast<std::size_t>(i)] =
+      data->chrome().m_line_style_rects[static_cast<std::size_t>(i)] =
           takeToolbarButtonRect(x, y);
     }
     skipToolbarDivider(x);
@@ -482,7 +489,7 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
   if (annotationEditorPropertyBarShowsStroke(tool) &&
       annotationEditorIsGeometryTool(tool))
   {
-    data->m_stroke_chip_rect =
+    data->chrome().m_stroke_chip_rect =
         takeToolbarSizedRect(x, y, AnnotationEditorStrokeChipWidth);
     skipToolbarDivider(x);
   }
@@ -491,11 +498,11 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
   if (annotationEditorPropertyBarShowsColor(tool))
   {
     const int current = AnnotationEditorCurrentColorSwatchSize;
-    data->m_current_color_rect = {x, swatch_y, x + current, swatch_y + current};
+    data->chrome().m_current_color_rect = {x, swatch_y, x + current, swatch_y + current};
     x += current + AnnotationEditorButtonGap;
     for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
     {
-      data->m_color_swatch_rects[static_cast<std::size_t>(i)] = {
+      data->chrome().m_color_swatch_rects[static_cast<std::size_t>(i)] = {
           x, swatch_y, x + swatch, swatch_y + swatch};
       x += swatch + AnnotationEditorButtonGap;
     }
@@ -507,31 +514,31 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
       !annotationEditorIsGeometryTool(tool))
   {
     combo_x = x;
-    data->m_stroke_chip_rect =
+    data->chrome().m_stroke_chip_rect =
         takeToolbarSizedRect(x, y, AnnotationEditorStrokeChipWidth);
   }
 
-  data->m_size_combo_rect = {};
+  data->chrome().m_size_combo_rect = {};
   if (annotationEditorPropertyBarShowsSizeCombo(tool))
   {
     const int placed_x =
         annotationEditorPropertyBarShowsMosaicSize(tool) ? mosaic_combo_x
                                                          : combo_x;
-    data->m_size_combo_rect = {placed_x, y,
+    data->chrome().m_size_combo_rect = {placed_x, y,
                              placed_x + AnnotationEditorFontComboWidth,
                              y + AnnotationEditorButtonHeight};
     x = (std::max)(x, placed_x + AnnotationEditorFontComboWidth +
                           AnnotationEditorButtonGap);
   }
-  if (data->m_font_combo != nullptr)
+  if (data->chrome().m_font_combo != nullptr)
   {
-    ShowWindow(data->m_font_combo, SW_HIDE);
+    ShowWindow(data->chrome().m_font_combo, SW_HIDE);
   }
 
   const int content_right =
       (std::max)(x - AnnotationEditorButtonGap,
                  bar_left + AnnotationEditorBarPadding);
-  data->m_property_bar_rect = {
+  data->chrome().m_property_bar_rect = {
       bar_left, bar_top,
       content_right + AnnotationEditorBarPadding,
       bar_top + annotationEditorToolbarHeight()};
@@ -541,12 +548,12 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
 
 void resizeEditorChrome(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
 
-  const AnnotationTool tool = data->m_controller.tool();
+  const AnnotationTool tool = data->core().m_controller.tool();
   fillSizeCombo(data);
   if (annotationEditorStrokePopupClosesOnTool(tool))
   {
@@ -556,19 +563,19 @@ void resizeEditorChrome(AnnotationEditorHost* data)
   {
     hideColorPicker(data, false);
   }
-  if (data->m_font_combo != nullptr)
+  if (data->chrome().m_font_combo != nullptr)
   {
     // 全屏 UpdateLayeredWindow 会盖住 WS_POPUP ComboBox；字号改由 overlay 绘制/命中。
-    ShowWindow(data->m_font_combo, SW_HIDE);
+    ShowWindow(data->chrome().m_font_combo, SW_HIDE);
   }
-  layoutEditorChrome(data->m_overlay, data);
+  layoutEditorChrome(data->window().m_overlay, data);
   invalidateToolbar(data);
 }
 
 int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsColor(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsColor(data->core().m_controller.tool()))
   {
     return -1;
   }
@@ -576,7 +583,7 @@ int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y)
   const POINT pt{x, y};
   for (int i = 0; i < AnnotationStylePresetColorCount; ++i)
   {
-    if (PtInRect(&data->m_color_swatch_rects[static_cast<std::size_t>(i)], pt) !=
+    if (PtInRect(&data->chrome().m_color_swatch_rects[static_cast<std::size_t>(i)], pt) !=
         FALSE)
     {
       return i;
@@ -588,43 +595,43 @@ int hitTestColorSwatch(const AnnotationEditorHost* data, int x, int y)
 bool hitTestCurrentColorSwatch(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsColor(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsColor(data->core().m_controller.tool()))
   {
     return false;
   }
   const POINT pt{x, y};
-  return PtInRect(&data->m_current_color_rect, pt) != FALSE;
+  return PtInRect(&data->chrome().m_current_color_rect, pt) != FALSE;
 }
 
 bool hitTestSizeCombo(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarPaintsSizeCombo(data->m_controller.tool()))
+      !annotationEditorPropertyBarPaintsSizeCombo(data->core().m_controller.tool()))
   {
     return false;
   }
 
   const POINT pt{x, y};
-  return PtInRect(&data->m_size_combo_rect, pt) != FALSE;
+  return PtInRect(&data->chrome().m_size_combo_rect, pt) != FALSE;
 }
 
 void refreshInlineEditFont(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_inline_edit == nullptr)
+  if (data == nullptr || data->inlineText().m_inline_edit == nullptr)
   {
     return;
   }
-  data->m_inline_edit_font.reset(CreateFontW(
-      -data->m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+  data->inlineText().m_inline_edit_font.reset(CreateFontW(
+      -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
       FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
-  if (data->m_inline_edit_font)
+  if (data->inlineText().m_inline_edit_font)
   {
-    SendMessageW(data->m_inline_edit, WM_SETFONT,
-                 reinterpret_cast<WPARAM>(data->m_inline_edit_font.get()), TRUE);
+    SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(data->inlineText().m_inline_edit_font.get()), TRUE);
   }
   applyInlineEditVisual(data);
-  SetFocus(data->m_inline_edit);
+  SetFocus(data->inlineText().m_inline_edit);
 }
 
 void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value)
@@ -635,8 +642,8 @@ void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value)
   }
   if (mosaic)
   {
-    data->m_controller.setMosaicBlockSize(value);
-    if (data->m_controller.isDrawing())
+    data->core().m_controller.setMosaicBlockSize(value);
+    if (data->core().m_controller.isDrawing())
     {
       invalidateImageArea(data);
     }
@@ -653,15 +660,15 @@ void applyPickedSizeValue(AnnotationEditorHost* data, bool mosaic, int value)
 bool handleSizeComboWheel(AnnotationEditorHost* data, int delta)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarPaintsSizeCombo(data->m_controller.tool()))
+      !annotationEditorPropertyBarPaintsSizeCombo(data->core().m_controller.tool()))
   {
     return false;
   }
 
   const bool mosaic =
-      annotationEditorPropertyBarShowsMosaicSize(data->m_controller.tool());
-  const int current = mosaic ? data->m_controller.mosaicBlockSize()
-                             : data->m_controller.style().font_size;
+      annotationEditorPropertyBarShowsMosaicSize(data->core().m_controller.tool());
+  const int current = mosaic ? data->core().m_controller.mosaicBlockSize()
+                             : data->core().m_controller.style().font_size;
   const int steps = annotationEditorWheelDeltaToSteps(delta);
   const int next = mosaic ? annotationEditorStepMosaicBlockSize(current, steps)
                           : annotationEditorStepFontSize(current, steps);
@@ -671,19 +678,19 @@ bool handleSizeComboWheel(AnnotationEditorHost* data, int delta)
 
 void pickSizeFromOverlayMenu(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
 
   const bool mosaic =
-      annotationEditorPropertyBarShowsMosaicSize(data->m_controller.tool());
+      annotationEditorPropertyBarShowsMosaicSize(data->core().m_controller.tool());
   const int* options = mosaic ? AnnotationEditorMosaicSizeOptions
                               : AnnotationEditorFontSizeOptions;
   const int count = mosaic ? AnnotationEditorMosaicSizeOptionCount
                            : AnnotationEditorFontSizeOptionCount;
-  const int current = mosaic ? data->m_controller.mosaicBlockSize()
-                             : data->m_controller.style().font_size;
+  const int current = mosaic ? data->core().m_controller.mosaicBlockSize()
+                             : data->core().m_controller.style().font_size;
   const int current_index =
       annotationEditorLookupSizeOptionIndex(options, count, current);
   const int next_index =
@@ -716,14 +723,14 @@ void pickSizeFromOverlayMenu(AnnotationEditorHost* data)
     }
   }
 
-  POINT origin{data->m_size_combo_rect.left, data->m_size_combo_rect.bottom};
-  ClientToScreen(data->m_overlay, &origin);
-  (void)SetForegroundWindow(data->m_overlay);
+  POINT origin{data->chrome().m_size_combo_rect.left, data->chrome().m_size_combo_rect.bottom};
+  ClientToScreen(data->window().m_overlay, &origin);
+  (void)SetForegroundWindow(data->window().m_overlay);
   const UINT cmd = TrackPopupMenu(
       menu,
       TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_NONOTIFY |
           TPM_RETURNCMD,
-      origin.x, origin.y, 0, data->m_overlay, nullptr);
+      origin.x, origin.y, 0, data->window().m_overlay, nullptr);
   DestroyMenu(menu);
 
   const int index =
@@ -740,19 +747,19 @@ void pickSizeFromOverlayMenu(AnnotationEditorHost* data)
 bool hitTestStrokeChip(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsStroke(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsStroke(data->core().m_controller.tool()))
   {
     return false;
   }
 
   const POINT pt{x, y};
-  return PtInRect(&data->m_stroke_chip_rect, pt) != FALSE;
+  return PtInRect(&data->chrome().m_stroke_chip_rect, pt) != FALSE;
 }
 
 int hitTestShapeToggle(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsShapeToggle(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsShapeToggle(data->core().m_controller.tool()))
   {
     return -1;
   }
@@ -760,7 +767,7 @@ int hitTestShapeToggle(const AnnotationEditorHost* data, int x, int y)
   const POINT pt{x, y};
   for (int i = 0; i < kGeometryShapeCount; ++i)
   {
-    if (PtInRect(&data->m_shape_rects[static_cast<std::size_t>(i)], pt) != FALSE)
+    if (PtInRect(&data->chrome().m_shape_rects[static_cast<std::size_t>(i)], pt) != FALSE)
     {
       return i;
     }
@@ -771,18 +778,18 @@ int hitTestShapeToggle(const AnnotationEditorHost* data, int x, int y)
 bool hitTestFill(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsFill(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsFill(data->core().m_controller.tool()))
   {
     return false;
   }
   const POINT pt{x, y};
-  return PtInRect(&data->m_fill_rect, pt) != FALSE;
+  return PtInRect(&data->chrome().m_fill_rect, pt) != FALSE;
 }
 
 int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsLineStyle(data->m_controller.tool()))
+      !annotationEditorPropertyBarShowsLineStyle(data->core().m_controller.tool()))
   {
     return -1;
   }
@@ -790,7 +797,7 @@ int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y)
   const POINT pt{x, y};
   for (int i = 0; i < AnnotationLineStyleCount; ++i)
   {
-    if (PtInRect(&data->m_line_style_rects[static_cast<std::size_t>(i)], pt) !=
+    if (PtInRect(&data->chrome().m_line_style_rects[static_cast<std::size_t>(i)], pt) !=
         FALSE)
     {
       return i;
@@ -809,7 +816,7 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
   const int shape_index = hitTestShapeToggle(data, x, y);
   if (shape_index >= 0)
   {
-    data->m_controller.setTool(shape_index == 0 ? AnnotationTool::Rectangle
+    data->core().m_controller.setTool(shape_index == 0 ? AnnotationTool::Rectangle
                                               : AnnotationTool::Ellipse);
     syncGeometryButton(data);
     resizeEditorChrome(data);
@@ -818,8 +825,8 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
 
   if (hitTestFill(data, x, y))
   {
-    data->m_controller.setFilled(!data->m_controller.style().filled);
-    if (data->m_controller.isDrawing())
+    data->core().m_controller.setFilled(!data->core().m_controller.style().filled);
+    if (data->core().m_controller.isDrawing())
     {
       invalidateImageArea(data);
     }
@@ -830,9 +837,9 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
   const int line_index = hitTestLineStyle(data, x, y);
   if (line_index >= 0)
   {
-    data->m_controller.setLineStyle(
+    data->core().m_controller.setLineStyle(
         AnnotationLineStyleOptions[static_cast<std::size_t>(line_index)]);
-    if (data->m_controller.isDrawing())
+    if (data->core().m_controller.isDrawing())
     {
       invalidateImageArea(data);
     }
@@ -844,14 +851,14 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
   if (color_index >= 0)
   {
     hideColorPicker(data, false);
-    data->m_controller.setColor(
+    data->core().m_controller.setColor(
         AnnotationStylePresetColors[static_cast<std::size_t>(color_index)]);
     applyLiveTextStyle(data);
-    if (data->m_inline_edit != nullptr)
+    if (data->inlineText().m_inline_edit != nullptr)
     {
-      SetFocus(data->m_inline_edit);
+      SetFocus(data->inlineText().m_inline_edit);
     }
-    if (data->m_controller.isDrawing())
+    if (data->core().m_controller.isDrawing())
     {
       invalidateImageArea(data);
     }
@@ -894,7 +901,7 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
 
 bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return false;
   }
@@ -904,7 +911,7 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
   {
     return false;
   }
-  ScreenToClient(data->m_overlay, &pt);
+  ScreenToClient(data->window().m_overlay, &pt);
   return hitTestEditorToolbar(data, pt.x, pt.y) >= 0 ||
          hitTestChromeBar(data, pt.x, pt.y) ||
          hitTestCurrentColorSwatch(data, pt.x, pt.y) ||
@@ -916,15 +923,16 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
          hitTestLineStyle(data, pt.x, pt.y) >= 0;
 }
 
-void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
+void paintPropertyBar(HDC hdc,
+                      const AnnotationEditorPaintSnapshot& snapshot,
+                      bool draw_shell)
 {
-  if (hdc == nullptr || data == nullptr ||
-      !annotationEditorShowsPropertyBar(data->m_controller.tool()))
+  if (hdc == nullptr || !annotationEditorShowsPropertyBar(snapshot.tool))
   {
     return;
   }
 
-  if (data->m_property_bar_rect.right <= data->m_property_bar_rect.left)
+  if (snapshot.property_bar_rect.right <= snapshot.property_bar_rect.left)
   {
     return;
   }
@@ -932,22 +940,22 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
   const ModernToolbarColors colors = DefaultModernToolbarColors;
   if (draw_shell)
   {
-    drawToolbarBar(hdc, data->m_property_bar_rect);
+    drawToolbarBar(hdc, snapshot.property_bar_rect);
   }
 
-  const AnnotationTool tool = data->m_controller.tool();
-  const AnnotationStyle& style = data->m_controller.style();
+  const AnnotationTool tool = snapshot.tool;
+  const AnnotationStyle& style = snapshot.style;
 
   if (annotationEditorPropertyBarShowsShapeToggle(tool))
   {
-    drawToolbarItem(hdc, data->m_shape_rects[0], ToolbarIconKind::Rectangle,
+    drawToolbarItem(hdc, snapshot.shape_rects[0], ToolbarIconKind::Rectangle,
                     false, tool == AnnotationTool::Rectangle, true, false);
-    drawToolbarItem(hdc, data->m_shape_rects[1], ToolbarIconKind::Ellipse, false,
+    drawToolbarItem(hdc, snapshot.shape_rects[1], ToolbarIconKind::Ellipse, false,
                     tool == AnnotationTool::Ellipse, true, false);
   }
   if (annotationEditorPropertyBarShowsFill(tool))
   {
-    drawToolbarItem(hdc, data->m_fill_rect, ToolbarIconKind::Fill, false,
+    drawToolbarItem(hdc, snapshot.fill_rect, ToolbarIconKind::Fill, false,
                     style.filled, true, false);
   }
   if (annotationEditorPropertyBarShowsLineStyle(tool))
@@ -960,7 +968,7 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
       const bool selected =
           style.line_style ==
           AnnotationLineStyleOptions[static_cast<std::size_t>(i)];
-      drawToolbarItem(hdc, data->m_line_style_rects[static_cast<std::size_t>(i)],
+      drawToolbarItem(hdc, snapshot.line_style_rects[static_cast<std::size_t>(i)],
                       line_icons[static_cast<std::size_t>(i)], false, selected,
                       true, false);
     }
@@ -968,11 +976,11 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
 
   if (annotationEditorPropertyBarShowsColor(tool))
   {
-    const RECT& current = data->m_current_color_rect;
+    const RECT& current = snapshot.current_color_rect;
     if (current.right > current.left)
     {
       const bool custom = !colorMatchesAnyPresetRgb(style.color);
-      const bool picker_open = colorPickerIsVisible(data);
+      const bool picker_open = snapshot.color_picker_visible;
       fillRoundRect(hdc, current, colorBgraToRef(style.color),
                     picker_open ? kSwatchSelectedBorderColor : kSwatchBorderColor,
                     kSwatchCornerRadius);
@@ -999,7 +1007,7 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
     {
       const ColorBgra& preset =
           AnnotationStylePresetColors[static_cast<std::size_t>(i)];
-      const RECT& cell = data->m_color_swatch_rects[static_cast<std::size_t>(i)];
+      const RECT& cell = snapshot.color_swatch_rects[static_cast<std::size_t>(i)];
       const bool selected = colorsMatchRgb(style.color, preset);
       fillRoundRect(hdc, cell, colorBgraToRef(preset),
                     selected ? kSwatchSelectedBorderColor : kSwatchBorderColor,
@@ -1008,20 +1016,20 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
   }
 
   if (annotationEditorPropertyBarPaintsSizeCombo(tool) &&
-      data->m_size_combo_rect.right > data->m_size_combo_rect.left)
+      snapshot.size_combo_rect.right > snapshot.size_combo_rect.left)
   {
-    const RECT& chip = data->m_size_combo_rect;
+    const RECT& chip = snapshot.size_combo_rect;
     fillRoundRect(hdc, chip, colors.selected_fill, kSwatchBorderColor,
                   DefaultModernToolbarMetrics.hover_radius);
     const bool mosaic =
         annotationEditorPropertyBarShowsMosaicSize(tool);
-    const int value = mosaic ? data->m_controller.mosaicBlockSize()
+    const int value = mosaic ? snapshot.mosaic_block_size
                              : style.font_size;
     wchar_t value_text[8]{};
     (void)swprintf_s(value_text, L"%d", value);
     RECT text_rect = chip;
     const HGDIOBJ old_font =
-        data->m_combo_font ? SelectObject(hdc, data->m_combo_font.get())
+        snapshot.combo_font ? SelectObject(hdc, snapshot.combo_font)
                            : nullptr;
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, colors.label);
@@ -1039,18 +1047,18 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
   }
 
   const int divider_x =
-      data->m_stroke_chip_rect.left - AnnotationEditorDividerGap / 2;
-  drawToolbarDivider(hdc, divider_x, data->m_property_bar_rect.top + 8,
-                     data->m_property_bar_rect.bottom - 8);
+      snapshot.stroke_chip_rect.left - AnnotationEditorDividerGap / 2;
+  drawToolbarDivider(hdc, divider_x, snapshot.property_bar_rect.top + 8,
+                     snapshot.property_bar_rect.bottom - 8);
 
-  const RECT& chip = data->m_stroke_chip_rect;
-  const bool popup_open = strokePopupIsVisible(data);
-  if (data->m_stroke_chip_hover || popup_open)
+  const RECT& chip = snapshot.stroke_chip_rect;
+  const bool popup_open = snapshot.stroke_popup_visible;
+  if (snapshot.stroke_chip_hover || popup_open)
   {
     fillRoundRect(hdc, chip,
-                  data->m_stroke_chip_hover ? colors.hover_fill
+                  snapshot.stroke_chip_hover ? colors.hover_fill
                                           : colors.selected_fill,
-                  data->m_stroke_chip_hover ? colors.hover_fill
+                  snapshot.stroke_chip_hover ? colors.hover_fill
                                           : colors.selected_fill,
                   DefaultModernToolbarMetrics.hover_radius);
   }
@@ -1064,7 +1072,7 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
                    annotationEditorStrokeWidthPx(style.stroke_width));
   RECT value{icon.right, chip.top, chip.right, chip.bottom};
   const HGDIOBJ old_font =
-      data->m_combo_font ? SelectObject(hdc, data->m_combo_font.get()) : nullptr;
+      snapshot.combo_font ? SelectObject(hdc, snapshot.combo_font) : nullptr;
   SetBkMode(hdc, TRANSPARENT);
   SetTextColor(hdc, colors.label);
   DrawTextW(hdc, value_text, -1, &value,
@@ -1075,54 +1083,56 @@ void paintPropertyBar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
   }
 }
 
-void paintEditorToolbar(HDC hdc, AnnotationEditorHost* data, bool draw_shell)
+void paintEditorToolbar(HDC hdc,
+                        const AnnotationEditorPaintSnapshot& snapshot,
+                        bool draw_shell)
 {
-  if (hdc == nullptr || data == nullptr)
+  if (hdc == nullptr)
   {
     return;
   }
 
   if (draw_shell)
   {
-    drawToolbarBar(hdc, data->m_main_bar_rect);
+    drawToolbarBar(hdc, snapshot.main_bar_rect);
   }
 
   for (int i = 0; i < kToolbarIconItemCount; ++i)
   {
-    const EditorToolbarItem& item = data->m_toolbar_items[i];
+    const EditorToolbarItem& item = snapshot.toolbar_items[i];
     bool selected = false;
     switch (item.id)
     {
       case kButtonGeometryId:
-        selected = annotationEditorIsGeometryTool(data->m_controller.tool());
+        selected = annotationEditorIsGeometryTool(snapshot.tool);
         break;
       case kButtonArrowId:
-        selected = data->m_controller.tool() == AnnotationTool::Arrow;
+        selected = snapshot.tool == AnnotationTool::Arrow;
         break;
       case kButtonPenId:
-        selected = data->m_controller.tool() == AnnotationTool::Pen;
+        selected = snapshot.tool == AnnotationTool::Pen;
         break;
       case kButtonMosaicId:
-        selected = data->m_controller.tool() == AnnotationTool::Mosaic;
+        selected = snapshot.tool == AnnotationTool::Mosaic;
         break;
       case kButtonTextId:
-        selected = data->m_controller.tool() == AnnotationTool::Text;
+        selected = snapshot.tool == AnnotationTool::Text;
         break;
       default:
         break;
     }
-    drawToolbarItem(hdc, item.rect, item.icon, i == data->m_toolbar_hover,
+    drawToolbarItem(hdc, item.rect, item.icon, i == snapshot.toolbar_hover,
                     selected, true, item.accent,
                     item.id == kButtonGeometryId);
   }
 
-  const int divider_top = data->m_main_bar_rect.top + 8;
-  const int divider_bottom = data->m_main_bar_rect.bottom - 8;
+  const int divider_top = snapshot.main_bar_rect.top + 8;
+  const int divider_bottom = snapshot.main_bar_rect.bottom - 8;
   for (int i = 0; i < AnnotationEditorDividerCount; ++i)
   {
-    if (data->m_toolbar_divider_x[i] > 0)
+    if (snapshot.toolbar_divider_x[i] > 0)
     {
-      drawToolbarDivider(hdc, data->m_toolbar_divider_x[i], divider_top,
+      drawToolbarDivider(hdc, snapshot.toolbar_divider_x[i], divider_top,
                          divider_bottom);
     }
   }
@@ -1153,46 +1163,46 @@ bool createButtons(HWND hwnd, AnnotationEditorHost* data)
   icc.dwICC = ICC_WIN95_CLASSES;
   (void)InitCommonControlsEx(&icc);
 
-  data->m_font_combo = CreateWindowExW(
+  data->chrome().m_font_combo = CreateWindowExW(
       WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"COMBOBOX", L"",
       WS_POPUP | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0,
       AnnotationEditorFontComboWidth, AnnotationEditorFontComboDropHeight, hwnd,
       nullptr, GetModuleHandleW(nullptr), nullptr);
-  if (data->m_font_combo == nullptr)
+  if (data->chrome().m_font_combo == nullptr)
   {
     return false;
   }
-  SetWindowLongPtrW(data->m_font_combo, GWLP_ID,
+  SetWindowLongPtrW(data->chrome().m_font_combo, GWLP_ID,
                     static_cast<LONG_PTR>(kFontComboId));
 
-  data->m_combo_font.reset(CreateFontW(
+  data->chrome().m_combo_font.reset(CreateFontW(
       -kComboFontPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
       DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
-  if (data->m_combo_font)
+  if (data->chrome().m_combo_font)
   {
-    SendMessageW(data->m_font_combo, WM_SETFONT,
-                 reinterpret_cast<WPARAM>(data->m_combo_font.get()), TRUE);
+    SendMessageW(data->chrome().m_font_combo, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(data->chrome().m_combo_font.get()), TRUE);
   }
 
-  data->m_controller.setFontSize(DefaultFontSize);
-  data->m_controller.setMosaicBlockSize(DefaultMosaicBlockSize);
+  data->core().m_controller.setFontSize(DefaultFontSize);
+  data->core().m_controller.setMosaicBlockSize(DefaultMosaicBlockSize);
   fillSizeCombo(data);
 
   resizeEditorChrome(data);
 
-  data->m_tooltip = createToolbarTooltip(hwnd);
+  data->chrome().m_tooltip = createToolbarTooltip(hwnd);
   bindEditorTooltips(data);
   return true;
 }
 
 void invalidateToolbar(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return;
   }
-  InvalidateRect(data->m_overlay, nullptr, FALSE);
+  InvalidateRect(data->window().m_overlay, nullptr, FALSE);
 }
 
 bool hitTestChromeBar(const AnnotationEditorHost* data, int x, int y)
@@ -1202,31 +1212,31 @@ bool hitTestChromeBar(const AnnotationEditorHost* data, int x, int y)
     return false;
   }
   const POINT pt{x, y};
-  if (PtInRect(&data->m_main_bar_rect, pt) != FALSE)
+  if (PtInRect(&data->chrome().m_main_bar_rect, pt) != FALSE)
   {
     return true;
   }
-  return PtInRect(&data->m_property_bar_rect, pt) != FALSE;
+  return PtInRect(&data->chrome().m_property_bar_rect, pt) != FALSE;
 }
 
 void bindEditorTooltips(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr || data->m_tooltip == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr || data->chrome().m_tooltip == nullptr)
   {
     return;
   }
   for (int i = 0; i < kToolbarIconItemCount; ++i)
   {
     const wchar_t* tip =
-        (data->m_toolbar_items[static_cast<std::size_t>(i)].id ==
+        (data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].id ==
          kButtonGeometryId)
             ? toolbarIconLabel(ToolbarIconKind::Geometry)
             : toolbarIconLabel(
-                  data->m_toolbar_items[static_cast<std::size_t>(i)].icon);
-    bindToolbarTooltip(data->m_tooltip, data->m_overlay,
-                       data->m_toolbar_items[static_cast<std::size_t>(i)].id,
-                       data->m_toolbar_items[static_cast<std::size_t>(i)].rect,
-                       tip, data->m_tooltip_text[static_cast<std::size_t>(i)],
+                  data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].icon);
+    bindToolbarTooltip(data->chrome().m_tooltip, data->window().m_overlay,
+                       data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].id,
+                       data->chrome().m_toolbar_items[static_cast<std::size_t>(i)].rect,
+                       tip, data->chrome().m_tooltip_text[static_cast<std::size_t>(i)],
                        kToolbarTooltipMaxChars);
   }
   bindPropertyBarTooltips(data);
@@ -1286,11 +1296,11 @@ void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int /*x*/, int /*y*/
   {
     return;
   }
-  data->m_chrome_dragging = true;
-  data->m_chrome_drag_start_x = cursor.x;
-  data->m_chrome_drag_start_y = cursor.y;
-  data->m_chrome_drag_origin_x = data->m_chrome_offset_x;
-  data->m_chrome_drag_origin_y = data->m_chrome_offset_y;
+  data->chrome().m_chrome_dragging = true;
+  data->chrome().m_chrome_drag_start_x = cursor.x;
+  data->chrome().m_chrome_drag_start_y = cursor.y;
+  data->chrome().m_chrome_drag_origin_x = data->chrome().m_chrome_offset_x;
+  data->chrome().m_chrome_drag_origin_y = data->chrome().m_chrome_offset_y;
   hideStrokePopup(data);
   hideColorPicker(data, false);
   SetCapture(hwnd);
@@ -1298,7 +1308,7 @@ void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int /*x*/, int /*y*/
 
 void updateChromeDrag(AnnotationEditorHost* data, int /*x*/, int /*y*/)
 {
-  if (data == nullptr || !data->m_chrome_dragging || data->m_overlay == nullptr)
+  if (data == nullptr || !data->chrome().m_chrome_dragging || data->window().m_overlay == nullptr)
   {
     return;
   }
@@ -1307,16 +1317,16 @@ void updateChromeDrag(AnnotationEditorHost* data, int /*x*/, int /*y*/)
   {
     return;
   }
-  data->m_chrome_offset_x =
-      data->m_chrome_drag_origin_x + (cursor.x - data->m_chrome_drag_start_x);
-  data->m_chrome_offset_y =
-      data->m_chrome_drag_origin_y + (cursor.y - data->m_chrome_drag_start_y);
+  data->chrome().m_chrome_offset_x =
+      data->chrome().m_chrome_drag_origin_x + (cursor.x - data->chrome().m_chrome_drag_start_x);
+  data->chrome().m_chrome_offset_y =
+      data->chrome().m_chrome_drag_origin_y + (cursor.y - data->chrome().m_chrome_drag_start_y);
   const RECT old_chrome =
-      unionChromeRects(data->m_main_bar_rect, data->m_property_bar_rect);
-  layoutEditorChrome(data->m_overlay, data);
+      unionChromeRects(data->chrome().m_main_bar_rect, data->chrome().m_property_bar_rect);
+  layoutEditorChrome(data->window().m_overlay, data);
   const RECT new_chrome =
-      unionChromeRects(data->m_main_bar_rect, data->m_property_bar_rect);
-  invalidateChromeMove(data->m_overlay, old_chrome, new_chrome);
+      unionChromeRects(data->chrome().m_main_bar_rect, data->chrome().m_property_bar_rect);
+  invalidateChromeMove(data->window().m_overlay, old_chrome, new_chrome);
 }
 
 void endChromeDrag(AnnotationEditorHost* data)
@@ -1325,9 +1335,9 @@ void endChromeDrag(AnnotationEditorHost* data)
   {
     return;
   }
-  if (data->m_chrome_dragging)
+  if (data->chrome().m_chrome_dragging)
   {
-    data->m_chrome_dragging = false;
+    data->chrome().m_chrome_dragging = false;
     ReleaseCapture();
   }
 }
@@ -1341,7 +1351,7 @@ int hitTestEditorToolbar(const AnnotationEditorHost* data, int x, int y)
   const POINT pt{x, y};
   for (int i = 0; i < kToolbarIconItemCount; ++i)
   {
-    if (PtInRect(&data->m_toolbar_items[i].rect, pt) != FALSE)
+    if (PtInRect(&data->chrome().m_toolbar_items[i].rect, pt) != FALSE)
     {
       return i;
     }
@@ -1389,25 +1399,25 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
   switch (id)
   {
     case kButtonGeometryId:
-      data->m_controller.setTool(data->m_last_geometry_tool);
+      data->core().m_controller.setTool(data->chrome().m_last_geometry_tool);
       break;
     case kButtonArrowId:
-      data->m_controller.setTool(AnnotationTool::Arrow);
+      data->core().m_controller.setTool(AnnotationTool::Arrow);
       break;
     case kButtonPenId:
-      data->m_controller.setTool(AnnotationTool::Pen);
+      data->core().m_controller.setTool(AnnotationTool::Pen);
       break;
     case kButtonMosaicId:
-      data->m_controller.setTool(AnnotationTool::Mosaic);
+      data->core().m_controller.setTool(AnnotationTool::Mosaic);
       break;
     case kButtonTextId:
-      data->m_controller.setTool(AnnotationTool::Text);
+      data->core().m_controller.setTool(AnnotationTool::Text);
       break;
     case kButtonUndoId:
       cancelInlineText(data);
       resetTextGesture(data);
       clearTextSelection(data);
-      if (data->m_controller.undo(data->m_session.engine()))
+      if (data->core().m_controller.undo(data->core().m_session.engine()))
       {
         invalidateImageArea(data);
       }

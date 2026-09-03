@@ -1,4 +1,4 @@
-#include "annotate/annotation_editor_host.hpp"
+﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -8,7 +8,12 @@
 #include <string>
 #include <utility>
 
+#include "annotate/annotation_editor_paint.h"
+
 #include <commctrl.h>
+
+#include "annotate/annotation_editor_chrome.h"
+#include "annotate/annotation_editor_inline_text.h"
 
 namespace qingying {
 
@@ -18,11 +23,11 @@ HBRUSH ensureInlineEditKeyBrush(AnnotationEditorHost* data)
   {
     return nullptr;
   }
-  if (!data->m_inline_edit_key_brush)
+  if (!data->inlineText().m_inline_edit_key_brush)
   {
-    data->m_inline_edit_key_brush.reset(CreateSolidBrush(kToolbarColorKey));
+    data->inlineText().m_inline_edit_key_brush.reset(CreateSolidBrush(kToolbarColorKey));
   }
-  return data->m_inline_edit_key_brush.asBrush();
+  return data->inlineText().m_inline_edit_key_brush.asBrush();
 }
 
 void destroyInlineEdit(AnnotationEditorHost* data)
@@ -32,23 +37,23 @@ void destroyInlineEdit(AnnotationEditorHost* data)
     return;
   }
 
-  data->m_inline_edit_pressing = false;
+  data->inlineText().m_inline_edit_pressing = false;
 
-  const HWND edit = data->m_inline_edit;
-  const HWND host = data->m_inline_edit_host;
+  const HWND edit = data->inlineText().m_inline_edit;
+  const HWND host = data->inlineText().m_inline_edit_host;
   // 必须先断开成员：DestroyWindow 会同步派发 EN_KILLFOCUS，
   // 否则 commitInlineText 会再次 add 同一条新文字。
-  data->m_inline_edit = nullptr;
-  data->m_inline_edit_host = nullptr;
+  data->inlineText().m_inline_edit = nullptr;
+  data->inlineText().m_inline_edit_host = nullptr;
   if (edit != nullptr && GetCapture() == edit)
   {
     ReleaseCapture();
   }
-  if (edit != nullptr && data->m_inline_edit_prev_proc != nullptr)
+  if (edit != nullptr && data->inlineText().m_inline_edit_prev_proc != nullptr)
   {
     SetWindowLongPtrW(edit, GWLP_WNDPROC,
-                      reinterpret_cast<LONG_PTR>(data->m_inline_edit_prev_proc));
-    data->m_inline_edit_prev_proc = nullptr;
+                      reinterpret_cast<LONG_PTR>(data->inlineText().m_inline_edit_prev_proc));
+    data->inlineText().m_inline_edit_prev_proc = nullptr;
   }
   if (host != nullptr)
   {
@@ -59,8 +64,8 @@ void destroyInlineEdit(AnnotationEditorHost* data)
     DestroyWindow(edit);
   }
 
-  data->m_inline_edit_font.reset();
-  data->m_inline_edit_key_brush.reset();
+  data->inlineText().m_inline_edit_font.reset();
+  data->inlineText().m_inline_edit_key_brush.reset();
 }
 
 void fillTextHitBounds(HWND hwnd, Annotation& annotation)
@@ -91,25 +96,25 @@ void fillTextHitBounds(HWND hwnd, Annotation& annotation)
 
 void commitInlineText(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_inline_edit == nullptr)
+  if (data == nullptr || data->inlineText().m_inline_edit == nullptr)
   {
     return;
   }
 
-  const AnnotationEditorInlineCommitGuard guard(data->m_inline_commit_busy);
+  const AnnotationEditorInlineCommitGuard guard(data->inlineText().m_inline_commit_busy);
   if (!guard.acquired())
   {
     return;
   }
 
   wchar_t buffer[kInlineTextMaxChars]{};
-  GetWindowTextW(data->m_inline_edit, buffer, kInlineTextMaxChars);
-  const float anchor_x = data->m_text_anchor_x;
-  const float anchor_y = data->m_text_anchor_y;
-  const std::size_t edit_index = data->m_editing_text_index;
-  HWND overlay = data->m_overlay;
+  GetWindowTextW(data->inlineText().m_inline_edit, buffer, kInlineTextMaxChars);
+  const float anchor_x = data->inlineText().m_text_anchor_x;
+  const float anchor_y = data->inlineText().m_text_anchor_y;
+  const std::size_t edit_index = data->inlineText().m_editing_text_index;
+  HWND overlay = data->window().m_overlay;
   destroyInlineEdit(data);
-  data->m_editing_text_index = kInvalidAnnotationIndex;
+  data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
 
   if (buffer[0] == L'\0')
   {
@@ -120,17 +125,17 @@ void commitInlineText(AnnotationEditorHost* data)
   annotation.type = AnnotationType::Text;
   annotation.start = PointF{anchor_x, anchor_y};
   annotation.text.assign(buffer);
-  annotation.style = data->m_controller.style();
+  annotation.style = data->core().m_controller.style();
   fillTextHitBounds(overlay, annotation);
 
   bool ok = false;
   if (edit_index != kInvalidAnnotationIndex)
   {
-    ok = data->m_session.engine().replaceAt(edit_index, annotation);
+    ok = data->core().m_session.engine().replaceAt(edit_index, annotation);
   }
   else
   {
-    ok = data->m_session.engine().add(annotation);
+    ok = data->core().m_session.engine().add(annotation);
   }
 
   if (ok)
@@ -138,7 +143,7 @@ void commitInlineText(AnnotationEditorHost* data)
     std::size_t index = edit_index;
     if (index == kInvalidAnnotationIndex)
     {
-      const std::size_t count = data->m_session.engine().document().count();
+      const std::size_t count = data->core().m_session.engine().document().count();
       if (count > 0)
       {
         index = count - 1;
@@ -157,7 +162,7 @@ void cancelInlineText(AnnotationEditorHost* data)
   destroyInlineEdit(data);
   if (data != nullptr)
   {
-    data->m_editing_text_index = kInvalidAnnotationIndex;
+    data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
   }
 }
 
@@ -167,9 +172,9 @@ void resetTextGesture(AnnotationEditorHost* data)
   {
     return;
   }
-  data->m_text_gesture_active = false;
-  data->m_text_dragging = false;
-  data->m_text_target_index = kInvalidAnnotationIndex;
+  data->inlineText().m_text_gesture_active = false;
+  data->inlineText().m_text_dragging = false;
+  data->inlineText().m_text_target_index = kInvalidAnnotationIndex;
 }
 
 void clearTextSelection(AnnotationEditorHost* data)
@@ -178,9 +183,9 @@ void clearTextSelection(AnnotationEditorHost* data)
   {
     return;
   }
-  data->m_selected_text_index = kInvalidAnnotationIndex;
-  data->m_last_text_click_index = kInvalidAnnotationIndex;
-  data->m_last_text_click_tick = 0;
+  data->inlineText().m_selected_text_index = kInvalidAnnotationIndex;
+  data->inlineText().m_last_text_click_index = kInvalidAnnotationIndex;
+  data->inlineText().m_last_text_click_tick = 0;
 }
 
 void selectTextAnnotation(AnnotationEditorHost* data, HWND hwnd, std::size_t index,
@@ -190,17 +195,17 @@ void selectTextAnnotation(AnnotationEditorHost* data, HWND hwnd, std::size_t ind
   {
     return;
   }
-  data->m_selected_text_index = index;
-  data->m_last_text_click_index = index;
-  data->m_last_text_click_tick = GetTickCount();
-  data->m_last_text_click_x = click_x;
-  data->m_last_text_click_y = click_y;
-  data->m_controller.setTool(AnnotationTool::Text);
+  data->inlineText().m_selected_text_index = index;
+  data->inlineText().m_last_text_click_index = index;
+  data->inlineText().m_last_text_click_tick = GetTickCount();
+  data->inlineText().m_last_text_click_x = click_x;
+  data->inlineText().m_last_text_click_y = click_y;
+  data->core().m_controller.setTool(AnnotationTool::Text);
   resizeEditorChrome(data);
-  if (index < data->m_session.engine().document().count())
+  if (index < data->core().m_session.engine().document().count())
   {
     syncStyleFromAnnotation(
-        data, data->m_session.engine().document().items().at(index));
+        data, data->core().m_session.engine().document().items().at(index));
   }
   SetFocus(hwnd);
   invalidateImageArea(data);
@@ -210,12 +215,12 @@ bool isTextDoubleClick(const AnnotationEditorHost* data, std::size_t hit, int x,
                        int y)
 {
   if (data == nullptr || hit == kInvalidAnnotationIndex ||
-      data->m_last_text_click_index != hit)
+      data->inlineText().m_last_text_click_index != hit)
   {
     return false;
   }
 
-  const DWORD elapsed = GetTickCount() - data->m_last_text_click_tick;
+  const DWORD elapsed = GetTickCount() - data->inlineText().m_last_text_click_tick;
   if (elapsed > GetDoubleClickTime())
   {
     return false;
@@ -223,25 +228,25 @@ bool isTextDoubleClick(const AnnotationEditorHost* data, std::size_t hit, int x,
 
   const int limit_x = GetSystemMetrics(SM_CXDOUBLECLK) / 2;
   const int limit_y = GetSystemMetrics(SM_CYDOUBLECLK) / 2;
-  const int dx = x - data->m_last_text_click_x;
-  const int dy = y - data->m_last_text_click_y;
+  const int dx = x - data->inlineText().m_last_text_click_x;
+  const int dy = y - data->inlineText().m_last_text_click_y;
   return dx >= -limit_x && dx <= limit_x && dy >= -limit_y && dy <= limit_y;
 }
 
 bool deleteSelectedTextAnnotation(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_inline_edit != nullptr)
+  if (data == nullptr || data->inlineText().m_inline_edit != nullptr)
   {
     return false;
   }
-  if (data->m_selected_text_index == kInvalidAnnotationIndex ||
-      data->m_selected_text_index >= data->m_session.engine().document().count())
+  if (data->inlineText().m_selected_text_index == kInvalidAnnotationIndex ||
+      data->inlineText().m_selected_text_index >= data->core().m_session.engine().document().count())
   {
     return false;
   }
 
-  const std::size_t index = data->m_selected_text_index;
-  if (!data->m_session.engine().removeAt(index))
+  const std::size_t index = data->inlineText().m_selected_text_index;
+  if (!data->core().m_session.engine().removeAt(index))
   {
     return false;
   }
@@ -259,23 +264,23 @@ void selectFontSizeInCombo(AnnotationEditorHost* data, int font_size)
     return;
   }
 
-  data->m_controller.setFontSize(font_size);
-  if (data->m_font_combo == nullptr)
+  data->core().m_controller.setFontSize(font_size);
+  if (data->chrome().m_font_combo == nullptr)
   {
     return;
   }
 
-  data->m_size_combo_syncing = true;
+  data->chrome().m_size_combo_syncing = true;
   for (int i = 0; i < AnnotationEditorFontSizeOptionCount; ++i)
   {
     if (AnnotationEditorFontSizeOptions[i] == font_size)
     {
-      SendMessageW(data->m_font_combo, CB_SETCURSEL, static_cast<WPARAM>(i), 0);
-      data->m_size_combo_syncing = false;
+      SendMessageW(data->chrome().m_font_combo, CB_SETCURSEL, static_cast<WPARAM>(i), 0);
+      data->chrome().m_size_combo_syncing = false;
       return;
     }
   }
-  data->m_size_combo_syncing = false;
+  data->chrome().m_size_combo_syncing = false;
 }
 
 bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size)
@@ -332,32 +337,58 @@ AnnotationEditorTextChrome makeTextChrome(const AnnotationEditorHost* data,
 
   int width = kTextMinHitWidthPx;
   int height = kTextMinHitHeightPx;
-  const HDC hdc = GetDC(data->m_overlay);
+  const HDC hdc = GetDC(data->window().m_overlay);
   if (hdc != nullptr)
   {
     measureTextHitSize(hdc, annotation, width, height);
-    ReleaseDC(data->m_overlay, hdc);
+    ReleaseDC(data->window().m_overlay, hdc);
   }
 
   int text_x = static_cast<int>(annotation.start.x);
   int text_y = static_cast<int>(annotation.start.y);
   if (use_drag_position)
   {
-    text_x = static_cast<int>(data->m_text_drag_x);
-    text_y = static_cast<int>(data->m_text_drag_y);
+    text_x = static_cast<int>(data->inlineText().m_text_drag_x);
+    text_y = static_cast<int>(data->inlineText().m_text_drag_y);
   }
-  return annotationEditorTextChrome(data->m_image_origin_x, data->m_image_origin_y,
+  return annotationEditorTextChrome(data->window().m_image_origin_x, data->window().m_image_origin_y,
                                     text_x, text_y, width, height);
+}
+
+AnnotationEditorTextChrome makeTextChrome(
+    const AnnotationEditorPaintSnapshot& snapshot,
+    const Annotation& annotation, bool use_drag_position)
+{
+  AnnotationEditorTextChrome chrome{};
+  int width = kTextMinHitWidthPx;
+  int height = kTextMinHitHeightPx;
+  const HDC hdc = GetDC(snapshot.overlay);
+  if (hdc != nullptr)
+  {
+    measureTextHitSize(hdc, annotation, width, height);
+    ReleaseDC(snapshot.overlay, hdc);
+  }
+
+  int text_x = static_cast<int>(annotation.start.x);
+  int text_y = static_cast<int>(annotation.start.y);
+  if (use_drag_position)
+  {
+    text_x = static_cast<int>(snapshot.text_drag_x);
+    text_y = static_cast<int>(snapshot.text_drag_y);
+  }
+  return annotationEditorTextChrome(snapshot.image_origin_x,
+                                    snapshot.image_origin_y, text_x, text_y,
+                                    width, height);
 }
 
 std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y)
 {
-  if (data == nullptr || data->m_overlay == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr)
   {
     return kInvalidAnnotationIndex;
   }
 
-  const auto& items = data->m_session.engine().document().items();
+  const auto& items = data->core().m_session.engine().document().items();
   for (std::size_t i = items.size(); i > 0; --i)
   {
     const std::size_t index = i - 1;
@@ -368,7 +399,7 @@ std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y)
     }
 
     const bool dragging =
-        data->m_text_dragging && data->m_text_target_index == index;
+        data->inlineText().m_text_dragging && data->inlineText().m_text_target_index == index;
     const AnnotationEditorTextChrome chrome =
         makeTextChrome(data, annotation, dragging);
     AnnotationEditorRect grab = chrome.frame;
@@ -388,15 +419,15 @@ std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y)
 void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
                                 int client_y)
 {
-  if (data == nullptr || data->m_inline_edit == nullptr ||
-      data->m_editing_text_index == kInvalidAnnotationIndex ||
-      data->m_editing_text_index >= data->m_session.engine().document().count())
+  if (data == nullptr || data->inlineText().m_inline_edit == nullptr ||
+      data->inlineText().m_editing_text_index == kInvalidAnnotationIndex ||
+      data->inlineText().m_editing_text_index >= data->core().m_session.engine().document().count())
   {
     return;
   }
 
-  const int dx = client_x - data->m_inline_edit_press_x;
-  const int dy = client_y - data->m_inline_edit_press_y;
+  const int dx = client_x - data->inlineText().m_inline_edit_press_x;
+  const int dy = client_y - data->inlineText().m_inline_edit_press_y;
   if (dx * dx + dy * dy < kTextDragThresholdPx * kTextDragThresholdPx)
   {
     return;
@@ -404,41 +435,41 @@ void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
 
   // 先把编辑框里的文案写回文档，再进入拖拽，避免未提交内容丢失。
   wchar_t buffer[kInlineTextMaxChars]{};
-  GetWindowTextW(data->m_inline_edit, buffer, kInlineTextMaxChars);
-  const std::size_t index = data->m_editing_text_index;
+  GetWindowTextW(data->inlineText().m_inline_edit, buffer, kInlineTextMaxChars);
+  const std::size_t index = data->inlineText().m_editing_text_index;
   Annotation updated =
-      data->m_session.engine().document().items().at(index);
+      data->core().m_session.engine().document().items().at(index);
   if (buffer[0] != L'\0')
   {
     updated.text.assign(buffer);
-    updated.style.font_size = data->m_controller.style().font_size;
-    fillTextHitBounds(data->m_overlay, updated);
-    (void)data->m_session.engine().replaceAt(index, updated);
+    updated.style.font_size = data->core().m_controller.style().font_size;
+    fillTextHitBounds(data->window().m_overlay, updated);
+    (void)data->core().m_session.engine().replaceAt(index, updated);
   }
 
-  POINT press{data->m_inline_edit_press_x, data->m_inline_edit_press_y};
-  ClientToScreen(data->m_inline_edit, &press);
-  ScreenToClient(data->m_overlay, &press);
+  POINT press{data->inlineText().m_inline_edit_press_x, data->inlineText().m_inline_edit_press_y};
+  ClientToScreen(data->inlineText().m_inline_edit, &press);
+  ScreenToClient(data->window().m_overlay, &press);
 
   POINT current{client_x, client_y};
-  ClientToScreen(data->m_inline_edit, &current);
-  ScreenToClient(data->m_overlay, &current);
+  ClientToScreen(data->inlineText().m_inline_edit, &current);
+  ScreenToClient(data->window().m_overlay, &current);
 
   destroyInlineEdit(data);
-  data->m_editing_text_index = kInvalidAnnotationIndex;
+  data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
 
-  data->m_text_gesture_active = true;
-  data->m_text_dragging = true;
-  data->m_text_target_index = index;
-  data->m_text_press_x = static_cast<float>(press.x);
-  data->m_text_press_y = static_cast<float>(press.y);
-  data->m_text_origin_x = updated.start.x;
-  data->m_text_origin_y = updated.start.y;
-  data->m_text_drag_x =
+  data->inlineText().m_text_gesture_active = true;
+  data->inlineText().m_text_dragging = true;
+  data->inlineText().m_text_target_index = index;
+  data->inlineText().m_text_press_x = static_cast<float>(press.x);
+  data->inlineText().m_text_press_y = static_cast<float>(press.y);
+  data->inlineText().m_text_origin_x = updated.start.x;
+  data->inlineText().m_text_origin_y = updated.start.y;
+  data->inlineText().m_text_drag_x =
       updated.start.x + static_cast<float>(current.x - press.x);
-  data->m_text_drag_y =
+  data->inlineText().m_text_drag_y =
       updated.start.y + static_cast<float>(current.y - press.y);
-  SetCapture(data->m_overlay);
+  SetCapture(data->window().m_overlay);
   invalidateImageArea(data);
 }
 
@@ -452,34 +483,34 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
   AnnotationEditorHost* data = reinterpret_cast<AnnotationEditorHost*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   const WNDPROC prev =
-      data != nullptr ? data->m_inline_edit_prev_proc : nullptr;
+      data != nullptr ? data->inlineText().m_inline_edit_prev_proc : nullptr;
 
   if (data != nullptr)
   {
     if (msg == WM_LBUTTONDOWN)
     {
-      data->m_inline_edit_pressing = true;
-      data->m_inline_edit_press_x =
+      data->inlineText().m_inline_edit_pressing = true;
+      data->inlineText().m_inline_edit_press_x =
           static_cast<int>(static_cast<short>(LOWORD(lparam)));
-      data->m_inline_edit_press_y =
+      data->inlineText().m_inline_edit_press_y =
           static_cast<int>(static_cast<short>(HIWORD(lparam)));
       // 必须捕获：拖出 EDIT 客户区后否则收不到 MOVE，无法晋升为标注拖拽。
       SetCapture(hwnd);
     }
-    else if (msg == WM_MOUSEMOVE && data->m_inline_edit_pressing &&
+    else if (msg == WM_MOUSEMOVE && data->inlineText().m_inline_edit_pressing &&
              (wparam & MK_LBUTTON) != 0)
     {
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
       tryPromoteInlineEditToDrag(data, x, y);
-      if (data->m_text_dragging)
+      if (data->inlineText().m_text_dragging)
       {
         return 0;
       }
     }
     else if (msg == WM_LBUTTONUP)
     {
-      data->m_inline_edit_pressing = false;
+      data->inlineText().m_inline_edit_pressing = false;
       if (GetCapture() == hwnd)
       {
         ReleaseCapture();
@@ -519,7 +550,7 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         cancelInlineText(data);
         clearTextSelection(data);
-        if (data->m_controller.undo(data->m_session.engine()))
+        if (data->core().m_controller.undo(data->core().m_session.engine()))
         {
           invalidateImageArea(data);
         }
@@ -546,22 +577,22 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 void invalidateInlineEditRegion(const AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_overlay == nullptr ||
-      data->m_inline_edit == nullptr)
+  if (data == nullptr || data->window().m_overlay == nullptr ||
+      data->inlineText().m_inline_edit == nullptr)
   {
     return;
   }
 
   RECT rect{};
-  if (GetWindowRect(data->m_inline_edit, &rect) == FALSE)
+  if (GetWindowRect(data->inlineText().m_inline_edit, &rect) == FALSE)
   {
     return;
   }
-  MapWindowPoints(HWND_DESKTOP, data->m_overlay, reinterpret_cast<POINT*>(&rect),
+  MapWindowPoints(HWND_DESKTOP, data->window().m_overlay, reinterpret_cast<POINT*>(&rect),
                   2);
   const int pad = AnnotationEditorInlineEditBorderPx + 1;
   (void)InflateRect(&rect, pad, pad);
-  InvalidateRect(data->m_overlay, &rect, FALSE);
+  InvalidateRect(data->window().m_overlay, &rect, FALSE);
 }
 
 void placeInlineEditCaret(HWND edit, int caret, bool scroll_to_caret)
@@ -588,27 +619,27 @@ void placeInlineEditCaret(HWND edit, int caret, bool scroll_to_caret)
 
 void layoutInlineEdit(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_inline_edit == nullptr)
+  if (data == nullptr || data->inlineText().m_inline_edit == nullptr)
   {
     return;
   }
 
-  const Image& source = data->m_session.source();
-  const int canvas_x = static_cast<int>(data->m_text_anchor_x);
-  const int canvas_y = static_cast<int>(data->m_text_anchor_y);
+  const Image& source = data->core().m_session.source();
+  const int canvas_x = static_cast<int>(data->inlineText().m_text_anchor_x);
+  const int canvas_y = static_cast<int>(data->inlineText().m_text_anchor_y);
   const int remain_width = source.width - canvas_x;
 
   wchar_t buffer[kInlineTextMaxChars]{};
-  GetWindowTextW(data->m_inline_edit, buffer, kInlineTextMaxChars);
+  GetWindowTextW(data->inlineText().m_inline_edit, buffer, kInlineTextMaxChars);
 
   int text_extent = 0;
-  const HDC hdc = GetDC(data->m_inline_edit);
+  const HDC hdc = GetDC(data->inlineText().m_inline_edit);
   if (hdc != nullptr)
   {
     HGDIOBJ old_font = nullptr;
-    if (data->m_inline_edit_font)
+    if (data->inlineText().m_inline_edit_font)
     {
-      old_font = SelectObject(hdc, data->m_inline_edit_font.get());
+      old_font = SelectObject(hdc, data->inlineText().m_inline_edit_font.get());
     }
     const int len = lstrlenW(buffer);
     SIZE size{};
@@ -636,24 +667,24 @@ void layoutInlineEdit(AnnotationEditorHost* data)
     {
       SelectObject(hdc, old_font);
     }
-    ReleaseDC(data->m_inline_edit, hdc);
+    ReleaseDC(data->inlineText().m_inline_edit, hdc);
   }
 
   invalidateInlineEditRegion(data);
   const int width = annotationEditorInlineEditWidth(text_extent, remain_width);
   const int height =
-      annotationEditorInlineEditHeight(data->m_controller.style().font_size);
-  const HWND host = data->m_inline_edit_host != nullptr ? data->m_inline_edit_host
-                                                      : data->m_inline_edit;
-  positionOwnedPopup(host, data->m_overlay, data->m_image_origin_x + canvas_x,
-                     data->m_image_origin_y + canvas_y, width, height);
-  if (data->m_inline_edit_host != nullptr)
+      annotationEditorInlineEditHeight(data->core().m_controller.style().font_size);
+  const HWND host = data->inlineText().m_inline_edit_host != nullptr ? data->inlineText().m_inline_edit_host
+                                                      : data->inlineText().m_inline_edit;
+  positionOwnedPopup(host, data->window().m_overlay, data->window().m_image_origin_x + canvas_x,
+                     data->window().m_image_origin_y + canvas_y, width, height);
+  if (data->inlineText().m_inline_edit_host != nullptr)
   {
-    SetWindowPos(data->m_inline_edit, nullptr, 0, 0, width, height,
+    SetWindowPos(data->inlineText().m_inline_edit, nullptr, 0, 0, width, height,
                  SWP_NOZORDER | SWP_NOACTIVATE);
   }
   placeInlineEditCaret(
-      data->m_inline_edit, lstrlenW(buffer),
+      data->inlineText().m_inline_edit, lstrlenW(buffer),
       annotationEditorInlineEditNeedsHScroll(text_extent, remain_width));
   invalidateInlineEditRegion(data);
   invalidateImageArea(data);
@@ -661,26 +692,25 @@ void layoutInlineEdit(AnnotationEditorHost* data)
 
 void applyInlineEditVisual(AnnotationEditorHost* data)
 {
-  if (data == nullptr || data->m_inline_edit == nullptr)
+  if (data == nullptr || data->inlineText().m_inline_edit == nullptr)
   {
     return;
   }
-  InvalidateRect(data->m_inline_edit, nullptr, TRUE);
+  InvalidateRect(data->inlineText().m_inline_edit, nullptr, TRUE);
   layoutInlineEdit(data);
 }
 
-void paintLiveInlineText(HDC hdc, AnnotationEditorHost* data)
+void paintLiveInlineText(HDC hdc,
+                         const AnnotationEditorPaintSnapshot& snapshot)
 {
-  if (hdc == nullptr || data == nullptr || data->m_inline_edit == nullptr)
+  if (hdc == nullptr || !snapshot.inline_edit_visible)
   {
     return;
   }
 
-  wchar_t buffer[kInlineTextMaxChars]{};
-  GetWindowTextW(data->m_inline_edit, buffer, kInlineTextMaxChars);
-  const int text_len = lstrlenW(buffer);
+  const int text_len = static_cast<int>(snapshot.inline_text.size());
   const int font_px =
-      (std::min)((std::max)(data->m_controller.style().font_size, MinFontSize),
+      (std::min)((std::max)(snapshot.style.font_size, MinFontSize),
                  MaxFontSize);
   HFONT font = CreateFontW(
       -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -692,28 +722,23 @@ void paintLiveInlineText(HDC hdc, AnnotationEditorHost* data)
   }
 
   const HGDIOBJ old_font = SelectObject(hdc, font);
-  const COLORREF color = colorBgraToRef(data->m_controller.style().color);
+  const COLORREF color = colorBgraToRef(snapshot.style.color);
   SetTextColor(hdc, color);
   SetBkMode(hdc, TRANSPARENT);
 
   const int origin_x =
-      data->m_image_origin_x + static_cast<int>(data->m_text_anchor_x);
+      snapshot.image_origin_x + static_cast<int>(snapshot.text_anchor_x);
   const int origin_y =
-      data->m_image_origin_y + static_cast<int>(data->m_text_anchor_y);
+      snapshot.image_origin_y + static_cast<int>(snapshot.text_anchor_y);
   if (text_len > 0)
   {
-    RECT text_rect{origin_x, origin_y, origin_x + data->m_session.source().width,
+    RECT text_rect{origin_x, origin_y, origin_x + snapshot.source.width,
                    origin_y + font_px + AnnotationEditorInlineEditHeightPad};
-    DrawTextW(hdc, buffer, text_len, &text_rect,
+    DrawTextW(hdc, snapshot.inline_text.c_str(), text_len, &text_rect,
               DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE);
   }
 
-  DWORD sel_start = 0;
-  DWORD sel_end = 0;
-  (void)SendMessageW(data->m_inline_edit, EM_GETSEL,
-                     reinterpret_cast<WPARAM>(&sel_start),
-                     reinterpret_cast<LPARAM>(&sel_end));
-  int caret = static_cast<int>(sel_start);
+  int caret = snapshot.inline_caret;
   if (caret < 0)
   {
     caret = 0;
@@ -726,7 +751,8 @@ void paintLiveInlineText(HDC hdc, AnnotationEditorHost* data)
   SIZE prefix{};
   if (caret > 0)
   {
-    (void)GetTextExtentPoint32W(hdc, buffer, caret, &prefix);
+    (void)GetTextExtentPoint32W(hdc, snapshot.inline_text.c_str(), caret,
+                                &prefix);
   }
   const int caret_x = origin_x + static_cast<int>(prefix.cx);
   const HPEN pen = CreatePen(PS_SOLID, kInlineCaretWidthPx, color);
@@ -743,20 +769,16 @@ void paintLiveInlineText(HDC hdc, AnnotationEditorHost* data)
   DeleteObject(font);
 }
 
-void paintInlineEditFrame(HDC hdc, AnnotationEditorHost* data)
+void paintInlineEditFrame(HDC hdc,
+                          const AnnotationEditorPaintSnapshot& snapshot)
 {
-  if (hdc == nullptr || data == nullptr || data->m_inline_edit == nullptr)
+  if (hdc == nullptr || !snapshot.inline_edit_visible ||
+      IsRectEmpty(&snapshot.inline_edit_rect) != FALSE)
   {
     return;
   }
 
-  RECT rect{};
-  if (GetWindowRect(data->m_inline_edit, &rect) == FALSE)
-  {
-    return;
-  }
-  MapWindowPoints(HWND_DESKTOP, data->m_overlay, reinterpret_cast<POINT*>(&rect),
-                  2);
+  const RECT& rect = snapshot.inline_edit_rect;
   const int border = AnnotationEditorInlineEditBorderPx;
   const HPEN pen = CreatePen(PS_SOLID, border, kInlineEditBorderColor);
   if (pen == nullptr)
@@ -801,8 +823,8 @@ LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_CTLCOLOREDIT:
     {
-      if (data == nullptr || data->m_inline_edit == nullptr ||
-          reinterpret_cast<HWND>(lparam) != data->m_inline_edit)
+      if (data == nullptr || data->inlineText().m_inline_edit == nullptr ||
+          reinterpret_cast<HWND>(lparam) != data->inlineText().m_inline_edit)
       {
         break;
       }
@@ -824,9 +846,9 @@ LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     case WM_COMMAND:
-      if (data != nullptr && data->m_overlay != nullptr)
+      if (data != nullptr && data->window().m_overlay != nullptr)
       {
-        return SendMessageW(data->m_overlay, WM_COMMAND, wparam, lparam);
+        return SendMessageW(data->window().m_overlay, WM_COMMAND, wparam, lparam);
       }
       return 0;
     default:
@@ -864,93 +886,93 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
   }
   else
   {
-    data->m_selected_text_index = edit_index;
+    data->inlineText().m_selected_text_index = edit_index;
   }
 
-  const Image& source = data->m_session.source();
+  const Image& source = data->core().m_session.source();
   std::wstring initial_text;
-  data->m_editing_text_index = edit_index;
+  data->inlineText().m_editing_text_index = edit_index;
   float click_x = 0.0f;
   float click_y = 0.0f;
   canvasFromClient(data, x, y, click_x, click_y);
-  data->m_text_anchor_x = click_x;
-  data->m_text_anchor_y = click_y;
+  data->inlineText().m_text_anchor_x = click_x;
+  data->inlineText().m_text_anchor_y = click_y;
 
   if (edit_index != kInvalidAnnotationIndex &&
-      edit_index < data->m_session.engine().document().count())
+      edit_index < data->core().m_session.engine().document().count())
   {
     const Annotation& existing =
-        data->m_session.engine().document().items().at(edit_index);
-    data->m_text_anchor_x = existing.start.x;
-    data->m_text_anchor_y = existing.start.y;
+        data->core().m_session.engine().document().items().at(edit_index);
+    data->inlineText().m_text_anchor_x = existing.start.x;
+    data->inlineText().m_text_anchor_y = existing.start.y;
     initial_text = existing.text;
     selectFontSizeInCombo(data, existing.style.font_size);
-    data->m_controller.setColor(existing.style.color);
+    data->core().m_controller.setColor(existing.style.color);
   }
 
-  const int canvas_x = static_cast<int>(data->m_text_anchor_x);
-  const int canvas_y = static_cast<int>(data->m_text_anchor_y);
+  const int canvas_x = static_cast<int>(data->inlineText().m_text_anchor_x);
+  const int canvas_y = static_cast<int>(data->inlineText().m_text_anchor_y);
   const int remain_width = source.width - canvas_x;
   const int edit_width = annotationEditorInlineEditWidth(0, remain_width);
   const int edit_height =
-      annotationEditorInlineEditHeight(data->m_controller.style().font_size);
+      annotationEditorInlineEditHeight(data->core().m_controller.style().font_size);
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   if (!registerInlineEditHostClass(instance) ||
       ensureInlineEditKeyBrush(data) == nullptr)
   {
-    data->m_editing_text_index = kInvalidAnnotationIndex;
+    data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
     return;
   }
 
   // 分层宿主打孔透出截图；子 EDIT 继续承接 IME。系统 EDIT 不能直接做 overlay 子窗。
-  data->m_inline_edit_host = CreateWindowExW(
+  data->inlineText().m_inline_edit_host = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kInlineEditHostClassName,
       L"", WS_POPUP | WS_CLIPCHILDREN, 0, 0, edit_width, edit_height, hwnd,
       nullptr, instance, data);
-  if (data->m_inline_edit_host == nullptr)
+  if (data->inlineText().m_inline_edit_host == nullptr)
   {
-    data->m_editing_text_index = kInvalidAnnotationIndex;
+    data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
     return;
   }
-  applyToolbarColorKey(data->m_inline_edit_host);
+  applyToolbarColorKey(data->inlineText().m_inline_edit_host);
 
   // 必须带 ES_AUTOHSCROLL，否则单行 EDIT 在旧宽度内会丢弃新字符，EN_CHANGE
   // 不会触发，输入框也就无法随文字变宽。布局后再清掉水平滚动残留。
-  data->m_inline_edit = CreateWindowExW(
+  data->inlineText().m_inline_edit = CreateWindowExW(
       0, L"EDIT", initial_text.c_str(),
       WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_LEFT, 0, 0, edit_width,
-      edit_height, data->m_inline_edit_host,
+      edit_height, data->inlineText().m_inline_edit_host,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kInlineEditId)),
       instance, nullptr);
-  if (data->m_inline_edit == nullptr)
+  if (data->inlineText().m_inline_edit == nullptr)
   {
-    DestroyWindow(data->m_inline_edit_host);
-    data->m_inline_edit_host = nullptr;
-    data->m_editing_text_index = kInvalidAnnotationIndex;
+    DestroyWindow(data->inlineText().m_inline_edit_host);
+    data->inlineText().m_inline_edit_host = nullptr;
+    data->inlineText().m_editing_text_index = kInvalidAnnotationIndex;
     return;
   }
-  SendMessageW(data->m_inline_edit, EM_SETLIMITTEXT, kInlineTextMaxChars - 1, 0);
-  data->m_inline_edit_font.reset(CreateFontW(
-      -data->m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+  SendMessageW(data->inlineText().m_inline_edit, EM_SETLIMITTEXT, kInlineTextMaxChars - 1, 0);
+  data->inlineText().m_inline_edit_font.reset(CreateFontW(
+      -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
       FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
-  if (data->m_inline_edit_font)
+  if (data->inlineText().m_inline_edit_font)
   {
-    SendMessageW(data->m_inline_edit, WM_SETFONT,
-                 reinterpret_cast<WPARAM>(data->m_inline_edit_font.get()), TRUE);
+    SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(data->inlineText().m_inline_edit_font.get()), TRUE);
   }
 
-  SetWindowLongPtrW(data->m_inline_edit, GWLP_USERDATA,
+  SetWindowLongPtrW(data->inlineText().m_inline_edit, GWLP_USERDATA,
                     reinterpret_cast<LONG_PTR>(data));
-  data->m_inline_edit_prev_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
-      data->m_inline_edit, GWLP_WNDPROC,
+  data->inlineText().m_inline_edit_prev_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+      data->inlineText().m_inline_edit, GWLP_WNDPROC,
       reinterpret_cast<LONG_PTR>(inlineEditSubclassProc)));
   const int text_len = static_cast<int>(initial_text.size());
-  SendMessageW(data->m_inline_edit, EM_SETSEL, text_len, text_len);
+  SendMessageW(data->inlineText().m_inline_edit, EM_SETSEL, text_len, text_len);
   layoutInlineEdit(data);
-  ShowWindow(data->m_inline_edit_host, SW_SHOWNOACTIVATE);
-  SetFocus(data->m_inline_edit);
+  ShowWindow(data->inlineText().m_inline_edit_host, SW_SHOWNOACTIVATE);
+  SetFocus(data->inlineText().m_inline_edit);
   invalidateImageArea(data);
 }
 
@@ -969,13 +991,13 @@ void beginOrEditTextAt(AnnotationEditorHost* data, HWND hwnd, int x, int y)
   {
     if (isTextDoubleClick(data, hit, x, y))
     {
-      data->m_last_text_click_index = kInvalidAnnotationIndex;
+      data->inlineText().m_last_text_click_index = kInvalidAnnotationIndex;
       beginInlineText(data, hwnd, x, y, hit);
       return;
     }
 
     const Annotation& existing =
-        data->m_session.engine().document().items().at(hit);
+        data->core().m_session.engine().document().items().at(hit);
     const AnnotationEditorTextChrome chrome =
         makeTextChrome(data, existing, false);
     if (annotationEditorHitTextChrome(chrome, x, y) ==
@@ -987,15 +1009,15 @@ void beginOrEditTextAt(AnnotationEditorHost* data, HWND hwnd, int x, int y)
     }
 
     selectTextAnnotation(data, hwnd, hit, x, y);
-    data->m_text_gesture_active = true;
-    data->m_text_dragging = false;
-    data->m_text_target_index = hit;
-    data->m_text_press_x = static_cast<float>(x);
-    data->m_text_press_y = static_cast<float>(y);
-    data->m_text_origin_x = existing.start.x;
-    data->m_text_origin_y = existing.start.y;
-    data->m_text_drag_x = existing.start.x;
-    data->m_text_drag_y = existing.start.y;
+    data->inlineText().m_text_gesture_active = true;
+    data->inlineText().m_text_dragging = false;
+    data->inlineText().m_text_target_index = hit;
+    data->inlineText().m_text_press_x = static_cast<float>(x);
+    data->inlineText().m_text_press_y = static_cast<float>(y);
+    data->inlineText().m_text_origin_x = existing.start.x;
+    data->inlineText().m_text_origin_y = existing.start.y;
+    data->inlineText().m_text_drag_x = existing.start.x;
+    data->inlineText().m_text_drag_y = existing.start.y;
     SetCapture(hwnd);
     return;
   }
@@ -1006,14 +1028,14 @@ void beginOrEditTextAt(AnnotationEditorHost* data, HWND hwnd, int x, int y)
 
 void updateTextGesture(AnnotationEditorHost* data, int x, int y)
 {
-  if (data == nullptr || !data->m_text_gesture_active)
+  if (data == nullptr || !data->inlineText().m_text_gesture_active)
   {
     return;
   }
 
-  const float dx = static_cast<float>(x) - data->m_text_press_x;
-  const float dy = static_cast<float>(y) - data->m_text_press_y;
-  if (!data->m_text_dragging)
+  const float dx = static_cast<float>(x) - data->inlineText().m_text_press_x;
+  const float dy = static_cast<float>(y) - data->inlineText().m_text_press_y;
+  if (!data->inlineText().m_text_dragging)
   {
     const float distance_sq = dx * dx + dy * dy;
     const float threshold = static_cast<float>(kTextDragThresholdPx *
@@ -1022,43 +1044,43 @@ void updateTextGesture(AnnotationEditorHost* data, int x, int y)
     {
       return;
     }
-    data->m_text_dragging = true;
+    data->inlineText().m_text_dragging = true;
   }
 
-  data->m_text_drag_x = data->m_text_origin_x + dx;
-  data->m_text_drag_y = data->m_text_origin_y + dy;
+  data->inlineText().m_text_drag_x = data->inlineText().m_text_origin_x + dx;
+  data->inlineText().m_text_drag_y = data->inlineText().m_text_origin_y + dy;
   invalidateImageArea(data);
 }
 
 void finishTextGesture(AnnotationEditorHost* data, HWND hwnd, int x, int y)
 {
-  if (data == nullptr || !data->m_text_gesture_active)
+  if (data == nullptr || !data->inlineText().m_text_gesture_active)
   {
     return;
   }
 
-  const std::size_t index = data->m_text_target_index;
-  const bool was_dragging = data->m_text_dragging;
-  const float press_x = data->m_text_press_x;
-  const float press_y = data->m_text_press_y;
-  const float origin_x = data->m_text_origin_x;
-  const float origin_y = data->m_text_origin_y;
+  const std::size_t index = data->inlineText().m_text_target_index;
+  const bool was_dragging = data->inlineText().m_text_dragging;
+  const float press_x = data->inlineText().m_text_press_x;
+  const float press_y = data->inlineText().m_text_press_y;
+  const float origin_x = data->inlineText().m_text_origin_x;
+  const float origin_y = data->inlineText().m_text_origin_y;
   resetTextGesture(data);
   ReleaseCapture();
 
   if (index == kInvalidAnnotationIndex ||
-      index >= data->m_session.engine().document().count())
+      index >= data->core().m_session.engine().document().count())
   {
     return;
   }
 
   if (was_dragging)
   {
-    Annotation updated = data->m_session.engine().document().items().at(index);
+    Annotation updated = data->core().m_session.engine().document().items().at(index);
     updated.start.x = origin_x + (static_cast<float>(x) - press_x);
     updated.start.y = origin_y + (static_cast<float>(y) - press_y);
     fillTextHitBounds(hwnd, updated);
-    if (data->m_session.engine().replaceAt(index, updated))
+    if (data->core().m_session.engine().replaceAt(index, updated))
     {
       selectTextAnnotation(data, hwnd, index, x, y);
     }
