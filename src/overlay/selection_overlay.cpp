@@ -77,6 +77,19 @@ void destroyToolbar(OverlayWindowData* data) {
   data->toolbar.hide();
 }
 
+// The window data is deliberately kept by SelectionOverlay until the owner
+// can safely start the next window.  Release image payloads at WM_NCDESTROY so
+// that keeping the small lifecycle record alive does not keep a full desktop
+// screenshot (or a long-shot result) alive while the application is idle.
+void releaseImagePayload(OverlayWindowData* data) noexcept {
+  if (data == nullptr) {
+    return;
+  }
+  data->background = Image{};
+  data->longshot_preview = Image{};
+  data->annotated_image = Image{};
+}
+
 void refreshToolbar(OverlayWindowData* data) {
   if (data != nullptr) {
     data->toolbar.update(data->phase);
@@ -648,6 +661,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         if (data->message_channel != nullptr) {
           data->message_channel->drain();
         }
+        releaseImagePayload(data);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       }
       return DefWindowProcW(hwnd, msg, wparam, lparam);
