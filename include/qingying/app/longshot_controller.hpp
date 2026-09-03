@@ -2,10 +2,10 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/app/app_messages.hpp"
 #include "qingying/longshot/longshot_engine.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
 
-#include <cstdint>
 #include <memory>
 
 namespace qingying {
@@ -21,9 +21,9 @@ class LongShotController {
   LongShotController(const LongShotController&) = delete;
   LongShotController& operator=(const LongShotController&) = delete;
 
-  // The tray window receives the completion payload. This handle is borrowed
+  // The tray window receives the completion token. This handle is borrowed
   // from Application and is never destroyed by the controller.
-  void setOwnerWindow(std::uintptr_t owner_window) noexcept;
+  void setOwnerWindow(HWND owner_window) noexcept;
 
   // Starts one interactive capture. A second start first requests and joins
   // any previous worker, so at most one session can be active.
@@ -33,10 +33,11 @@ class LongShotController {
   // never joins the worker from inside the overlay event.
   void handleControl(LongShotControl control) noexcept;
 
-  // Takes ownership of the WM_QINGYING_LONGSHOT_COMPLETE payload, joins the
-  // worker, and moves its result into the supplied outputs. A false return
-  // means the payload was null or the controller is shutting down.
-  bool handleCompletion(std::intptr_t payload, ActionResult& result,
+  // Takes the WM_QINGYING_LONGSHOT_COMPLETE token, joins the worker, and moves
+  // its result into the supplied outputs. A false return means the token was
+  // invalid, the payload was already drained, or the controller is shutting
+  // down.
+  bool handleCompletion(UiMessageToken token, ActionResult& result,
                         Image& image);
 
   // Requests cancellation without blocking the overlay callback. Call join()
@@ -46,6 +47,10 @@ class LongShotController {
 
   // Rejects new work, requests cancellation and joins the worker. Idempotent.
   void shutdown() noexcept;
+
+  // Releases completion events that no longer have a consumer. Call this
+  // after the worker has joined and before destroying the controller's UI.
+  void drainMessages() noexcept;
 
   bool active() const noexcept;
 

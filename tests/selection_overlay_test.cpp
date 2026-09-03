@@ -1,5 +1,7 @@
 ﻿#include "qingying/overlay/selection_overlay.hpp"
 
+#include <Windows.h>
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -51,6 +53,20 @@ TEST(SelectionOverlayTest, QueuedLongShotMessagesCanBeAbortedSafely) {
   overlay.hide();
   overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
+}
+
+TEST(SelectionOverlayTest, WindowDestroyedBeforeOwnerIsSafe) {
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  ASSERT_TRUE(DestroyWindow(hwnd));
+  EXPECT_FALSE(overlay.isVisible());
+
+  overlay.hide();
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+  overlay.hide();
 }
 
 }  // namespace

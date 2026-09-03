@@ -1,14 +1,47 @@
 ﻿#pragma once
 
+#include "qingying/action/image.hpp"
+#include "qingying/action/types.hpp"
+
 #include <Windows.h>
+
+#include <cstdint>
 
 namespace qingying {
 
+// LPARAM/WPARAM carry only this numeric token. The corresponding payload is
+// owned by UiMessageChannel until the UI thread takes or drains it.
+using UiMessageToken = std::uintptr_t;
+
+constexpr UiMessageToken kInvalidUiMessageToken = 0;
+static_assert(sizeof(UiMessageToken) <= sizeof(LPARAM),
+              "UI message tokens must fit in LPARAM");
+
+// All application and overlay messages use one process-wide WM_APP range.
+constexpr UINT WM_QINGYING_TRAY = WM_APP + 1;
 // Posted from WM_HOTKEY handler to run capture on the UI thread.
 constexpr UINT WM_QINGYING_BEGIN_CAPTURE = WM_APP + 2;
 constexpr UINT WM_QINGYING_LONGSHOT_COMPLETE = WM_APP + 3;
 // Posted by non-modal overlays after their window has delivered a result.
 constexpr UINT WM_QINGYING_WORKFLOW_CONTINUE = WM_APP + 4;
+constexpr UINT WM_QINGYING_SELECTION_OVERLAY_READY = WM_APP + 5;
+constexpr UINT WM_QINGYING_SELECTION_LONGSHOT_PREVIEW = WM_APP + 6;
+constexpr UINT WM_QINGYING_SELECTION_LONGSHOT_FINISHED = WM_APP + 7;
+constexpr UINT WM_QINGYING_SELECTION_OVERLAY_ABORT = WM_APP + 8;
+constexpr UINT WM_QINGYING_ANNOTATION_CANCEL = WM_APP + 9;
+
+struct LongShotCompletionMessage {
+  ActionResult result;
+  Image image;
+};
+
+struct SelectionOverlayLongShotPreviewMessage {
+  Image image;
+};
+
+struct SelectionOverlayLongShotFinishedMessage {
+  bool success{false};
+};
 
 namespace HotkeyIds {
 constexpr int kCapture = 1;

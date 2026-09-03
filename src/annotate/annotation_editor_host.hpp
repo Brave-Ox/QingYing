@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #include <Windows.h>
 
 #include <cstddef>
 
 #include "annotate/gdi_raii.hpp"
+#include "qingying/app/app_messages.hpp"
 #include "qingying/annotate/annotation_editor_layout.hpp"
 #include "qingying/annotate/annotation_editor_session.hpp"
 #include "qingying/annotate/annotation_interaction_controller.hpp"
@@ -101,8 +102,6 @@ inline constexpr int kSizeLabelPadX = 6;
 inline constexpr int kSizeLabelPadY = 2;
 inline constexpr int kChromeInvalidateExtraPadPx = 2;
 inline constexpr int kInlineCaretWidthPx = 1;
-inline constexpr UINT kMsgCancelFromBackdrop = WM_APP + 2;
-
 struct EditorToolbarItem
 {
   UINT id{0};
@@ -200,7 +199,7 @@ class AnnotationEditorHost
   HWND* m_owner_hwnd{nullptr};
   bool* m_owner_visible{nullptr};
   bool* m_owner_suppress_callback{nullptr};
-  bool* m_destroyed_during_create{nullptr};
+  bool m_window_destroyed{false};
   int m_image_origin_x{AnnotationEditorFrameInsetPx};
   int m_image_origin_y{0};
   int m_image_screen_x{0};

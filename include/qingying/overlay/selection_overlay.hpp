@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace qingying {
 
@@ -39,7 +40,7 @@ using SelectionClosedCallback = std::function<void()>;
 
 class SelectionOverlay {
  public:
-  SelectionOverlay() = default;
+  SelectionOverlay();
   ~SelectionOverlay();
 
   SelectionOverlay(const SelectionOverlay&) = delete;
@@ -73,7 +74,13 @@ class SelectionOverlay {
   // suppressed, which is used by workflow cancellation and application exit.
   void hide();
 
+  // Drops queued worker events after the producer has stopped. The window
+  // procedure also drains during destruction as a final safety net.
+  void drainMessages() noexcept;
+
  private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
   std::atomic<std::uintptr_t> overlay_hwnd_{0};
 };
 

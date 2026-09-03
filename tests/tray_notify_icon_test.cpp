@@ -1,5 +1,7 @@
 ﻿#include "qingying/app/tray_notify_icon.hpp"
 
+#include "qingying/app/app_messages.hpp"
+
 #include <gtest/gtest.h>
 
 namespace qingying {
@@ -8,7 +10,8 @@ namespace {
 NOTIFYICONDATAW makeFilledNotifyIcon()
 {
   NOTIFYICONDATAW nid = {};
-  fillTrayNotifyIconData(nid, reinterpret_cast<HWND>(1), WM_APP + 1, nullptr);
+  fillTrayNotifyIconData(nid, reinterpret_cast<HWND>(1), WM_QINGYING_TRAY,
+                         nullptr);
   return nid;
 }
 

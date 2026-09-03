@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
+
+#include <Windows.h>
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -65,7 +66,7 @@ class SelectionToolbar {
   SelectionToolbar(const SelectionToolbar&) = delete;
   SelectionToolbar& operator=(const SelectionToolbar&) = delete;
 
-  bool show(std::uintptr_t owner_window,
+  bool show(HWND owner_window,
             const SelectionToolbarPlacement& placement, OverlayPhase phase,
             CommandCallback callback);
   void update(OverlayPhase phase);

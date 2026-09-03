@@ -2,6 +2,8 @@
 
 #include "qingying/capture/capture_engine.hpp"
 
+#include <Windows.h>
+
 #include <gtest/gtest.h>
 
 namespace qingying {
@@ -40,7 +42,7 @@ TEST(LongShotControllerTest, CancelAndJoinAreSafeWhenIdle) {
 
 TEST(LongShotControllerTest, CancelAndJoinStopAStartedWorker) {
   ControllerFixture fixture;
-  fixture.controller.setOwnerWindow(1);
+  fixture.controller.setOwnerWindow(reinterpret_cast<HWND>(1));
 
   const LongShotRequest request{1, 0, 0, 1, 1};
   ASSERT_TRUE(fixture.controller.start(request));
@@ -60,6 +62,17 @@ TEST(LongShotControllerTest, ShutdownIsIdempotentAndRejectsFutureStarts) {
   const LongShotRequest request{1, 0, 0, 100, 100};
   EXPECT_FALSE(fixture.controller.start(request));
   EXPECT_FALSE(fixture.controller.active());
+}
+
+TEST(LongShotControllerTest, InvalidCompletionTokenIsSafe) {
+  ControllerFixture fixture;
+  ActionResult result;
+  Image image;
+
+  EXPECT_FALSE(fixture.controller.handleCompletion(
+      kInvalidUiMessageToken, result, image));
+  fixture.controller.shutdown();
+  fixture.controller.shutdown();
 }
 
 }  // namespace qingying

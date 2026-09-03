@@ -2,9 +2,9 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/app/app_messages.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
 
-#include <cstdint>
 #include <memory>
 
 namespace qingying {
@@ -48,7 +48,7 @@ class CaptureWorkflow {
 
   // The tray window remains owned by Application. CaptureWorkflow only uses
   // this non-owning handle for message delivery and dialog ownership.
-  void setOwnerWindow(std::uintptr_t owner_window) noexcept;
+  void setOwnerWindow(HWND owner_window) noexcept;
 
   // Starts the selection workflow. Returns false only when it cannot start or
   // the SelectionOverlay cannot be shown; completion is asynchronous.
@@ -58,9 +58,9 @@ class CaptureWorkflow {
   // callbacks. Application forwards WM_QINGYING_WORKFLOW_CONTINUE here.
   void continueWorkflow();
 
-  // Consumes the private completion payload posted by the long-shot worker.
+  // Consumes the private completion token posted by the long-shot worker.
   // Application forwards WM_QINGYING_LONGSHOT_COMPLETE here unchanged.
-  void handleLongShotCompletion(std::intptr_t payload);
+  void handleLongShotCompletion(UiMessageToken token);
 
   // cancel() requests the current interaction to close. shutdown() additionally
   // joins the worker and permanently rejects new workflows.

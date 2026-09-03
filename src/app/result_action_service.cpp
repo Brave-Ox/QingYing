@@ -18,7 +18,7 @@ ResultActionService::ResultActionService(ResultStore& results,
       export_service_(export_service),
       pin_manager_(pin_manager) {}
 
-void ResultActionService::setOwnerWindow(std::uintptr_t owner_window) noexcept {
+void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
 }
 
@@ -87,7 +87,7 @@ ActionResult ResultActionService::saveImageWithDialog(
   wchar_t path[MAX_PATH] = L"qingying.png";
   OPENFILENAMEW dialog = {};
   dialog.lStructSize = sizeof(dialog);
-  dialog.hwndOwner = reinterpret_cast<HWND>(owner_window_);
+  dialog.hwndOwner = owner_window_;
   dialog.lpstrFilter =
       L"PNG image (*.png)\0*.png\0All files (*.*)\0*.*\0\0";
   dialog.lpstrFile = path;
@@ -136,13 +136,13 @@ ActionResult ResultActionService::noResult(const char* action) const {
 }
 
 void ResultActionService::showSaveUnavailableMessage() const {
-  MessageBoxW(reinterpret_cast<HWND>(owner_window_),
+  MessageBoxW(owner_window_,
               L"There is no capture to save yet.", L"QingYing",
               MB_OK | MB_ICONINFORMATION);
 }
 
 void ResultActionService::showSaveErrorMessage() const {
-  MessageBoxW(reinterpret_cast<HWND>(owner_window_),
+  MessageBoxW(owner_window_,
               L"Failed to save the latest capture.", L"QingYing",
               MB_OK | MB_ICONERROR);
 }

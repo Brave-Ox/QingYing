@@ -3,7 +3,8 @@
 #include "qingying/action/types.hpp"
 #include "qingying/app/result_store.h"
 
-#include <cstdint>
+#include <Windows.h>
+
 #include <string>
 
 namespace qingying {
@@ -19,7 +20,7 @@ class ResultActionService final {
   ResultActionService(ResultStore& results, ExportService& export_service,
                       PinManager& pin_manager);
 
-  void setOwnerWindow(std::uintptr_t owner_window) noexcept;
+  void setOwnerWindow(HWND owner_window) noexcept;
   void bindPinWindowActions();
 
   ActionResult copy(ResultId result_id);
@@ -40,7 +41,7 @@ class ResultActionService final {
   ResultStore& results_;
   ExportService& export_service_;
   PinManager& pin_manager_;
-  std::uintptr_t owner_window_{0};
+  HWND owner_window_{nullptr};
 };
 
 }  // namespace qingying

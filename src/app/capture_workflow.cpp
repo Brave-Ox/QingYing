@@ -75,8 +75,8 @@ struct CaptureWorkflow::Impl {
         pin_manager(pin_manager_in),
         selection_overlay(selection_overlay_in) {}
 
-  void setOwnerWindow(std::uintptr_t window) noexcept {
-    owner_window = reinterpret_cast<HWND>(window);
+  void setOwnerWindow(HWND window) noexcept {
+    owner_window = window;
     longshot_controller.setOwnerWindow(window);
   }
 
@@ -92,7 +92,7 @@ struct CaptureWorkflow::Impl {
     const bool shown = selection_overlay.show(
         selection_background,
         [this](const SelectionResult& region) {
-          const std::uintptr_t target_window =
+          const HWND target_window =
               region.action == SelectionAction::LongShot
                   ? ownerWindowAtSelection(region)
                   : recorded_owner_window;
@@ -117,8 +117,7 @@ struct CaptureWorkflow::Impl {
     }
   }
 
-  std::uintptr_t ownerWindowAtSelection(
-      const SelectionResult& region) const noexcept {
+  HWND ownerWindowAtSelection(const SelectionResult& region) const noexcept {
     if (region.width <= 0 || region.height <= 0) {
       return recorded_owner_window;
     }
@@ -130,7 +129,7 @@ struct CaptureWorkflow::Impl {
     if (window_detector.detectAt(center_x, center_y, detected_window,
                                  detected_rect) &&
         detected_window != nullptr) {
-      return reinterpret_cast<std::uintptr_t>(detected_window);
+      return detected_window;
     }
     return recorded_owner_window;
   }
@@ -277,13 +276,14 @@ struct CaptureWorkflow::Impl {
   void stopLongShotWorker() {
     longshot_controller.cancel();
     longshot_controller.join();
+    longshot_controller.drainMessages();
   }
 
-  void handleLongShotCompletion(std::intptr_t payload) {
+  void handleLongShotCompletion(UiMessageToken token) {
     ActionResult completion_result;
     Image completion_image;
     const bool completion_received = longshot_controller.handleCompletion(
-        payload, completion_result, completion_image);
+        token, completion_result, completion_image);
     if (shutting_down.load() || !active || stage != WorkflowStage::Selecting) {
       return;
     }
@@ -350,7 +350,7 @@ struct CaptureWorkflow::Impl {
         target = root;
       }
     }
-    recorded_owner_window = reinterpret_cast<std::uintptr_t>(target);
+    recorded_owner_window = target;
     pending_longshot_request = LongShotRequest{};
     // 截屏失败时 background 为空，遮罩仍会退回纯半透明模式。
     selection_background = captureDesktopBackground();
@@ -486,8 +486,11 @@ struct CaptureWorkflow::Impl {
     if (shutting_down.exchange(true)) {
       return;
     }
-    cancel();
+    // Stop and join the worker before draining events or destroying windows.
     longshot_controller.shutdown();
+    selection_overlay.drainMessages();
+    annotation_overlay.closeSilently();
+    selection_overlay.hide();
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;
@@ -516,7 +519,7 @@ struct CaptureWorkflow::Impl {
   WindowDetector window_detector;
   HWND owner_window{nullptr};
   WorkflowStage stage{WorkflowStage::Idle};
-  std::uintptr_t recorded_owner_window{0};
+  HWND recorded_owner_window{nullptr};
   LongShotRequest pending_longshot_request{};
   Image selection_background;
   SelectionResult initial_selection;
@@ -545,7 +548,7 @@ CaptureWorkflow::~CaptureWorkflow() {
   impl_->shutdown();
 }
 
-void CaptureWorkflow::setOwnerWindow(std::uintptr_t owner_window) noexcept {
+void CaptureWorkflow::setOwnerWindow(HWND owner_window) noexcept {
   impl_->setOwnerWindow(owner_window);
 }
 
@@ -557,8 +560,8 @@ void CaptureWorkflow::continueWorkflow() {
   impl_->continueWorkflow();
 }
 
-void CaptureWorkflow::handleLongShotCompletion(std::intptr_t payload) {
-  impl_->handleLongShotCompletion(payload);
+void CaptureWorkflow::handleLongShotCompletion(UiMessageToken token) {
+  impl_->handleLongShotCompletion(token);
 }
 
 void CaptureWorkflow::cancel() {

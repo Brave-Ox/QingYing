@@ -85,7 +85,7 @@ void Application::installMessageRouter() {
     }
     if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {
       capture_workflow_.handleLongShotCompletion(
-          static_cast<std::intptr_t>(lparam));
+          static_cast<UiMessageToken>(lparam));
       *result = 0;
       return true;
     }
@@ -118,10 +118,8 @@ int Application::run() {
                 MB_OK | MB_ICONERROR);
     return 2;
   }
-  capture_workflow_.setOwnerWindow(
-      reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
-  result_actions_.setOwnerWindow(
-      reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
+  capture_workflow_.setOwnerWindow(tray_.hwnd());
+  result_actions_.setOwnerWindow(tray_.hwnd());
 
   installMessageRouter();
 

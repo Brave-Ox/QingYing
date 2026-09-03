@@ -1,4 +1,4 @@
-#include "qingying/overlay/selection_toolbar.hpp"
+﻿#include "qingying/overlay/selection_toolbar.hpp"
 
 #include <Windows.h>
 
@@ -287,7 +287,7 @@ SelectionToolbar::SelectionToolbar() : impl_(std::make_unique<Impl>()) {}
 
 SelectionToolbar::~SelectionToolbar() { hide(); }
 
-bool SelectionToolbar::show(std::uintptr_t owner_window,
+bool SelectionToolbar::show(HWND owner_window,
                             const SelectionToolbarPlacement& placement,
                             OverlayPhase phase, CommandCallback callback) {
   hide();
@@ -314,10 +314,10 @@ bool SelectionToolbar::show(std::uintptr_t owner_window,
   y = (std::max)(placement.screen_top,
                  (std::min)(y, placement.screen_bottom - toolbar_height));
 
-  const HWND owner = reinterpret_cast<HWND>(owner_window);
   const HWND window = CreateWindowExW(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kToolbarClassName,
-      L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height, owner,
+      L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height,
+      owner_window,
       nullptr, GetModuleHandleW(nullptr), impl_.get());
   if (window == nullptr) {
     impl_->callback = {};

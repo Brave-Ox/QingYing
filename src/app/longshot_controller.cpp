@@ -1,38 +1,29 @@
 ﻿#include "qingying/app/longshot_controller.hpp"
 
 #include "qingying/app/app_messages.hpp"
+#include "qingying/app/ui_message_channel.h"
 
 #include <Windows.h>
 
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <new>
+#include <optional>
 #include <thread>
 #include <utility>
 
 namespace qingying {
 
-namespace {
-
-struct LongShotCompletion {
-  ActionResult result;
-  Image image;
-};
-
-}  // namespace
-
 struct LongShotController::Impl {
   Impl(LongShotEngine& engine_in, SelectionOverlay& overlay_in)
       : engine(engine_in), overlay(overlay_in) {}
 
-  void setOwnerWindow(std::uintptr_t window) noexcept {
-    owner_window = reinterpret_cast<HWND>(window);
-  }
+  void setOwnerWindow(HWND window) noexcept { owner_window = window; }
 
   bool start(const LongShotRequest& request) {
     cancel();
     join();
+    messages.drain();
     if (shutting_down.load() || !request.valid() || owner_window == nullptr) {
       return false;
     }
@@ -61,20 +52,21 @@ struct LongShotController::Impl {
           return;
         }
 
-        std::unique_ptr<LongShotCompletion> completion(
-            new (std::nothrow) LongShotCompletion);
-        if (completion == nullptr) {
+        LongShotCompletionMessage completion;
+        completion.result = result;
+        completion.image = std::move(image);
+        const std::optional<UiMessageToken> token =
+            messages.push(std::move(completion));
+        if (!token.has_value()) {
           postCompletionFailure(completion_window);
           return;
         }
-        completion->result = result;
-        completion->image = std::move(image);
         if (!PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0,
-                          reinterpret_cast<LPARAM>(completion.get()))) {
+                          static_cast<LPARAM>(*token))) {
+          messages.discard(*token);
           (void)overlay.postLongShotFinished(false);
           return;
         }
-        (void)completion.release();
       });
     } catch (...) {
       active.store(false);
@@ -94,12 +86,12 @@ struct LongShotController::Impl {
     }
   }
 
-  bool handleCompletion(std::intptr_t payload, ActionResult& result,
+  bool handleCompletion(UiMessageToken token, ActionResult& result,
                         Image& image) {
-    std::unique_ptr<LongShotCompletion> completion(
-        reinterpret_cast<LongShotCompletion*>(payload));
+    auto completion =
+        messages.take<LongShotCompletionMessage>(token);
     join();
-    if (shutting_down.load() || completion == nullptr) {
+    if (shutting_down.load() || !completion.has_value()) {
       return false;
     }
     result = std::move(completion->result);
@@ -125,10 +117,13 @@ struct LongShotController::Impl {
     }
     cancel();
     join();
+    messages.drain();
     owner_window = nullptr;
   }
 
   bool activeState() const noexcept { return active.load(); }
+
+  void drainMessages() noexcept { messages.drain(); }
 
  private:
   void postCompletionFailure(HWND completion_window) {
@@ -143,6 +138,7 @@ struct LongShotController::Impl {
   SelectionOverlay& overlay;
   HWND owner_window{nullptr};
   std::thread worker;
+  UiMessageChannel messages;
   std::atomic<bool> stop_requested{false};
   std::atomic<bool> paused{false};
   std::atomic<bool> shutting_down{false};
@@ -155,8 +151,7 @@ LongShotController::LongShotController(LongShotEngine& engine,
 
 LongShotController::~LongShotController() { impl_->shutdown(); }
 
-void LongShotController::setOwnerWindow(
-    std::uintptr_t owner_window) noexcept {
+void LongShotController::setOwnerWindow(HWND owner_window) noexcept {
   impl_->setOwnerWindow(owner_window);
 }
 
@@ -168,10 +163,10 @@ void LongShotController::handleControl(LongShotControl control) noexcept {
   impl_->handleControl(control);
 }
 
-bool LongShotController::handleCompletion(std::intptr_t payload,
+bool LongShotController::handleCompletion(UiMessageToken token,
                                           ActionResult& result,
                                           Image& image) {
-  return impl_->handleCompletion(payload, result, image);
+  return impl_->handleCompletion(token, result, image);
 }
 
 void LongShotController::cancel() noexcept { impl_->cancel(); }
@@ -179,6 +174,8 @@ void LongShotController::cancel() noexcept { impl_->cancel(); }
 void LongShotController::join() noexcept { impl_->join(); }
 
 void LongShotController::shutdown() noexcept { impl_->shutdown(); }
+
+void LongShotController::drainMessages() noexcept { impl_->drainMessages(); }
 
 bool LongShotController::active() const noexcept {
   return impl_->activeState();

@@ -5,7 +5,11 @@
 #include "qingying/action/image.hpp"
 #include "qingying/annotate/annotation_result.hpp"
 
+#include <memory>
+
 namespace qingying {
+
+class AnnotationEditorHost;
 
 // 标注编辑器窗口。窗口采用非模态语义：show 创建窗口后立即返回，
 // 用户确认或取消时再通过回调交付结果，由应用自己的消息循环持续驱动。
@@ -16,7 +20,7 @@ namespace qingying {
 class AnnotationOverlay
 {
  public:
-  AnnotationOverlay() = default;
+  AnnotationOverlay();
   ~AnnotationOverlay();
 
   AnnotationOverlay(const AnnotationOverlay&) = delete;
@@ -43,6 +47,7 @@ class AnnotationOverlay
   bool isVisible() const;
 
  private:
+  std::unique_ptr<AnnotationEditorHost> data_;
   HWND m_hwnd{nullptr};
   bool m_visible{false};
   bool m_suppress_callback{false};

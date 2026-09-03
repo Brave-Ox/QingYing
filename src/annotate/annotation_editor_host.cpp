@@ -1,10 +1,9 @@
-#include "annotate/annotation_editor_host.hpp"
+﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -530,7 +529,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
-    case kMsgCancelFromBackdrop:
+    case WM_QINGYING_ANNOTATION_CANCEL:
       if (data != nullptr)
       {
         cancelInlineText(data);
@@ -582,15 +581,11 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
   if (msg == WM_NCDESTROY)
   {
-    if (data != nullptr && data->m_destroyed_during_create != nullptr)
+    if (data != nullptr)
     {
-      *data->m_destroyed_during_create = true;
+      data->m_window_destroyed = true;
     }
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-    if (data != nullptr && data->m_destroyed_during_create == nullptr)
-    {
-      std::unique_ptr<AnnotationEditorHost> owned(data);
-    }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
   }
 

@@ -4,9 +4,11 @@
 
 #include <cstdint>
 #include <memory>
-#include <new>
+#include <optional>
 #include <utility>
 
+#include "qingying/app/app_messages.hpp"
+#include "qingying/app/ui_message_channel.h"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/overlay/overlay_phase.hpp"
 #include "qingying/overlay/overlay_renderer.hpp"
@@ -19,11 +21,6 @@ namespace qingying {
 
 namespace {
 
-// 遮罩窗口的自定义消息：通知窗口属性已就绪，可开始渲染首帧。
-constexpr UINT kMsgOverlayReady = WM_APP + 1;
-constexpr UINT kMsgLongShotPreview = WM_APP + 3;
-constexpr UINT kMsgLongShotFinished = WM_APP + 4;
-constexpr UINT kMsgOverlayAbort = WM_APP + 5;
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
@@ -38,7 +35,9 @@ struct OverlayWindowData {
   SelectionCallback callback;
   SelectionClosedCallback closed_callback;
   std::atomic<std::uintptr_t>* owner_hwnd{nullptr};
-  bool* destroyed_during_create{nullptr};
+  std::atomic<bool>* accepting_messages{nullptr};
+  UiMessageChannel* message_channel{nullptr};
+  bool window_destroyed{false};
   HWND overlay{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
@@ -58,14 +57,6 @@ struct OverlayWindowData {
   bool capture_passthrough{false};
   Image longshot_preview;
   Image annotated_image;
-};
-
-struct LongShotPreviewMessage {
-  Image image;
-};
-
-struct LongShotFinishedMessage {
-  bool success{false};
 };
 
 SelectionResult toScreenSelection(const SelectionResult& client,
@@ -296,7 +287,7 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
   placement.screen_right = screen.right();
   placement.screen_bottom = screen.bottom();
   return data->toolbar.show(
-      reinterpret_cast<std::uintptr_t>(overlay), placement, data->phase,
+      overlay, placement, data->phase,
       [data](SelectionToolbarCommand command) {
         handleToolbarCommand(data, command);
       });
@@ -335,7 +326,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return TRUE;
     }
-    case kMsgOverlayReady: {
+    case WM_QINGYING_SELECTION_OVERLAY_READY: {
       if (data == nullptr) {
         return 0;
       }
@@ -353,20 +344,27 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
-    case kMsgLongShotPreview: {
-      std::unique_ptr<LongShotPreviewMessage> message(
-          reinterpret_cast<LongShotPreviewMessage*>(wparam));
-      if (data != nullptr && message != nullptr) {
-        data->longshot_preview = std::move(message->image);
-        updateOverlay(hwnd, data);
+    case WM_QINGYING_SELECTION_LONGSHOT_PREVIEW: {
+      if (data != nullptr && data->message_channel != nullptr) {
+        const auto message =
+            data->message_channel->take<SelectionOverlayLongShotPreviewMessage>(
+                static_cast<UiMessageToken>(lparam));
+        if (message.has_value()) {
+          data->longshot_preview = std::move(message->image);
+          updateOverlay(hwnd, data);
+        }
       }
       return 0;
     }
-    case kMsgLongShotFinished: {
-      std::unique_ptr<LongShotFinishedMessage> message(
-          reinterpret_cast<LongShotFinishedMessage*>(wparam));
+    case WM_QINGYING_SELECTION_LONGSHOT_FINISHED: {
+      std::optional<SelectionOverlayLongShotFinishedMessage> message;
+      if (data != nullptr && data->message_channel != nullptr) {
+        message = data->message_channel->take<
+            SelectionOverlayLongShotFinishedMessage>(
+            static_cast<UiMessageToken>(lparam));
+      }
       if (data != nullptr) {
-        const bool success = message != nullptr && message->success;
+        const bool success = message.has_value() && message->success;
         const SelectionAction pending_action = data->longshot_pending_action;
         const bool run_pending_action =
             success && pending_action != SelectionAction::None;
@@ -392,7 +390,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
-    case kMsgOverlayAbort: {
+    case WM_QINGYING_SELECTION_OVERLAY_ABORT: {
       if (data != nullptr) {
         data->callback = {};
         data->closed_callback = {};
@@ -619,29 +617,38 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                                    data->screen);
         result.action = data->action;
         result.annotated_image = std::move(data->annotated_image);
-        SelectionCallback callback = data->callback;
-        if (callback && result.action != SelectionAction::LongShot) {
-          callback(result);
-        }
+        SelectionCallback callback = std::move(data->callback);
         SelectionClosedCallback closed_callback =
             std::move(data->closed_callback);
-        if (closed_callback) {
-          closed_callback();
-        }
         if (data->owner_hwnd != nullptr) {
           data->owner_hwnd->store(0);
         }
+        if (data->accepting_messages != nullptr) {
+          data->accepting_messages->store(false);
+        }
+        if (data->message_channel != nullptr) {
+          data->message_channel->drain();
+        }
         UnregisterHotKey(hwnd, kEscapeHotkeyId);
+        if (callback && result.action != SelectionAction::LongShot) {
+          callback(result);
+        }
+        if (closed_callback) {
+          closed_callback();
+        }
       }
       return 0;
     }
     case WM_NCDESTROY: {
       if (data != nullptr) {
-        if (data->destroyed_during_create != nullptr) {
-          *data->destroyed_during_create = true;
+        data->window_destroyed = true;
+        if (data->accepting_messages != nullptr) {
+          data->accepting_messages->store(false);
+        }
+        if (data->message_channel != nullptr) {
+          data->message_channel->drain();
         }
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-        delete data;
       }
       return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
@@ -653,8 +660,17 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 }  // namespace
 
+struct SelectionOverlay::Impl {
+  std::unique_ptr<OverlayWindowData> window_data;
+  UiMessageChannel messages;
+  std::atomic<bool> accepting_messages{false};
+};
+
+SelectionOverlay::SelectionOverlay() : impl_(std::make_unique<Impl>()) {}
+
 SelectionOverlay::~SelectionOverlay() {
   hide();
+  drainMessages();
 }
 
 bool SelectionOverlay::show(const Image& background,
@@ -666,6 +682,14 @@ bool SelectionOverlay::show(const Image& background,
   if (isVisible()) {
     return false;
   }
+
+  if (impl_->window_data != nullptr) {
+    if (!impl_->window_data->window_destroyed) {
+      return false;
+    }
+    impl_->window_data.reset();
+  }
+  impl_->messages.drain();
 
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -681,8 +705,8 @@ bool SelectionOverlay::show(const Image& background,
   }
 
   auto data = std::make_unique<OverlayWindowData>();
-  bool destroyed_during_create = false;
-  data->destroyed_during_create = &destroyed_during_create;
+  data->message_channel = &impl_->messages;
+  data->accepting_messages = &impl_->accepting_messages;
   data->background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
@@ -715,14 +739,12 @@ bool SelectionOverlay::show(const Image& background,
       data->screen.top, data->screen.width, data->screen.height, nullptr,
       nullptr, instance, data.get());
   if (hwnd == nullptr) {
-    if (destroyed_during_create) {
-      data.release();
-    }
+    impl_->messages.drain();
     return false;
   }
-  data->destroyed_during_create = nullptr;
-  data.release();
+  impl_->window_data = std::move(data);
   overlay_hwnd_.store(reinterpret_cast<std::uintptr_t>(hwnd));
+  impl_->accepting_messages.store(true);
 
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
@@ -730,23 +752,28 @@ bool SelectionOverlay::show(const Image& background,
   (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
 
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
-  PostMessageW(hwnd, kMsgOverlayReady, 0, 0);
+  PostMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_READY, 0, 0);
   return true;
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
-  if (hwnd == nullptr) {
+  if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
-  auto* message = new (std::nothrow) LongShotPreviewMessage;
-  if (message == nullptr) {
-    return false;
-  }
-  message->image = OverlayRenderer::makeLongShotPreviewImage(image);
-  if (!PostMessageW(hwnd, kMsgLongShotPreview, reinterpret_cast<WPARAM>(message),
-                    0)) {
-    delete message;
+  try {
+    SelectionOverlayLongShotPreviewMessage message;
+    message.image = OverlayRenderer::makeLongShotPreviewImage(image);
+    const auto token = impl_->messages.push(std::move(message));
+    if (!token.has_value()) {
+      return false;
+    }
+    if (!PostMessageW(hwnd, WM_QINGYING_SELECTION_LONGSHOT_PREVIEW, 0,
+                      static_cast<LPARAM>(*token))) {
+      impl_->messages.discard(*token);
+      return false;
+    }
+  } catch (...) {
     return false;
   }
   return true;
@@ -754,32 +781,39 @@ bool SelectionOverlay::postLongShotPreview(const Image& image) {
 
 bool SelectionOverlay::postLongShotFinished(bool success) {
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
-  if (hwnd == nullptr) {
+  if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
-  auto* message = new (std::nothrow) LongShotFinishedMessage;
-  if (message == nullptr) {
+  SelectionOverlayLongShotFinishedMessage message;
+  message.success = success;
+  const auto token = impl_->messages.push(std::move(message));
+  if (!token.has_value()) {
     return false;
   }
-  message->success = success;
-  if (!PostMessageW(hwnd, kMsgLongShotFinished,
-                    reinterpret_cast<WPARAM>(message), 0)) {
-    delete message;
+  if (!PostMessageW(hwnd, WM_QINGYING_SELECTION_LONGSHOT_FINISHED, 0,
+                    static_cast<LPARAM>(*token))) {
+    impl_->messages.discard(*token);
     return false;
   }
   return true;
 }
 
 void SelectionOverlay::hide() {
+  impl_->accepting_messages.store(false);
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd != nullptr && IsWindow(hwnd)) {
     const DWORD window_thread = GetWindowThreadProcessId(hwnd, nullptr);
     if (window_thread == GetCurrentThreadId()) {
-      SendMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+      SendMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_ABORT, 0, 0);
     } else {
-      PostMessageW(hwnd, kMsgOverlayAbort, 0, 0);
+      PostMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_ABORT, 0, 0);
     }
   }
+  impl_->messages.drain();
+}
+
+void SelectionOverlay::drainMessages() noexcept {
+  impl_->messages.drain();
 }
 
 bool SelectionOverlay::isVisible() const noexcept {

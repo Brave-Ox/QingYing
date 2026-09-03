@@ -1,5 +1,6 @@
 ﻿#include "qingying/app/tray_controller.hpp"
 
+#include "qingying/app/app_messages.hpp"
 #include "qingying/app/autostart_settings.hpp"
 #include "qingying/app/tray_context_menu.hpp"
 #include "qingying/app/tray_notify_icon.hpp"
@@ -15,7 +16,6 @@ namespace qingying {
 namespace {
 
 constexpr wchar_t kWndClass[] = L"QingYing.TrayHiddenWindow";
-constexpr UINT WM_QINGYING_TRAY = WM_APP + 1;
 constexpr int kCheckLeftOffsetPx = 6;
 constexpr int kCheckDownOffsetPx = 3;
 constexpr int kCheckRightOffsetPx = 7;

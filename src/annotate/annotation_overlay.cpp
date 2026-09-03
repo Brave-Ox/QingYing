@@ -10,6 +10,8 @@
 
 namespace qingying {
 
+AnnotationOverlay::AnnotationOverlay() = default;
+
 AnnotationOverlay::~AnnotationOverlay()
 {
   closeSilently();
@@ -30,9 +32,16 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
     return false;
   }
 
+  if (data_ != nullptr)
+  {
+    if (!data_->m_window_destroyed)
+    {
+      return false;
+    }
+    data_.reset();
+  }
+
   auto data = std::make_unique<AnnotationEditorHost>();
-  bool destroyed_during_create = false;
-  data->m_destroyed_during_create = &destroyed_during_create;
   if (!data->m_session.begin(source))
   {
     return false;
@@ -90,12 +99,9 @@ bool AnnotationOverlay::showInPlace(HWND owner, const Image& source,
       data.get());
   if (hwnd == nullptr)
   {
-    // 创建期若已走到 WM_NCDESTROY，Host 仍由本 unique_ptr 回收，禁止 release。
     return false;
   }
-  data->m_destroyed_during_create = nullptr;
-  // 窗口接管 Host；WM_NCDESTROY 用 unique_ptr 回收，公开头不暴露 Host。
-  data.release();
+  data_ = std::move(data);
   m_hwnd = hwnd;
   m_visible = true;
 
@@ -115,11 +121,11 @@ void AnnotationOverlay::hide()
     const DWORD window_thread = GetWindowThreadProcessId(m_hwnd, nullptr);
     if (window_thread == GetCurrentThreadId())
     {
-      SendMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+      SendMessageW(m_hwnd, WM_QINGYING_ANNOTATION_CANCEL, 0, 0);
     }
     else
     {
-      PostMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+      PostMessageW(m_hwnd, WM_QINGYING_ANNOTATION_CANCEL, 0, 0);
     }
   }
 }
@@ -132,11 +138,11 @@ void AnnotationOverlay::closeSilently()
     const DWORD window_thread = GetWindowThreadProcessId(m_hwnd, nullptr);
     if (window_thread == GetCurrentThreadId())
     {
-      SendMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+      SendMessageW(m_hwnd, WM_QINGYING_ANNOTATION_CANCEL, 0, 0);
     }
     else
     {
-      PostMessageW(m_hwnd, kMsgCancelFromBackdrop, 0, 0);
+      PostMessageW(m_hwnd, WM_QINGYING_ANNOTATION_CANCEL, 0, 0);
     }
   }
 }
