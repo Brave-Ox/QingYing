@@ -11,10 +11,10 @@ namespace qingying {
 
 class ActionDispatcher;
 class CaptureEngine;
-class CaptureSession;
-class ExportService;
 class LongShotController;
 class PinManager;
+class ResultActionService;
+class ResultStore;
 
 // Pure routing decision for one completed selection. Keeping this separate
 // from the Win32 views makes the workflow's branch priority testable.
@@ -38,8 +38,8 @@ class CaptureWorkflow {
  public:
   CaptureWorkflow(ActionDispatcher& dispatcher, CaptureEngine& capture,
                   LongShotController& longshot_controller,
-                  ExportService& export_service,
-                  CaptureSession& session, PinManager& pin_manager,
+                  ResultStore& results, ResultActionService& result_actions,
+                  PinManager& pin_manager,
                   SelectionOverlay& selection_overlay);
   ~CaptureWorkflow();
 
@@ -61,9 +61,6 @@ class CaptureWorkflow {
   // Consumes the private completion payload posted by the long-shot worker.
   // Application forwards WM_QINGYING_LONGSHOT_COMPLETE here unchanged.
   void handleLongShotCompletion(std::intptr_t payload);
-
-  // Used by PinManager's per-window save callback.
-  ActionResult saveImage(const Image& image);
 
   // cancel() requests the current interaction to close. shutdown() additionally
   // joins the worker and permanently rejects new workflows.

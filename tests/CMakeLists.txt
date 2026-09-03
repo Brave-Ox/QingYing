@@ -17,6 +17,7 @@ add_executable(qingying_tests
   capture_preview_test.cpp
   capture_workflow_test.cpp
   capture_session_test.cpp
+  result_store_test.cpp
   dib_encoder_test.cpp
   export_service_test.cpp
   mask_renderer_test.cpp

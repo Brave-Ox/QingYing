@@ -1,10 +1,11 @@
 ﻿#pragma once
 
 #include "qingying/action/action_dispatcher.hpp"
-#include "qingying/app/capture_session.hpp"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/hotkey_manager.hpp"
 #include "qingying/app/longshot_controller.hpp"
+#include "qingying/app/result_action_service.h"
+#include "qingying/app/result_store.h"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
 #include "qingying/capture/capture_engine.hpp"
@@ -42,8 +43,9 @@ class Application {
   LongShotPluginHost longshot_plugin_host_;
   LongShotEngine longshot_;
   ExportService export_service_;
-  CaptureSession session_;
+  ResultStore result_store_;
   PinManager pin_manager_;
+  ResultActionService result_actions_;
   SelectionOverlay overlay_;
   LongShotController longshot_controller_;
   CaptureWorkflow capture_workflow_;

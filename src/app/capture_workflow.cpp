@@ -4,20 +4,18 @@
 #include "qingying/annotate/annotation_overlay.hpp"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/capture_preview.hpp"
-#include "qingying/app/capture_session.hpp"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/longshot_request_adapter.hpp"
+#include "qingying/app/result_action_service.h"
+#include "qingying/app/result_store.h"
 #include "qingying/capture/capture_engine.hpp"
-#include "qingying/export/export_service.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/pin/pin_manager.hpp"
 #include "qingying/window/window_detector.hpp"
 
 #include <Windows.h>
-#include <commdlg.h>
 
 #include <atomic>
-#include <iterator>
 #include <string>
 #include <utility>
 
@@ -66,14 +64,14 @@ struct CaptureWorkflow::Impl {
 
   Impl(ActionDispatcher& dispatcher_in, CaptureEngine& capture_in,
        LongShotController& longshot_controller_in,
-       ExportService& export_service_in,
-       CaptureSession& session_in, PinManager& pin_manager_in,
+       ResultStore& results_in, ResultActionService& result_actions_in,
+       PinManager& pin_manager_in,
        SelectionOverlay& selection_overlay_in)
       : dispatcher(dispatcher_in),
         capture(capture_in),
         longshot_controller(longshot_controller_in),
-        export_service(export_service_in),
-        session(session_in),
+        results(results_in),
+        result_actions(result_actions_in),
         pin_manager(pin_manager_in),
         selection_overlay(selection_overlay_in) {}
 
@@ -200,59 +198,13 @@ struct CaptureWorkflow::Impl {
     return true;
   }
 
-  ActionResult saveImage(const Image& image) {
-    ActionResult result;
-    if (image.empty()) {
-      result.ok = false;
-      result.error_code = ErrorCode::kNotReady;
-      result.message = "no image to save";
-      return result;
-    }
-
-    wchar_t path[MAX_PATH] = L"qingying.png";
-    OPENFILENAMEW dialog = {};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = owner_window;
-    dialog.lpstrFilter =
-        L"PNG image (*.png)\0*.png\0All files (*.*)\0*.*\0\0";
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = static_cast<DWORD>(std::size(path));
-    dialog.lpstrDefExt = L"png";
-    dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
-
-    if (!GetSaveFileNameW(&dialog)) {
-      result.ok = true;
-      result.error_code = ErrorCode::kOk;
-      result.message = "save cancelled";
-      return result;
-    }
-
-    return export_service.savePng(image, path);
-  }
-
-  void saveLastCapture() {
-    if (!session.hasResult()) {
-      MessageBoxW(owner_window, L"There is no capture to save yet.",
-                  L"QingYing", MB_OK | MB_ICONINFORMATION);
-      return;
-    }
-
-    const ActionResult result = saveImage(session.result());
-    if (!result.ok) {
-      MessageBoxW(owner_window, L"Failed to save the latest capture.",
-                  L"QingYing", MB_OK | MB_ICONERROR);
-    }
-  }
-
-  void dispatchResultAction(SelectionAction action) {
+  void dispatchResultAction(SelectionAction action, ResultId result_id) {
     if (action == SelectionAction::Save) {
-      saveLastCapture();
+      (void)result_actions.save(result_id);
       return;
     }
     if (action == SelectionAction::Pin) {
-      ActionRequest pin_request;
-      pin_request.type = ActionType::Pin;
-      const ActionResult pin_result = dispatcher.dispatch(pin_request);
+      const ActionResult pin_result = result_actions.pin(result_id);
       if (!pin_result.ok) {
         MessageBoxW(owner_window, L"Failed to pin the latest capture.",
                     L"QingYing", MB_OK | MB_ICONERROR);
@@ -260,9 +212,7 @@ struct CaptureWorkflow::Impl {
       return;
     }
     if (action == SelectionAction::Copy) {
-      ActionRequest copy_request;
-      copy_request.type = ActionType::Copy;
-      (void)dispatcher.dispatch(copy_request);
+      (void)result_actions.copy(result_id);
     }
   }
 
@@ -271,8 +221,12 @@ struct CaptureWorkflow::Impl {
         decideCaptureWorkflowRoute(region, longshot_result_ready);
     switch (route) {
       case CaptureWorkflowRoute::AnnotatedResult:
-        session.setResult(region.annotated_image);
-        dispatchResultAction(region.action);
+        if (results.getImage(active_result_id) == nullptr) {
+          active_result_id = results.publish(region.annotated_image);
+        }
+        if (active_result_id != kInvalidResultId) {
+          dispatchResultAction(region.action, active_result_id);
+        }
         return;
       case CaptureWorkflowRoute::StartLongShot:
         longshot_result_ready = false;
@@ -284,7 +238,7 @@ struct CaptureWorkflow::Impl {
         }
         return;
       case CaptureWorkflowRoute::ExistingLongShotResult:
-        dispatchResultAction(region.action);
+        dispatchResultAction(region.action, active_result_id);
         longshot_result_ready = false;
         return;
       case CaptureWorkflowRoute::CaptureRegion:
@@ -309,7 +263,10 @@ struct CaptureWorkflow::Impl {
       capture_result = dispatcher.dispatch(capture_request);
     }
     if (capture_result.ok) {
-      dispatchResultAction(region.action);
+      active_result_id = results.currentId();
+      if (active_result_id != kInvalidResultId) {
+        dispatchResultAction(region.action, active_result_id);
+      }
     }
   }
 
@@ -343,17 +300,22 @@ struct CaptureWorkflow::Impl {
 
     bool overlay_success = completion_result.ok;
     if (completion_result.ok) {
-      session.setResult(std::move(completion_image));
-      longshot_result_ready = true;
-
-      // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
-      ActionRequest copy_request;
-      copy_request.type = ActionType::Copy;
-      const ActionResult copy_result = dispatcher.dispatch(copy_request);
-      if (!copy_result.ok) {
+      active_result_id = results.publish(std::move(completion_image));
+      longshot_result_ready = active_result_id != kInvalidResultId;
+      if (!longshot_result_ready) {
         overlay_success = false;
-        longshot_result_ready = false;
-        pending_overlay_error = L"长截图已生成，但复制到剪贴板失败。";
+        pending_overlay_error = L"长截图生成了无效结果，请重新框选后再试。";
+      } else {
+        // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
+        const ActionResult copy_result = result_actions.copy(active_result_id);
+        if (!copy_result.ok) {
+          overlay_success = false;
+          longshot_result_ready = false;
+          pending_overlay_error = L"长截图已生成，但复制到剪贴板失败。";
+        }
+      }
+      if (!overlay_success) {
+        active_result_id = kInvalidResultId;
       }
     } else {
       longshot_result_ready = false;
@@ -377,6 +339,7 @@ struct CaptureWorkflow::Impl {
       return false;
     }
     active = true;
+    active_result_id = kInvalidResultId;
 
     // 在捕获或遮罩操作可能改变前台窗口之前，先记录原始顶层目标。
     // LongShotEngine 后续使用这个句柄，不能再从前台窗口推断目标。
@@ -443,12 +406,14 @@ struct CaptureWorkflow::Impl {
 
     pending_selection.annotated_image =
         std::move(pending_annotation.rendered_image);
-    session.setResult(pending_selection.annotated_image);
+    active_result_id = results.publish(pending_selection.annotated_image);
+    if (active_result_id == kInvalidResultId) {
+      finishWorkflow();
+      return;
+    }
 
     // 保持原有体验：完成标注立即复制；结果工具栏随后仍可继续保存或钉图。
-    ActionRequest copy_request;
-    copy_request.type = ActionType::Copy;
-    (void)dispatcher.dispatch(copy_request);
+    (void)result_actions.copy(active_result_id);
 
     // 编辑器关闭后重新捕获桌面，并把合成图贴回原选区，恢复统一的
     // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
@@ -469,6 +434,7 @@ struct CaptureWorkflow::Impl {
   void finishWorkflow() {
     stopLongShotWorker();
     longshot_result_ready = false;
+    active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
@@ -503,6 +469,7 @@ struct CaptureWorkflow::Impl {
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;
+    active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
@@ -524,6 +491,7 @@ struct CaptureWorkflow::Impl {
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;
+    active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
@@ -540,8 +508,8 @@ struct CaptureWorkflow::Impl {
   ActionDispatcher& dispatcher;
   CaptureEngine& capture;
   LongShotController& longshot_controller;
-  ExportService& export_service;
-  CaptureSession& session;
+  ResultStore& results;
+  ResultActionService& result_actions;
   PinManager& pin_manager;
   SelectionOverlay& selection_overlay;
   AnnotationOverlay annotation_overlay;
@@ -557,6 +525,7 @@ struct CaptureWorkflow::Impl {
   std::atomic<bool> shutting_down{false};
   bool active{false};
   bool longshot_result_ready{false};
+  ResultId active_result_id{kInvalidResultId};
   bool selection_closed{false};
   bool selection_result_ready{false};
   bool annotation_result_ready{false};
@@ -565,11 +534,11 @@ struct CaptureWorkflow::Impl {
 
 CaptureWorkflow::CaptureWorkflow(
     ActionDispatcher& dispatcher, CaptureEngine& capture,
-    LongShotController& longshot_controller, ExportService& export_service,
-    CaptureSession& session, PinManager& pin_manager,
+    LongShotController& longshot_controller, ResultStore& results,
+    ResultActionService& result_actions, PinManager& pin_manager,
     SelectionOverlay& selection_overlay)
     : impl_(std::make_unique<Impl>(dispatcher, capture, longshot_controller,
-                                   export_service, session, pin_manager,
+                                   results, result_actions, pin_manager,
                                    selection_overlay)) {}
 
 CaptureWorkflow::~CaptureWorkflow() {
@@ -590,10 +559,6 @@ void CaptureWorkflow::continueWorkflow() {
 
 void CaptureWorkflow::handleLongShotCompletion(std::intptr_t payload) {
   impl_->handleLongShotCompletion(payload);
-}
-
-ActionResult CaptureWorkflow::saveImage(const Image& image) {
-  return impl_->saveImage(image);
 }
 
 void CaptureWorkflow::cancel() {

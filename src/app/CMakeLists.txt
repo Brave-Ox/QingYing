@@ -2,6 +2,8 @@ add_library(qingying_workflow STATIC
   capture_preview.cpp
   capture_workflow.cpp
   longshot_controller.cpp
+  result_action_service.cpp
+  result_store.cpp
 )
 
 target_include_directories(qingying_workflow

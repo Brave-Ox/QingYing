@@ -48,9 +48,10 @@ Application::Application(HINSTANCE instance)
       longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
       longshot_(capture_, makeApplicationLongShotProfiles(
                              longshot_plugin_host_)),
+      result_actions_(result_store_, export_service_, pin_manager_),
       longshot_controller_(longshot_, overlay_),
       capture_workflow_(dispatcher_, capture_, longshot_controller_,
-                        export_service_, session_, pin_manager_, overlay_) {}
+                        result_store_, result_actions_, pin_manager_, overlay_) {}
 
 Application::~Application() {
   capture_workflow_.shutdown();
@@ -58,15 +59,8 @@ Application::~Application() {
 }
 
 void Application::registerHandlers() {
-  registerAppHandlers(dispatcher_, capture_, export_service_, session_,
-                      pin_manager_);
-  pin_manager_.setActionCallbacks(
-      [this](const Image& image) {
-        return export_service_.copyToClipboard(image);
-      },
-      [this](const Image& image) {
-        return capture_workflow_.saveImage(image);
-      });
+  registerAppHandlers(dispatcher_, capture_, result_store_, result_actions_);
+  result_actions_.bindPinWindowActions();
 }
 
 void Application::installMessageRouter() {
@@ -125,6 +119,8 @@ int Application::run() {
     return 2;
   }
   capture_workflow_.setOwnerWindow(
+      reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
+  result_actions_.setOwnerWindow(
       reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
 
   installMessageRouter();
