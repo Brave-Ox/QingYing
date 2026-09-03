@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 namespace qingying {
 namespace {
 
@@ -19,6 +21,36 @@ TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
   EXPECT_FALSE(callback_invoked);
+}
+
+TEST(SelectionOverlayTest, DestructorClosesVisibleOverlayWithoutCallback) {
+  int callback_count = 0;
+  {
+    SelectionOverlay overlay;
+    ASSERT_TRUE(overlay.show(
+        Image{}, [&callback_count](const SelectionResult&) {
+          ++callback_count;
+        }));
+    EXPECT_TRUE(overlay.isVisible());
+  }
+
+  EXPECT_EQ(callback_count, 0);
+}
+
+TEST(SelectionOverlayTest, QueuedLongShotMessagesCanBeAbortedSafely) {
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+
+  Image preview;
+  preview.width = 1;
+  preview.height = 1;
+  preview.pixels = {0xFFFFFFFFu};
+  EXPECT_TRUE(overlay.postLongShotPreview(preview));
+  EXPECT_TRUE(overlay.postLongShotFinished(true));
+
+  overlay.hide();
+  overlay.hide();
+  EXPECT_FALSE(overlay.isVisible());
 }
 
 }  // namespace

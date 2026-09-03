@@ -38,6 +38,19 @@ TEST(LongShotControllerTest, CancelAndJoinAreSafeWhenIdle) {
   EXPECT_FALSE(fixture.controller.active());
 }
 
+TEST(LongShotControllerTest, CancelAndJoinStopAStartedWorker) {
+  ControllerFixture fixture;
+  fixture.controller.setOwnerWindow(1);
+
+  const LongShotRequest request{1, 0, 0, 1, 1};
+  ASSERT_TRUE(fixture.controller.start(request));
+
+  fixture.controller.cancel();
+  fixture.controller.join();
+
+  EXPECT_FALSE(fixture.controller.active());
+}
+
 TEST(LongShotControllerTest, ShutdownIsIdempotentAndRejectsFutureStarts) {
   ControllerFixture fixture;
 

@@ -68,3 +68,42 @@ TEST(AppActionHandlersTest, PinUsesLatestCaptureResult) {
   EXPECT_EQ(pin_manager.count(), 1);
   pin_manager.closeAll();
 }
+
+TEST(AppActionHandlersTest, FailedCaptureKeepsPreviousResult) {
+  qingying::ActionDispatcher dispatcher;
+  qingying::CaptureEngine capture;
+  qingying::ExportService export_service;
+  qingying::CaptureSession session;
+  qingying::PinManager pin_manager;
+
+  qingying::Image previous;
+  previous.width = 2;
+  previous.height = 1;
+  previous.pixels = {0xFF112233u, 0xFF445566u};
+  session.setResult(previous);
+
+  const qingying::CaptureRegionInvoker fail_capture =
+      [](const qingying::ActionRequest&, qingying::Image& out) {
+        out = qingying::Image{};
+        qingying::ActionResult result;
+        result.ok = false;
+        result.error_code = qingying::ErrorCode::kCaptureFailed;
+        result.message = "injected capture failure";
+        return result;
+      };
+  qingying::registerAppHandlers(dispatcher, capture, export_service, session,
+                                pin_manager, fail_capture);
+
+  qingying::ActionRequest request;
+  request.type = qingying::ActionType::CaptureRegion;
+  request.width = 10;
+  request.height = 10;
+  const qingying::ActionResult result = dispatcher.dispatch(request);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, qingying::ErrorCode::kCaptureFailed);
+  ASSERT_TRUE(session.hasResult());
+  EXPECT_EQ(session.result().width, previous.width);
+  EXPECT_EQ(session.result().height, previous.height);
+  EXPECT_EQ(session.result().pixels, previous.pixels);
+}

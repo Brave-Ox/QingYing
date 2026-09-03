@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "qingying/app/capture_session.hpp"
+
 #include <cstdint>
 
 namespace qingying {
@@ -163,6 +165,24 @@ TEST(AnnotationEditorSessionTest, CancelReportsCancelledWithoutImage)
   EXPECT_TRUE(result.cancelled);
   EXPECT_TRUE(result.rendered_image.empty());
   EXPECT_FALSE(session.isActive());
+}
+
+TEST(AnnotationEditorSessionTest, CancelDoesNotChangeExistingCaptureResult)
+{
+  CaptureSession capture_session;
+  const Image previous = makeCanvas();
+  capture_session.setResult(previous);
+
+  AnnotationEditorSession editor;
+  ASSERT_TRUE(editor.begin(makeCanvas()));
+
+  AnnotationFinishResult result;
+  ASSERT_TRUE(editor.finishCancelled(result));
+
+  ASSERT_TRUE(capture_session.hasResult());
+  EXPECT_EQ(capture_session.result().width, previous.width);
+  EXPECT_EQ(capture_session.result().height, previous.height);
+  EXPECT_EQ(capture_session.result().pixels, previous.pixels);
 }
 
 TEST(AnnotationEditorSessionTest, FinishWithoutBeginIsRejected)

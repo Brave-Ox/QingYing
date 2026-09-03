@@ -6,10 +6,18 @@
 #include "qingying/export/export_service.hpp"
 #include "qingying/pin/pin_manager.hpp"
 
+#include <functional>
+
 namespace qingying {
 
+// Optional composition hook used by deterministic callers/tests. When empty,
+// the CaptureEngine supplied to registerAppHandlers is used directly.
+using CaptureRegionInvoker =
+    std::function<ActionResult(const ActionRequest&, Image&)>;
+
 void registerAppHandlers(ActionDispatcher& dispatcher, CaptureEngine& capture,
-                         ExportService& export_service, CaptureSession& session,
-                         PinManager& pin_manager);
+                          ExportService& export_service, CaptureSession& session,
+                          PinManager& pin_manager,
+                          CaptureRegionInvoker capture_region = {});
 
 }  // namespace qingying

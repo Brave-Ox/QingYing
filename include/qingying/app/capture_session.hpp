@@ -6,8 +6,9 @@
 
 namespace qingying {
 
-// Holds the latest capture result (the Image) between CaptureRegion and
-// Copy/Save handlers. Cleared before a new capture begins.
+// Holds the latest successful capture result (the Image) between
+// CaptureRegion and Copy/Save handlers. A failed capture must not replace it;
+// clear() is reserved for an explicit session reset.
 class CaptureSession {
  public:
   bool hasResult() const { return has_result_; }

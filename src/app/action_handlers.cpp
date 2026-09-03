@@ -25,8 +25,11 @@ class StatusHandler final : public IActionHandler {
 
 class CaptureRegionHandler final : public IActionHandler {
  public:
-  CaptureRegionHandler(CaptureEngine& capture, CaptureSession& session)
-      : capture_(capture), session_(session) {}
+  CaptureRegionHandler(CaptureEngine& capture, CaptureSession& session,
+                       CaptureRegionInvoker capture_region)
+      : capture_(capture),
+        session_(session),
+        capture_region_(std::move(capture_region)) {}
 
   ActionType type() const override { return ActionType::CaptureRegion; }
 
@@ -39,10 +42,14 @@ class CaptureRegionHandler final : public IActionHandler {
       return r;
     }
 
-    session_.clear();
     Image image;
-    ActionResult result = capture_.captureRegion(
-        request.x, request.y, request.width, request.height, image);
+    ActionResult result;
+    if (capture_region_) {
+      result = capture_region_(request, image);
+    } else {
+      result = capture_.captureRegion(request.x, request.y, request.width,
+                                      request.height, image);
+    }
     if (result.ok) {
       session_.setResult(std::move(image));
     }
@@ -52,6 +59,7 @@ class CaptureRegionHandler final : public IActionHandler {
  private:
   CaptureEngine& capture_;
   CaptureSession& session_;
+  CaptureRegionInvoker capture_region_;
 };
 
 class CopyHandler final : public IActionHandler {
@@ -147,10 +155,12 @@ class PinHandler final : public IActionHandler {
 
 void registerAppHandlers(ActionDispatcher& dispatcher, CaptureEngine& capture,
                          ExportService& export_service, CaptureSession& session,
-                         PinManager& pin_manager) {
+                         PinManager& pin_manager,
+                         CaptureRegionInvoker capture_region) {
   dispatcher.registerHandler(std::make_unique<StatusHandler>());
   dispatcher.registerHandler(
-      std::make_unique<CaptureRegionHandler>(capture, session));
+      std::make_unique<CaptureRegionHandler>(capture, session,
+                                             std::move(capture_region)));
   dispatcher.registerHandler(
       std::make_unique<CopyHandler>(export_service, session));
   dispatcher.registerHandler(

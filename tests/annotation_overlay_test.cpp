@@ -879,49 +879,28 @@ TEST(AnnotationOverlayTest, HandlePointsSitOnImageEdges)
   EXPECT_EQ(points[7].y, kOriginY + kImgH / 2);
 }
 
-// 手工冒烟：会真实弹出编辑器窗口，需要人工操作，因此默认跳过。
-// 运行：
-//   qingying_tests.exe --gtest_also_run_disabled_tests `
-//                      --gtest_filter=AnnotationOverlayTest.DISABLED_*
-//
-// 预期：
-// 1. 窗口居中，蓝白横条纹图（最上一道蓝色）
-// 2. 底部主栏：几何(矩形/椭圆)/箭头/画笔/马赛克/文字 | 撤销 | 完成/取消
-//    点几何后二级栏：形状切换+填充+线型+线宽+色块；文字为色块+字号；
-//    马赛克为块大小下拉（8/12/16/24，默认 12），无色块
-// 3. 默认矩形：拖出框有预览，松开后保留；Ctrl+Z 或点撤销可去掉
-// 4. 文字：空白单击新建；已有文字单击出现黑框+删除；拖过阈值可改位置；
-//    双击进入就地编辑（输入中显示所选颜色，透明底细黑框）；二级栏可改颜色/字号
-// 5. 切换箭头、画笔同样可画，二级栏改色/线宽对下一笔生效；点完成得到合成图；Esc/取消不改结果语义
-// 6. 框选后操作条同为圆角白底图标条（复制/下载 | 长截图/编辑/钉图/停止）
-TEST(AnnotationOverlayTest, DISABLED_SmokeConfirmReturnsSourceCopy)
+TEST(AnnotationOverlayTest, RepeatedHideDeliversCancellationOnce)
 {
   AnnotationOverlay overlay;
   const Image source = makeStripedCanvas();
+  int callback_count = 0;
   AnnotationFinishResult result;
 
   ASSERT_TRUE(overlay.show(nullptr, source,
-                           [&result](const AnnotationFinishResult& finished)
+                           [&callback_count, &result](
+                               const AnnotationFinishResult& finished)
                            {
+                             ++callback_count;
                              result = finished;
                            }));
 
   ASSERT_TRUE(overlay.isVisible());
-  // Non-modal overlays are driven by the application message loop; this test
-  // only checks the create / close lifecycle when explicitly enabled.
+  overlay.hide();
   overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
-  if (!result.cancelled)
-  {
-    EXPECT_EQ(result.rendered_image.width, kCanvasWidth);
-    EXPECT_EQ(result.rendered_image.height, kCanvasHeight);
-    // 若画过标注，像素应与源图不同；若直接完成，则等于源图拷贝。
-    EXPECT_FALSE(result.rendered_image.empty());
-  }
-  else
-  {
-    EXPECT_TRUE(result.rendered_image.empty());
-  }
+  EXPECT_EQ(callback_count, 1);
+  EXPECT_TRUE(result.cancelled);
+  EXPECT_TRUE(result.rendered_image.empty());
 }
 
 }  // namespace qingying
