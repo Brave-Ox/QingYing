@@ -5,7 +5,6 @@
 #include "qingying/longshot/longshot_profile.hpp"
 #include "qingying/longshot/longshot_profile_registry.hpp"
 
-#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -61,11 +60,6 @@ class LongShotEngine {
   // 验证第一次滚动，而不依赖最终循环。
   ActionResult captureInitialPair(const LongShotRequest& request,
                                   LongShotFramePair& out);
-
-  // 外部来源的长截图结果由 longshot 接收；应用只转发通用完成消息。
-  bool startExternalResultReceiver(std::uintptr_t notification_window);
-  void stopExternalResultReceiver() noexcept;
-  bool takeExternalResult(Image& image);
 
  private:
   struct Impl;

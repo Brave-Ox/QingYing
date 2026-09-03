@@ -3,7 +3,6 @@
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/longshot/dll_longshot_profile.h"
-#include "qingying/longshot/longshot_messages.hpp"
 
 #include "resource.h"
 
@@ -54,7 +53,6 @@ Application::Application(HINSTANCE instance)
                         export_service_, session_, pin_manager_, overlay_) {}
 
 Application::~Application() {
-  longshot_.stopExternalResultReceiver();
   capture_workflow_.shutdown();
   hotkey_.unregisterAll(tray_.hwnd());
 }
@@ -88,7 +86,6 @@ void Application::installMessageRouter() {
       // The tray window owns the process lifetime. CaptureWorkflow closes any
       // non-modal overlays and joins its worker before TrayController posts
       // quit.
-      longshot_.stopExternalResultReceiver();
       capture_workflow_.shutdown();
       return false;
     }
@@ -100,14 +97,6 @@ void Application::installMessageRouter() {
     }
     if (msg == WM_QINGYING_WORKFLOW_CONTINUE) {
       capture_workflow_.continueWorkflow();
-      *result = 0;
-      return true;
-    }
-    if (msg == WM_QINGYING_LONGSHOT_EXTERNAL_RESULT) {
-      Image image;
-      if (longshot_.takeExternalResult(image)) {
-        (void)capture_workflow_.presentExternalLongShot(std::move(image));
-      }
       *result = 0;
       return true;
     }
@@ -136,8 +125,6 @@ int Application::run() {
     return 2;
   }
   capture_workflow_.setOwnerWindow(
-      reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
-  (void)longshot_.startExternalResultReceiver(
       reinterpret_cast<std::uintptr_t>(tray_.hwnd()));
 
   installMessageRouter();
