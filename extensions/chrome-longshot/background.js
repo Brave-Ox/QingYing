@@ -4,6 +4,7 @@ const MAX_OUTPUT_PIXELS = 40 * 1024 * 1024;
 const SETTLE_DELAY_MS = 550;
 
 let isCapturing = false;
+let activeCapture = null;
 
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -47,7 +48,7 @@ function blobToDataUrl(blob) {
   });
 }
 
-async function stitchAndDownload(frames, selection, title) {
+async function stitchAndSend(frames, selection) {
   if (frames.length === 0) {
     throw new Error("\u6ca1\u6709\u83b7\u5f97\u4efb\u4f55\u7f51\u9875\u753b\u9762");
   }
@@ -75,12 +76,18 @@ async function stitchAndDownload(frames, selection, title) {
     bitmap.close();
   }
 
-  const blob = await canvas.convertToBlob({ type: "image/png" });
-  await chrome.downloads.download({
-    url: await blobToDataUrl(blob),
-    filename: formatFileName(title),
-    saveAs: true,
-    conflictAction: "uniquify"
+  return canvas.convertToBlob({ type: "image/png" });
+}
+
+async function sendToQingYing(blob) {
+  const data = await blobToDataUrl(blob);
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connectNative("net.qingying.chrome_longshot");
+    port.onMessage.addListener((response) => response.ok ? resolve() : reject(new Error(response.message)));
+    port.onDisconnect.addListener(() => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+    });
+    port.postMessage({ type: "importPng", data });
   });
 }
 
@@ -89,6 +96,7 @@ async function startLongshot() {
     throw new Error("\u5df2\u6709\u957f\u622a\u56fe\u6b63\u5728\u8fdb\u884c");
   }
   isCapturing = true;
+  activeCapture = { paused: false, stopped: false, waiters: [] };
 
   let tab;
   let prepared = false;
@@ -107,6 +115,7 @@ async function startLongshot() {
       throw new Error(page?.error || "\u65e0\u6cd5\u8bfb\u53d6\u5f53\u524d\u7f51\u9875\u5c3a\u5bf8");
     }
     prepared = true;
+    await sendTabMessage(tab.id, { type: "QINGYING_LONGSHOT_SHOW_CONTROLS", paused: false });
 
     const maxScrollTop = Math.max(0, page.documentHeight - page.viewportHeight);
     const frames = [];
@@ -114,6 +123,10 @@ async function startLongshot() {
     let previousTop = -1;
 
     while (frames.length < MAX_CAPTURED_FRAMES) {
+      while (activeCapture.paused && !activeCapture.stopped) {
+        await new Promise((resolve) => activeCapture.waiters.push(resolve));
+      }
+      if (activeCapture.stopped) break;
       const position = await sendTabMessage(tab.id, {
         type: "QINGYING_LONGSHOT_SCROLL",
         top: requestedTop
@@ -121,8 +134,6 @@ async function startLongshot() {
       if (!position?.ok) {
         throw new Error(position?.error || "\u7f51\u9875\u6eda\u52a8\u5931\u8d25");
       }
-      await sleep(SETTLE_DELAY_MS);
-
       const dataUrl = await captureVisible(tab.windowId);
       frames.push({
         dataUrl,
@@ -130,6 +141,7 @@ async function startLongshot() {
         viewportWidth: position.viewportWidth
       });
       await updateStatus("capturing", `\u6b63\u5728\u622a\u53d6\u7b2c ${frames.length} \u5c4f\u2026`);
+      await sendTabMessage(tab.id, { type: "QINGYING_LONGSHOT_UPDATE_CONTROLS", frames: frames.length, paused: false });
 
       if (position.top >= maxScrollTop || position.top === previousTop) {
         break;
@@ -142,25 +154,50 @@ async function startLongshot() {
       throw new Error("\u7f51\u9875\u8d85\u8fc7 100 \u5c4f\uff0c\u8bf7\u7f29\u5c0f\u9875\u6216\u5206\u6bb5\u622a\u56fe");
     }
 
-    await updateStatus("stitching", "\u6b63\u5728\u62fc\u63a5\u5e76\u751f\u6210 PNG\u2026");
-    await stitchAndDownload(frames, selection, tab.title);
-    await updateStatus("complete", `\u5df2\u5b8c\u6210\uff1a\u5171 ${frames.length} \u5c4f\uff0cPNG \u5df2\u8fdb\u5165\u4fdd\u5b58\u6d41\u7a0b`);
+    await updateStatus("stitching", "\u6b63\u5728\u62fc\u63a5\u5e76\u53d1\u9001\u5230\u8f7b\u6620\u2026");
+    await sendToQingYing(await stitchAndSend(frames, selection));
+    await updateStatus("complete", `\u5df2\u4ea4\u7ed9\u8f7b\u6620\uff1a\u5171 ${frames.length} \u5c4f\uff0c\u53ef\u76f4\u63a5\u590d\u5236 / \u4fdd\u5b58 / \u9489\u56fe`);
   } catch (error) {
     await updateStatus("error", `\u957f\u622a\u56fe\u5931\u8d25\uff1a${error.message}`);
     throw error;
   } finally {
     if (prepared && tab?.id) {
       try {
+        await sendTabMessage(tab.id, { type: "QINGYING_LONGSHOT_HIDE_CONTROLS" });
         await sendTabMessage(tab.id, { type: "QINGYING_LONGSHOT_RESTORE" });
       } catch {
         // Page navigation or closing prevents restoration; retain the original error.
       }
     }
     isCapturing = false;
+    activeCapture = null;
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "QINGYING_LONGSHOT_CONTROL" && activeCapture) {
+    if (message.control === "pause") activeCapture.paused = true;
+    if (message.control === "resume") {
+      activeCapture.paused = false;
+      activeCapture.waiters.splice(0).forEach((resolve) => resolve());
+    }
+    if (message.control === "stop") {
+      activeCapture.stopped = true;
+      activeCapture.paused = false;
+      activeCapture.waiters.splice(0).forEach((resolve) => resolve());
+    }
+    void updateStatus(activeCapture.paused ? "paused" : "capturing",
+      activeCapture.stopped ? "\u6b63\u5728\u5b8c\u6210\u5df2\u622a\u53d6\u5185\u5bb9\u2026" : activeCapture.paused ? "\u957f\u622a\u56fe\u5df2\u6682\u505c" : "\u957f\u622a\u56fe\u5df2\u7ee7\u7eed");
+    if (sender.tab?.id) {
+      void sendTabMessage(sender.tab.id, {
+        type: "QINGYING_LONGSHOT_UPDATE_CONTROLS",
+        paused: activeCapture.paused,
+        frames: 0
+      });
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
   if (message?.type !== "QINGYING_START_LONGSHOT") {
     return false;
   }

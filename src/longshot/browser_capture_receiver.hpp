@@ -8,9 +8,7 @@
 
 namespace qingying {
 
-// Receives a PNG filename from the local Chrome Native Messaging host. The
-// listener is local-machine only and hands decoded images back to Application
-// through its normal Win32 message loop.
+// Chrome Native Messaging 的传输实现只在 longshot 内部使用。
 class BrowserCaptureReceiver {
  public:
   BrowserCaptureReceiver();

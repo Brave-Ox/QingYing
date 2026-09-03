@@ -62,8 +62,8 @@ class CaptureWorkflow {
   // Application forwards WM_QINGYING_LONGSHOT_COMPLETE here unchanged.
   void handleLongShotCompletion(std::intptr_t payload);
 
-  // Displays an externally produced long screenshot (for example Chrome) in
-  // the same result toolbar used by the built-in long-shot workflow.
+  // Displays an externally produced long screenshot in the same result
+  // toolbar used by the built-in long-shot workflow.
   bool presentExternalLongShot(Image image);
 
   // Used by PinManager's per-window save callback.

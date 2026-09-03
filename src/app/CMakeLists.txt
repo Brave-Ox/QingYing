@@ -2,7 +2,6 @@ add_library(qingying_workflow STATIC
   capture_preview.cpp
   capture_workflow.cpp
   longshot_controller.cpp
-  browser_capture_receiver.cpp
 )
 
 target_include_directories(qingying_workflow
@@ -64,21 +63,5 @@ if(WIN32)
     PRIVATE shell32 ole32 uuid advapi32 comdlg32 gdi32
   )
 
-  add_dependencies(qingying
-    qingying_notepad_longshot_plugin
-    qingying_explorer_longshot_plugin
-    qingying_chrome_longshot_plugin
-  )
-
-  add_custom_command(TARGET qingying POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      $<TARGET_FILE:qingying_notepad_longshot_plugin>
-      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      $<TARGET_FILE:qingying_explorer_longshot_plugin>
-      "$<TARGET_FILE_DIR:qingying>/plugins/longshot"
-    COMMENT "Deploy built-in long-shot plugins next to qingying"
-  )
+  qingying_deploy_longshot_runtime(qingying)
 endif()

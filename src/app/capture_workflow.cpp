@@ -149,12 +149,19 @@ struct CaptureWorkflow::Impl {
   bool beginAnnotation(SelectionResult region) {
     // 编辑意图已经离开长截图结果工具栏；无论编辑确认、取消或启动失败，
     // 下一轮普通截图都不得继续消费上一轮长截图的临时结果状态。
+    const bool edit_longshot_result = longshot_result_ready && session.hasResult();
     longshot_result_ready = false;
     if (region.cancelled || region.width <= 0 || region.height <= 0) {
       return false;
     }
 
     Image source = region.annotated_image;
+    // 长截图完成后，操作条上的“编辑”必须使用 Session 中的完整长图。
+    // 普通长截图没有 annotated_image，而浏览器长截图的预览图也可能在
+    // Overlay 关闭时被释放，因此 Session 才是唯一可靠的结果源。
+    if (source.empty() && edit_longshot_result) {
+      source = session.result();
+    }
     if (source.empty()) {
       auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
       const ActionResult captured = capture.captureRegion(
@@ -167,8 +174,20 @@ struct CaptureWorkflow::Impl {
     pending_selection = std::move(region);
     annotation_result_ready = false;
     stage = WorkflowStage::Annotating;
+    // 长图尺寸通常大于屏幕。不要把它钉在结果小预览框的位置，否则编辑器
+    // 的画布和工具栏可能完全落在可视区域外；从虚拟桌面左上角打开即可立即
+    // 看见可编辑的首屏内容与工具栏。
+    const bool source_is_longshot =
+        source.width != pending_selection.width ||
+        source.height != pending_selection.height;
+    const int image_x = source_is_longshot
+                            ? GetSystemMetrics(SM_XVIRTUALSCREEN) + 12
+                            : pending_selection.x;
+    const int image_y = source_is_longshot
+                            ? GetSystemMetrics(SM_YVIRTUALSCREEN) + 72
+                            : pending_selection.y;
     const bool shown = annotation_overlay.showInPlace(
-        owner_window, source, pending_selection.x, pending_selection.y,
+        owner_window, source, image_x, image_y,
         [this](const AnnotationFinishResult& result) {
           pending_annotation = result;
           annotation_result_ready = true;
@@ -579,6 +598,10 @@ bool CaptureWorkflow::presentExternalLongShot(Image image) {
   impl_->initial_selection = SelectionResult{false,
       screen.left + (screen.width - width) / 2,
       screen.top + (screen.height - height) / 2, width, height};
+  // 外部结果必须成为既有“编辑”命令的来源。保留在恢复后的选区中，
+  // 让 SelectionOverlay 将它返回给
+  // beginAnnotation instead of recapturing the desktop-sized preview box.
+  impl_->initial_selection.annotated_image = image;
   impl_->pending_selection = SelectionResult{};
   impl_->longshot_result_ready = true;
   impl_->session.setResult(std::move(image));

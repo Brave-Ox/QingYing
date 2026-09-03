@@ -1,5 +1,6 @@
 ﻿#include "qingying/longshot/longshot_engine.hpp"
 
+#include "browser_capture_receiver.hpp"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/image_stitcher.hpp"
 
@@ -164,6 +165,7 @@ struct LongShotEngine::Impl {
   CaptureEngine* capture{nullptr};
   LongShotProfileRegistry profiles;
   LongShotLimits limits;
+  BrowserCaptureReceiver external_result_receiver;
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
@@ -175,6 +177,25 @@ LongShotEngine::LongShotEngine(CaptureEngine& capture,
     : impl_(std::make_unique<Impl>(capture, std::move(profiles), limits)) {}
 
 LongShotEngine::~LongShotEngine() = default;
+
+bool LongShotEngine::startExternalResultReceiver(
+    std::uintptr_t notification_window) {
+  if (!impl_ || notification_window == 0) {
+    return false;
+  }
+  return impl_->external_result_receiver.start(
+      reinterpret_cast<HWND>(notification_window));
+}
+
+void LongShotEngine::stopExternalResultReceiver() noexcept {
+  if (impl_) {
+    impl_->external_result_receiver.stop();
+  }
+}
+
+bool LongShotEngine::takeExternalResult(Image& image) {
+  return impl_ && impl_->external_result_receiver.takeImage(image);
+}
 
 bool LongShotFramePair::valid() const {
   return !first_frame.empty() && !second_frame.empty() &&

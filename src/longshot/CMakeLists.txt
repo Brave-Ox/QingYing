@@ -6,6 +6,7 @@ add_library(qingying_longshot STATIC
   longshot_profile.cpp
   longshot_profile_registry.cpp
   win32_scroll_helpers.cpp
+  browser_capture_receiver.cpp
 )
 
 target_include_directories(qingying_longshot
@@ -18,7 +19,7 @@ target_link_libraries(qingying_longshot
 
 if(WIN32)
   target_link_libraries(qingying_longshot
-    PRIVATE user32
+    PRIVATE user32 windowscodecs ole32
   )
 
   # Built-in application adapters are standalone DLLs. The application links
@@ -74,4 +75,44 @@ if(WIN32)
     qingying_chrome_longshot_plugin
     qingying_chrome_longshot_plugin
   )
+
+  add_executable(qingying_chrome_native_host chrome_native_host.cpp)
+  target_link_libraries(qingying_chrome_native_host PRIVATE crypt32)
+  set_target_properties(qingying_chrome_native_host PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+
+  # 浏览器扩展和 Native Messaging 都属于 longshot 运行时，而不是 app。
+  add_custom_target(qingying_chrome_extension
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/chrome-extension"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${PROJECT_SOURCE_DIR}/extensions/chrome-longshot"
+      "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/chrome-extension"
+    COMMENT "Deploy QingYing Chrome long-shot extension"
+  )
+
+  # app 仅调用这一通用入口，不再维护内置长截图插件的具体依赖。
+  function(qingying_deploy_longshot_runtime application_target)
+    add_dependencies(${application_target}
+      qingying_notepad_longshot_plugin
+      qingying_explorer_longshot_plugin
+      qingying_chrome_longshot_plugin
+      qingying_chrome_native_host
+      qingying_chrome_extension
+    )
+    add_custom_command(TARGET ${application_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:qingying_notepad_longshot_plugin>
+        "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:qingying_explorer_longshot_plugin>
+        "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:qingying_chrome_longshot_plugin>
+        "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
+      COMMENT "Deploy built-in long-shot plugins next to ${application_target}"
+    )
+  endfunction()
 endif()

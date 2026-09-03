@@ -14,8 +14,8 @@ constexpr wchar_t kPinWindowClassName[] = L"QingYingPinWindow";
 constexpr wchar_t kPinWindowTitle[] = L"QingYing Pin";
 constexpr int kMaxClientWidth = 800;
 constexpr int kMaxClientHeight = 600;
-constexpr int kMinClientWidth = 160;
-constexpr int kMinClientHeight = 120;
+constexpr int kMinClientWidth = 48;
+constexpr int kMinClientHeight = 48;
 constexpr int kBorderThickness = 4;
 constexpr int kResizeBorder = 8;
 constexpr int kCloseButtonSize = 28;
@@ -391,6 +391,24 @@ void PinWindow::handleSizing(WPARAM edge, RECT* window_rect) const {
   }
 }
 
+void PinWindow::handleMouseWheel(short delta) {
+  if (hwnd_ == nullptr || image_.width <= 0 || image_.height <= 0 || delta == 0) {
+    return;
+  }
+  RECT rect{};
+  GetWindowRect(hwnd_, &rect);
+  const double factor = delta > 0 ? 1.16 : 1.0 / 1.16;
+  const double aspect = static_cast<double>(image_.width) / image_.height;
+  const int virtual_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  const int virtual_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  const int width = (std::max)(kMinClientWidth, (std::min)(virtual_width * 2,
+      static_cast<int>(std::lround((rect.right - rect.left) * factor))));
+  const int height = (std::max)(kMinClientHeight, (std::min)(virtual_height * 2,
+      static_cast<int>(std::lround(width / aspect))));
+  SetWindowPos(hwnd_, nullptr, 0, 0, width, height,
+               SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 void PinWindow::handleDestroyed() {
   hwnd_ = nullptr;
   if (closing_ || !closed_callback_) {
@@ -473,6 +491,12 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
       if (self != nullptr) {
         self->handleSizing(wparam, reinterpret_cast<RECT*>(lparam));
         return TRUE;
+      }
+      break;
+    case WM_MOUSEWHEEL:
+      if (self != nullptr) {
+        self->handleMouseWheel(GET_WHEEL_DELTA_WPARAM(wparam));
+        return 0;
       }
       break;
     case WM_LBUTTONDOWN: {

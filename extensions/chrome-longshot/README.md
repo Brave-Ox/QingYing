@@ -7,8 +7,9 @@ This is an independent Chrome Manifest V3 extension. It reads the page height, s
 1. Build QingYing. The extension is deployed to `build/bin/Release/chrome-extension`; using this source directory also works.
 2. Open `chrome://extensions`, turn on Developer mode, then choose Load unpacked.
 3. Select the `chrome-extension` directory.
-4. Open a normal webpage, click the QingYing extension icon, and start the capture.
-5. On completion, the page scroll position is restored and Chrome opens the PNG save dialog.
+4. Copy the extension ID shown on the Chrome extension card, then run `install-native-host.ps1 -ExtensionId <ID>` from PowerShell.
+5. Open a normal webpage, click the QingYing extension icon, and start the capture.
+6. On completion, the page scroll position is restored; the image is sent to QingYing for copy, save, annotation and pin actions.
 
 For the local `outputs/chrome_longshot_fixture.html` fixture, first open the extension Details page and enable “Allow access to file URLs”.
 

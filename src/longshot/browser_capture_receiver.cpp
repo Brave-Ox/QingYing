@@ -1,6 +1,6 @@
-﻿#include "qingying/app/browser_capture_receiver.hpp"
+﻿#include "browser_capture_receiver.hpp"
 
-#include "qingying/app/app_messages.hpp"
+#include "qingying/longshot/longshot_messages.hpp"
 
 #include <Windows.h>
 #include <wincodec.h>
@@ -95,7 +95,8 @@ struct BrowserCaptureReceiver::Impl {
             if (decodePng(path, image)) {
               std::lock_guard<std::mutex> lock(mutex);
               pending = std::move(image);
-              PostMessageW(notification_window, WM_QINGYING_BROWSER_IMAGE, 0, 0);
+              PostMessageW(notification_window,
+                           WM_QINGYING_LONGSHOT_EXTERNAL_RESULT, 0, 0);
             }
             DeleteFileW(path.c_str());
           }
