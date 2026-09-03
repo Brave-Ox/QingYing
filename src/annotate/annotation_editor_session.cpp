@@ -49,6 +49,13 @@ bool AnnotationEditorSession::finishCancelled(AnnotationFinishResult& result)
   return true;
 }
 
+void AnnotationEditorSession::reset() noexcept
+{
+  m_engine.clear();
+  m_source = Image{};
+  m_active = false;
+}
+
 bool AnnotationEditorSession::isActive() const
 {
   return m_active;

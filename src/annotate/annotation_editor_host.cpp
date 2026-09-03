@@ -561,6 +561,8 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         destroyStrokePopup(data);
         data->m_combo_font.reset();
         finishAndNotify(data);
+        data->m_session.reset();
+        data->m_callback = {};
         if (data->m_owner_hwnd != nullptr)
         {
           *data->m_owner_hwnd = nullptr;

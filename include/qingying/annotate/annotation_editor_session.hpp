@@ -22,6 +22,9 @@ class AnnotationEditorSession
   // 用户取消：产出 cancelled 结果并结束本轮。
   bool finishCancelled(AnnotationFinishResult& result);
 
+  // 释放本轮编辑持有的源图与标注数据，并回到初始状态。
+  void reset() noexcept;
+
   bool isActive() const;
 
   // 会话自己持有的源图副本，调用方后续改动原图不会影响它。

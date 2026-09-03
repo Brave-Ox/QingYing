@@ -167,6 +167,21 @@ TEST(AnnotationEditorSessionTest, CancelReportsCancelledWithoutImage)
   EXPECT_FALSE(session.isActive());
 }
 
+TEST(AnnotationEditorSessionTest, ResetReleasesRoundState)
+{
+  AnnotationEditorSession session;
+  ASSERT_TRUE(session.begin(makeCanvas()));
+  ASSERT_TRUE(session.engine().add(makeRedRectangle()));
+
+  session.reset();
+
+  EXPECT_FALSE(session.isActive());
+  EXPECT_TRUE(session.source().empty());
+  EXPECT_TRUE(session.engine().document().empty());
+  EXPECT_FALSE(session.engine().canUndo());
+  EXPECT_FALSE(session.engine().canRedo());
+}
+
 TEST(AnnotationEditorSessionTest, CancelDoesNotChangeExistingCaptureResult)
 {
   CaptureSession capture_session;
