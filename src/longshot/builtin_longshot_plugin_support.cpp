@@ -49,10 +49,10 @@ bool toPluginTarget(const LongShotProfileResult& source,
   target.struct_size = struct_size;
   target.flags = QINGYING_LONGSHOT_TARGET_CONTENT_RECT_EXACT;
   target.scroll_target = static_cast<std::uint64_t>(source.scroll_target);
-  target.content_x = source.content_x;
-  target.content_y = source.content_y;
-  target.content_width = source.content_width;
-  target.content_height = source.content_height;
+  target.content_x = source.content.x;
+  target.content_y = source.content.y;
+  target.content_width = source.content.width;
+  target.content_height = source.content.height;
   target.opaque_cookie = static_cast<std::uint64_t>(
       reinterpret_cast<std::uintptr_t>(&session));
   return true;

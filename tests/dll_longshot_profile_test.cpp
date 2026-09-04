@@ -45,10 +45,10 @@ TEST(DllLongShotProfileTest, AdaptsPluginCallbacksToNativeProfile) {
   LongShotProfileResult result;
   ASSERT_TRUE(profile.resolve(request, result));
   EXPECT_EQ(result.scroll_target, request.owner_window);
-  EXPECT_EQ(result.content_x, request.x);
-  EXPECT_EQ(result.content_y, request.y);
-  EXPECT_EQ(result.content_width, request.width);
-  EXPECT_EQ(result.content_height, request.height);
+  EXPECT_EQ(result.content.x, request.x);
+  EXPECT_EQ(result.content.y, request.y);
+  EXPECT_EQ(result.content.width, request.width);
+  EXPECT_EQ(result.content.height, request.height);
 
   EXPECT_TRUE(profile.scrollDown(request, result));
 
@@ -81,7 +81,7 @@ TEST(DllLongShotProfileTest, RejectsStaleOrOutOfBoundsProfileResults) {
   ASSERT_TRUE(profile.resolve(request, result));
 
   LongShotProfileResult stale = result;
-  stale.content_x += 1;
+  stale.content.x += 1;
   EXPECT_FALSE(profile.scrollDown(request, stale));
 
   LongShotRequest different_request = request;

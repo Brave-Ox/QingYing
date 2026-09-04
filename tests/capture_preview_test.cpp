@@ -1,4 +1,4 @@
-#include "qingying/app/capture_preview.hpp"
+﻿#include "qingying/app/capture_preview.hpp"
 
 #include <gtest/gtest.h>
 
@@ -7,8 +7,7 @@ namespace qingying {
 TEST(CapturePreviewTest, PastesSelectionUsingVirtualScreenCoordinates) {
   Image background{4, 3, std::vector<std::uint32_t>(12, 1u)};
   Image selection_image{2, 2, {10u, 11u, 12u, 13u}};
-  SelectionResult selection;
-  selection.cancelled = false;
+  ScreenPhysicalRect selection;
   selection.x = -9;
   selection.y = 21;
   selection.width = 2;
@@ -27,8 +26,7 @@ TEST(CapturePreviewTest, PastesSelectionUsingVirtualScreenCoordinates) {
 TEST(CapturePreviewTest, ClipsSelectionAtDesktopEdges) {
   Image background{3, 2, std::vector<std::uint32_t>(6, 1u)};
   Image selection_image{2, 2, {10u, 11u, 12u, 13u}};
-  SelectionResult selection;
-  selection.cancelled = false;
+  ScreenPhysicalRect selection;
   selection.x = -1;
   selection.y = -1;
   selection.width = 2;
@@ -45,8 +43,7 @@ TEST(CapturePreviewTest, RejectsMalformedImageWithoutChangingBackground) {
   Image background{2, 2, {1u, 1u, 1u, 1u}};
   const Image original = background;
   Image malformed{2, 2, {9u}};
-  SelectionResult selection;
-  selection.cancelled = false;
+  ScreenPhysicalRect selection;
   selection.width = 2;
   selection.height = 2;
 

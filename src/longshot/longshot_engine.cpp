@@ -53,10 +53,10 @@ bool sameProfileGeometry(const LongShotProfileResult& before,
   // 某些视图在滚动后会重建子 HWND（尤其是 Explorer 的现代文件列表）。
   // profile 已经重新校验应用和选区，因此这里应保持稳定的是可见内容几何范围，
   // 而不是这个临时 HWND 的身份。
-  return before.content_x == after.content_x &&
-         before.content_y == after.content_y &&
-         before.content_width == after.content_width &&
-         before.content_height == after.content_height;
+  return before.content.x == after.content.x &&
+         before.content.y == after.content.y &&
+         before.content.width == after.content.width &&
+         before.content.height == after.content.height;
 }
 
 bool imageMatchesRequest(const Image& image, const LongShotRequest& request) {
@@ -136,9 +136,7 @@ ActionResult captureNextFrame(CaptureEngine& capture,
     return makeSuccess();
   }
 
-  ActionResult result = capture.captureRegion(request.x, request.y,
-                                              request.width, request.height,
-                                              frame);
+  ActionResult result = capture.captureRegion(request.selectionRect(), frame);
   if (!result.ok) {
     return result;
   }
@@ -219,8 +217,7 @@ ActionResult LongShotEngine::captureSelection(
   }
 
   Image stitched;
-  result = impl_->capture->captureRegion(request.x, request.y, request.width,
-                                         request.height, stitched);
+  result = impl_->capture->captureRegion(request.selectionRect(), stitched);
   if (!result.ok) {
     return result;
   }
@@ -337,8 +334,7 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   }
 
   Image first_frame;
-  result = impl_->capture->captureRegion(request.x, request.y, request.width,
-                                         request.height, first_frame);
+  result = impl_->capture->captureRegion(request.selectionRect(), first_frame);
   if (!result.ok) {
     return result;
   }

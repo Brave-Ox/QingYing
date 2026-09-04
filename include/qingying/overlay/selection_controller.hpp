@@ -1,7 +1,7 @@
 ﻿#pragma once
 
+#include "qingying/geometry/rect_types.h"
 #include "qingying/overlay/selection_handles.hpp"
-#include "qingying/overlay/selection_overlay.hpp"
 
 namespace qingying {
 
@@ -16,7 +16,7 @@ namespace qingying {
 //
 // 不变量：
 //   - width/height 恒 >= 0；确认后 >= 1；
-//   - confirm() 之后 cancelled == (width <= 0 || height <= 0)；
+//   - confirm() 之后 empty() == (width <= 0 || height <= 0)；
 //   - 反向拖拽始终归一化为左上角 + 非负宽高；
 //   - 选区被钳制在 setBounds() 给出的有效桌面范围内。
 class SelectionController {
@@ -50,7 +50,7 @@ class SelectionController {
   void cancel();
 
   // 当前选区：拖动期间实时变化，confirm()/cancel()/endDrag() 后为最终值。
-  const SelectionResult& selection() const;
+  const OverlayClientRect& selection() const;
 
   // 设置有效桌面边界（覆盖层客户区坐标，原点 0,0）；选区会钳制在此范围内。
   void setBounds(int width, int height);
@@ -71,14 +71,14 @@ class SelectionController {
   // 把当前选区钳制到 [0,bounds_w]×[0,bounds_h]（保持宽高不变）。
   void clampToBounds();
 
-  SelectionResult m_selection;
+  OverlayClientRect m_selection;
   Mode m_mode{Mode::None};
   int m_start_x{0};
   int m_start_y{0};
   int m_drag_x{0};
   int m_drag_y{0};
   SelectionHandle m_handle{SelectionHandle::None};
-  SelectionResult m_anchor;
+  OverlayClientRect m_anchor;
   int m_bounds_width{0};
   int m_bounds_height{0};
   int m_handle_radius{handles::kHandleHitRadius};

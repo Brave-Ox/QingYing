@@ -33,8 +33,7 @@ std::uint32_t kPxAt(const std::vector<std::uint32_t>& px, int width, int x,
 }  // namespace
 
 TEST(MaskRendererTest, FullScreenSelectionUnmaskedInterior) {
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 0;
   sel.y = 0;
   sel.width = 100;
@@ -53,8 +52,7 @@ TEST(MaskRendererTest, FullScreenSelectionUnmaskedInterior) {
 }
 
 TEST(MaskRendererTest, SelectionInteriorIsClear) {
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 10;
   sel.y = 20;
   sel.width = 50;
@@ -69,8 +67,7 @@ TEST(MaskRendererTest, SelectionInteriorIsClear) {
 }
 
 TEST(MaskRendererTest, OutsideSelectionIsMasked) {
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 10;
   sel.y = 20;
   sel.width = 50;
@@ -85,8 +82,7 @@ TEST(MaskRendererTest, OutsideSelectionIsMasked) {
 }
 
 TEST(MaskRendererTest, BorderIsHighlighted) {
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 10;
   sel.y = 20;
   sel.width = 50;
@@ -105,8 +101,7 @@ TEST(MaskRendererTest, BorderIsHighlighted) {
 }
 
 TEST(MaskRendererTest, SelectionPartiallyOffscreenIsClamped) {
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = -10;  // 选区左越界
   sel.y = -10;
   sel.width = 20;
@@ -122,9 +117,7 @@ TEST(MaskRendererTest, SelectionPartiallyOffscreenIsClamped) {
 }
 
 TEST(MaskRendererTest, CancelledSelectionIsFullMask) {
-  SelectionResult sel{};  // cancelled == true
-  sel.width = 100;
-  sel.height = 80;
+  OverlayClientRect sel{};  // 空矩形表示没有有效选区
 
   std::vector<std::uint32_t> px;
   renderFullscreenMask(100, 80, sel, px);
@@ -140,8 +133,7 @@ TEST(MaskRendererTest, ComposeBackgroundDimsMaskOutsideSelection) {
   bg.height = 20;
   bg.pixels.assign(20u * 20u, kMakeBgra(255, 255, 255, 255));
 
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 5;
   sel.y = 5;
   sel.width = 10;
@@ -173,8 +165,7 @@ TEST(MaskRendererTest, ComposeBackgroundKeepsSelectionInterior) {
   bg.height = 20;
   bg.pixels.assign(20u * 20u, kMakeBgra(10, 20, 30, 255));
 
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 5;
   sel.y = 5;
   sel.width = 10;
@@ -202,8 +193,7 @@ TEST(MaskRendererTest, ComposeBackgroundBorderIsOpaqueOrange) {
   bg.height = 20;
   bg.pixels.assign(20u * 20u, kMakeBgra(255, 255, 255, 255));
 
-  SelectionResult sel{};
-  sel.cancelled = false;
+  OverlayClientRect sel{};
   sel.x = 5;
   sel.y = 5;
   sel.width = 10;

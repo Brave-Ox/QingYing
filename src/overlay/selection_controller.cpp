@@ -18,15 +18,14 @@ int clampInt(int value, int lo, int hi) {
 void SelectionController::begin(int start_x, int start_y) {
   m_start_x = start_x;
   m_start_y = start_y;
-  // 重置为「无有效选区」（cancelled==true，宽高 0），直到 update() 拖出矩形。
-  m_selection = SelectionResult{};
+  // 重置为「无有效选区」（宽高 0），直到 update() 拖出矩形。
+  m_selection = OverlayClientRect{};
   m_mode = Mode::Creating;
   m_handle = SelectionHandle::None;
 }
 
 void SelectionController::update(int current_x, int current_y) {
   // 拖出矩形 → 进入「进行中」，选区实时可见（UI 据此绘制选框）。
-  m_selection.cancelled = false;
   // 起点始终是矩形的左上角，拖动终点任意方向都归一化到非负宽高。
   const int left = std::min(m_start_x, current_x);
   const int top = std::min(m_start_y, current_y);
@@ -42,9 +41,6 @@ void SelectionController::update(int current_x, int current_y) {
 
 void SelectionController::confirm() {
   // 宽度或高度 <= 0（纯点击未拖动 / 退化选区）视为取消。
-  if (m_selection.width <= 0 || m_selection.height <= 0) {
-    m_selection.cancelled = true;
-  }
   m_mode = Mode::None;
 }
 
@@ -131,7 +127,6 @@ void SelectionController::updateResize(int x, int y) {
   m_selection.y = new_top;
   m_selection.width = new_right - new_left;
   m_selection.height = new_bottom - new_top;
-  m_selection.cancelled = false;
 }
 
 void SelectionController::beginMove(int x, int y) {
@@ -156,12 +151,12 @@ void SelectionController::endDrag() {
 }
 
 void SelectionController::cancel() {
-  m_selection = SelectionResult{};  // 默认即 cancelled==true，宽高归零
+  m_selection = OverlayClientRect{};  // 默认宽高归零，即无有效选区
   m_mode = Mode::None;
   m_handle = SelectionHandle::None;
 }
 
-const SelectionResult& SelectionController::selection() const {
+const OverlayClientRect& SelectionController::selection() const {
   return m_selection;
 }
 
@@ -176,8 +171,7 @@ void SelectionController::setSelection(int x, int y, int width, int height) {
     cancel();
     return;
   }
-  m_selection = SelectionResult{};
-  m_selection.cancelled = false;
+  m_selection = OverlayClientRect{};
   m_selection.x = x;
   m_selection.y = y;
   m_selection.width = width;
@@ -188,8 +182,7 @@ void SelectionController::setSelection(int x, int y, int width, int height) {
 }
 
 SelectionHandle SelectionController::hitTest(int x, int y) const {
-  if (m_selection.cancelled || m_selection.width <= 0 ||
-      m_selection.height <= 0) {
+  if (m_selection.empty()) {
     return SelectionHandle::None;
   }
   return handles::hitTest(x, y, m_selection.x, m_selection.y,
@@ -202,7 +195,7 @@ void SelectionController::setHandleRadius(int radius) {
 }
 
 void SelectionController::clampToBounds() {
-  if (!hasBounds() || m_selection.cancelled) {
+  if (!hasBounds() || m_selection.empty()) {
     return;
   }
   if (m_selection.width > m_bounds_width) {

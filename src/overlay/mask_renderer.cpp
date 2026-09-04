@@ -39,13 +39,13 @@ bool isOnBorder(int x, int y, int sel_left, int sel_top, int sel_right,
 }  // namespace
 
 void renderFullscreenMask(int width, int height,
-                          const SelectionResult& selection,
+                          const OverlayClientRect& selection,
                           std::vector<std::uint32_t>& out_pixels) {
   out_pixels.assign(static_cast<std::size_t>(width) *
                         static_cast<std::size_t>(height),
                     kMaskPixel);
 
-  if (selection.cancelled) {
+  if (selection.empty()) {
     return;  // 无有效选区：全屏遮罩，不挖空。
   }
 

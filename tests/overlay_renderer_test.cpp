@@ -92,13 +92,12 @@ TEST(OverlayRendererTest, LongShotPreviewIsBoundedAndNearestNeighbour) {
 }
 
 TEST(OverlayRendererTest, RendersSelectionHandlesIntoPixelFrame) {
-  SelectionResult selection{};
-  selection.cancelled = false;
+  OverlayClientRect selection{};
   selection.x = 4;
   selection.y = 4;
   selection.width = 12;
   selection.height = 12;
-  SelectionResult hover{};
+  OverlayClientRect hover{};
   Image background;
   Image preview;
   const OverlayRenderState state(selection, hover, background, preview,
@@ -114,9 +113,8 @@ TEST(OverlayRendererTest, RendersSelectionHandlesIntoPixelFrame) {
 }
 
 TEST(OverlayRendererTest, RendersHoverOutlineWhenRequested) {
-  SelectionResult selection{};
-  SelectionResult hover{};
-  hover.cancelled = false;
+  OverlayClientRect selection{};
+  OverlayClientRect hover{};
   hover.x = 5;
   hover.y = 6;
   hover.width = 6;
@@ -133,13 +131,12 @@ TEST(OverlayRendererTest, RendersHoverOutlineWhenRequested) {
 }
 
 TEST(OverlayRendererTest, PassthroughClearsSelectionWithoutBackgroundCompose) {
-  SelectionResult selection{};
-  selection.cancelled = false;
+  OverlayClientRect selection{};
   selection.x = 2;
   selection.y = 2;
   selection.width = 6;
   selection.height = 6;
-  SelectionResult hover{};
+  OverlayClientRect hover{};
   const Image background = makeSolidImage(12, 12, kWhite);
   Image preview;
   const OverlayRenderState state(selection, hover, background, preview,

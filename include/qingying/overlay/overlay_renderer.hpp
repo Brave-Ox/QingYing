@@ -6,9 +6,9 @@
 #include <vector>
 
 #include "qingying/action/image.hpp"
+#include "qingying/geometry/rect_types.h"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/overlay/overlay_phase.hpp"
-#include "qingying/overlay/selection_overlay.hpp"
 
 namespace qingying {
 
@@ -17,8 +17,8 @@ namespace qingying {
 // transitions, and callbacks; OverlayRenderer only turns this view into
 // pixels and presents them through UpdateLayeredWindow.
 struct OverlayRenderState {
-  const SelectionResult& selection;
-  const SelectionResult& hover_rect;
+  const OverlayClientRect& selection;
+  const OverlayClientRect& hover_rect;
   const Image& background;
   const Image& longshot_preview;
   OverlayPhase phase{OverlayPhase::Sniffing};
@@ -27,8 +27,8 @@ struct OverlayRenderState {
   bool show_hover{false};
   bool capture_passthrough{false};
 
-  OverlayRenderState(const SelectionResult& selection_in,
-                     const SelectionResult& hover_rect_in,
+  OverlayRenderState(const OverlayClientRect& selection_in,
+                     const OverlayClientRect& hover_rect_in,
                      const Image& background_in,
                      const Image& longshot_preview_in, OverlayPhase phase_in,
                      bool show_handles_in, int handle_radius_in,

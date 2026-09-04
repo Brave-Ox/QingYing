@@ -7,8 +7,8 @@ namespace coord {
 
 VirtualScreenRect getVirtualScreen() {
   VirtualScreenRect r;
-  r.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
-  r.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  r.x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  r.y = GetSystemMetrics(SM_YVIRTUALSCREEN);
   r.width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
   r.height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
   return r;

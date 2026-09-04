@@ -193,6 +193,11 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
   return r;
 }
 
+ActionResult CaptureEngine::captureRegion(const ScreenPhysicalRect& region,
+                                          Image& out) {
+  return captureRegion(region.x, region.y, region.width, region.height, out);
+}
+
 ActionResult CaptureEngine::captureWindow(const std::wstring& /*query*/,
                                           Image& /*out*/) {
   ActionResult r;

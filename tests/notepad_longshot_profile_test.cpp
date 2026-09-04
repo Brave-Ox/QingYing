@@ -144,10 +144,10 @@ TEST(NotepadLongShotProfileTest, ResolvesSuppliedNotepadEditorClientArea) {
 
   EXPECT_EQ(profile.scroll_target,
             reinterpret_cast<std::uintptr_t>(window.editor()));
-  EXPECT_EQ(profile.content_x, expected.left);
-  EXPECT_EQ(profile.content_y, expected.top);
-  EXPECT_EQ(profile.content_width, expected.right - expected.left);
-  EXPECT_EQ(profile.content_height, expected.bottom - expected.top);
+  EXPECT_EQ(profile.content.x, expected.left);
+  EXPECT_EQ(profile.content.y, expected.top);
+  EXPECT_EQ(profile.content.width, expected.right - expected.left);
+  EXPECT_EQ(profile.content.height, expected.bottom - expected.top);
 }
 
 TEST(NotepadLongShotProfileTest, ExactContentBoundsAreAccepted) {
@@ -286,8 +286,8 @@ TEST(LongShotEngineProfileIntegrationTest,
   EXPECT_TRUE(result.ok);
   EXPECT_EQ(result.error_code, ErrorCode::kOk);
   EXPECT_FALSE(out.empty());
-  EXPECT_EQ(out.width, profile.content_width);
-  EXPECT_EQ(out.height, profile.content_height);
+  EXPECT_EQ(out.width, profile.content.width);
+  EXPECT_EQ(out.height, profile.content.height);
   EXPECT_EQ(out.pixels.size(),
             static_cast<std::size_t>(out.width) *
                 static_cast<std::size_t>(out.height));
@@ -373,8 +373,8 @@ TEST(LongShotEngineProfileIntegrationTest, SelectionOutsideContentIsRejected) {
   CaptureEngine capture;
   LongShotEngine engine(capture, context.takeRegistry());
   const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
-      profile.content_y, profile.content_width, profile.content_height};
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content.x - 1,
+      profile.content.y, profile.content.width, profile.content.height};
   Image out;
 
   const ActionResult result = engine.captureSelection(request, out);
@@ -400,7 +400,7 @@ TEST(LongShotEngineProfileIntegrationTest,
   ASSERT_TRUE(context.profile().resolve(request, profile));
 
   LongShotLimits limits;
-  limits.max_output_height = profile.content_height - 1;
+  limits.max_output_height = profile.content.height - 1;
   CaptureEngine capture;
   LongShotEngine engine(capture, context.takeRegistry(), limits);
   Image out;
@@ -430,8 +430,8 @@ TEST(LongShotInitialPairTest, CapturesFixedRectAroundExactlyOneWheelInput) {
   constexpr int kSelectionWidth = 80;
   constexpr int kSelectionHeight = 60;
   const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x + 10,
-      profile.content_y + 10, kSelectionWidth, kSelectionHeight};
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content.x + 10,
+      profile.content.y + 10, kSelectionWidth, kSelectionHeight};
   CaptureEngine capture;
   LongShotEngine engine(capture, context.takeRegistry());
   LongShotFramePair frames;
@@ -467,8 +467,8 @@ TEST(LongShotInitialPairTest, InvalidSelectionDoesNotScrollAndClearsFrames) {
   ASSERT_TRUE(context.profile().resolve(resolved_request, profile));
 
   const LongShotRequest request{
-      reinterpret_cast<std::uintptr_t>(window.root()), profile.content_x - 1,
-      profile.content_y, profile.content_width, profile.content_height};
+      reinterpret_cast<std::uintptr_t>(window.root()), profile.content.x - 1,
+      profile.content.y, profile.content.width, profile.content.height};
   CaptureEngine capture;
   LongShotEngine engine(capture, context.takeRegistry());
   LongShotFramePair frames;

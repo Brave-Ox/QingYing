@@ -5,8 +5,8 @@
 namespace qingying {
 namespace {
 
-SelectionResult selectionFor(SelectionAction action) {
-  SelectionResult selection;
+SelectionIntent selectionFor(SelectionAction action) {
+  SelectionIntent selection;
   selection.cancelled = false;
   selection.x = 10;
   selection.y = 20;
@@ -30,18 +30,16 @@ TEST(CaptureWorkflowRouteTest, CancelledOrEmptySelectionDoesNothing) {
 }
 
 TEST(CaptureWorkflowRouteTest, EditIntentHasHighestPriority) {
-  SelectionResult selection = selectionFor(SelectionAction::Edit);
-  selection.annotated_image = Image{1, 1, {0xFFFFFFFFu}};
+  const SelectionIntent selection = selectionFor(SelectionAction::Edit);
 
-  EXPECT_EQ(decideCaptureWorkflowRoute(selection, true),
+  EXPECT_EQ(decideCaptureWorkflowRoute(selection, true, false),
             CaptureWorkflowRoute::Edit);
 }
 
-TEST(CaptureWorkflowRouteTest, AnnotatedImageUsesExistingResult) {
-  SelectionResult selection = selectionFor(SelectionAction::LongShot);
-  selection.annotated_image = Image{1, 1, {0xFFFFFFFFu}};
+TEST(CaptureWorkflowRouteTest, AnnotatedResultUsesExplicitReadyState) {
+  const SelectionIntent selection = selectionFor(SelectionAction::Save);
 
-  EXPECT_EQ(decideCaptureWorkflowRoute(selection, false),
+  EXPECT_EQ(decideCaptureWorkflowRoute(selection, false, true),
             CaptureWorkflowRoute::AnnotatedResult);
 }
 

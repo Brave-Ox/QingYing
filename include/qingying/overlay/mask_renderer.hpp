@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "qingying/action/image.hpp"
-#include "qingying/overlay/selection_overlay.hpp"
+#include "qingying/geometry/rect_types.h"
 
 namespace qingying {
 namespace mask {
@@ -16,7 +16,7 @@ namespace mask {
 // 像素布局：高 8 位 alpha，低 24 位 BGR（premultiplied）。
 // cancelled 或空选区时仅输出纯遮罩，不挖空。
 void renderFullscreenMask(int width, int height,
-                          const SelectionResult& selection,
+                          const OverlayClientRect& selection,
                           std::vector<std::uint32_t>& out_pixels);
 
 // 把不透明截图背景（Image，BGRA32）与遮罩像素合成，得到遮罩界面最终帧：

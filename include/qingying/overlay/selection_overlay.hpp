@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
+#include "qingying/overlay/selection_types.h"
 
 #include <atomic>
 #include <cstdint>
@@ -9,33 +10,6 @@
 
 namespace qingying {
 
-enum class SelectionAction {
-  None,
-  Copy,
-  Save,
-  Edit,
-  Pin,
-  LongShot,
-};
-
-enum class LongShotControl {
-  TogglePause,
-  Stop,
-};
-
-struct SelectionResult {
-  bool cancelled{true};
-  int x{0};
-  int y{0};
-  int width{0};
-  int height{0};
-  SelectionAction action{SelectionAction::None};
-  // 标注确认后的合成图可随结果工具栏继续传递；普通选区保持 empty。
-  Image annotated_image;
-};
-
-using SelectionCallback = std::function<void(const SelectionResult&)>;
-using LongShotControlCallback = std::function<void(LongShotControl)>;
 using SelectionClosedCallback = std::function<void()>;
 
 class SelectionOverlay {
@@ -60,8 +34,9 @@ class SelectionOverlay {
   // Returns false if overlay could not be shown.
   bool show(const Image& background, SelectionCallback callback,
             LongShotControlCallback longshot_control_callback = {},
-            const SelectionResult& initial_selection = {},
-            SelectionClosedCallback closed_callback = {});
+            const SelectionIntent& initial_selection = {},
+            SelectionClosedCallback closed_callback = {},
+            bool initial_selection_locked = false);
 
   // These methods are safe to call from the long-shot worker thread. Updates
   // are posted back to the overlay's UI thread.

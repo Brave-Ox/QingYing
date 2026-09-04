@@ -169,12 +169,12 @@ bool resolveNotepadTarget(std::uintptr_t owner_window,
   }
 
   out.scroll_target = reinterpret_cast<std::uintptr_t>(candidate.window);
-  out.content_x = static_cast<int>(candidate.screen_rect.left);
-  out.content_y = static_cast<int>(candidate.screen_rect.top);
-  out.content_width =
-      static_cast<int>(candidate.screen_rect.right - candidate.screen_rect.left);
-  out.content_height = static_cast<int>(candidate.screen_rect.bottom -
-                                        candidate.screen_rect.top);
+  out.content = ScreenPhysicalRect{
+      static_cast<int>(candidate.screen_rect.left),
+      static_cast<int>(candidate.screen_rect.top),
+      static_cast<int>(candidate.screen_rect.right - candidate.screen_rect.left),
+      static_cast<int>(candidate.screen_rect.bottom -
+                       candidate.screen_rect.top)};
   if (!out.valid()) {
     out = LongShotProfileResult{};
     return false;

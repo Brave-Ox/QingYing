@@ -34,15 +34,16 @@ const wchar_t* longShotFailureText(int error_code) {
 }  // 匿名命名空间
 
 CaptureWorkflowRoute decideCaptureWorkflowRoute(
-    const SelectionResult& selection,
-    bool longshot_result_ready) noexcept {
-  if (selection.cancelled) {
+    const SelectionIntent& selection,
+    bool longshot_result_ready,
+    bool annotated_result_ready) noexcept {
+  if (!selection.valid()) {
     return CaptureWorkflowRoute::None;
   }
   if (selection.action == SelectionAction::Edit) {
     return CaptureWorkflowRoute::Edit;
   }
-  if (!selection.annotated_image.empty()) {
+  if (annotated_result_ready) {
     return CaptureWorkflowRoute::AnnotatedResult;
   }
   if (selection.action == SelectionAction::LongShot) {
@@ -86,12 +87,12 @@ struct CaptureWorkflow::Impl {
     }
   }
 
-  void showSelectionOverlay() {
+void showSelectionOverlay() {
     selection_closed = false;
     selection_result_ready = false;
     const bool shown = selection_overlay.show(
         selection_background,
-        [this](const SelectionResult& region) {
+        [this](const SelectionIntent& region) {
           const HWND target_window =
               region.action == SelectionAction::LongShot
                   ? ownerWindowAtSelection(region)
@@ -110,15 +111,16 @@ struct CaptureWorkflow::Impl {
         [this]() {
           selection_closed = true;
           postContinuation();
-        });
+        },
+        annotated_result_ready);
     if (!shown) {
       stage = WorkflowStage::Idle;
       active = false;
     }
   }
 
-  HWND ownerWindowAtSelection(const SelectionResult& region) const noexcept {
-    if (region.width <= 0 || region.height <= 0) {
+  HWND ownerWindowAtSelection(const SelectionIntent& region) const noexcept {
+    if (!region.valid()) {
       return recorded_owner_window;
     }
 
@@ -138,36 +140,37 @@ struct CaptureWorkflow::Impl {
     Image background;
     auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
     const coord::VirtualScreenRect screen = coord::getVirtualScreen();
-    (void)capture.captureRegion(screen.left, screen.top, screen.width,
-                                screen.height, background);
+    (void)capture.captureRegion(
+        ScreenPhysicalRect{screen.x, screen.y, screen.width, screen.height},
+        background);
     return background;
   }
 
-  bool beginAnnotation(SelectionResult region) {
+  bool beginAnnotation(SelectionIntent region) {
     // 编辑意图已经离开长截图结果工具栏；无论编辑确认、取消或启动失败，
     // 下一轮普通截图都不得继续消费上一轮长截图的临时结果状态。
-    const bool edit_longshot_result = longshot_result_ready && session.hasResult();
     longshot_result_ready = false;
-    if (region.cancelled || region.width <= 0 || region.height <= 0) {
+    if (!region.valid()) {
       return false;
     }
 
-    Image source = region.annotated_image;
-    // 长截图完成后，操作条上的“编辑”必须使用 Session 中的完整长图。
-    // 普通长截图没有 annotated_image，而浏览器长截图的预览图也可能在
-    // Overlay 关闭时被释放，因此 Session 才是唯一可靠的结果源。
-    if (source.empty() && edit_longshot_result) {
-      source = session.result();
+    Image source;
+    if (annotated_result_ready && active_result_id != kInvalidResultId) {
+      const Image* existing = results.getImage(active_result_id);
+      if (existing != nullptr) {
+        source = *existing;
+      }
     }
     if (source.empty()) {
       auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
-      const ActionResult captured = capture.captureRegion(
-          region.x, region.y, region.width, region.height, source);
+      const ActionResult captured = capture.captureRegion(region.screenRect(),
+                                                          source);
       if (!captured.ok || source.empty()) {
         return false;
       }
     }
 
+    annotated_result_ready = false;
     pending_selection = std::move(region);
     annotation_result_ready = false;
     stage = WorkflowStage::Annotating;
@@ -215,17 +218,16 @@ struct CaptureWorkflow::Impl {
     }
   }
 
-  void runCapturePipeline(const SelectionResult& region) {
-    const CaptureWorkflowRoute route =
-        decideCaptureWorkflowRoute(region, longshot_result_ready);
+  void runCapturePipeline(const SelectionIntent& region) {
+    const CaptureWorkflowRoute route = decideCaptureWorkflowRoute(
+        region, longshot_result_ready, annotated_result_ready);
     switch (route) {
       case CaptureWorkflowRoute::AnnotatedResult:
-        if (results.getImage(active_result_id) == nullptr) {
-          active_result_id = results.publish(region.annotated_image);
-        }
-        if (active_result_id != kInvalidResultId) {
+        if (annotated_result_ready &&
+            results.getImage(active_result_id) != nullptr) {
           dispatchResultAction(region.action, active_result_id);
         }
+        annotated_result_ready = false;
         return;
       case CaptureWorkflowRoute::StartLongShot:
         longshot_result_ready = false;
@@ -249,10 +251,11 @@ struct CaptureWorkflow::Impl {
 
     ActionRequest capture_request;
     capture_request.type = ActionType::CaptureRegion;
-    capture_request.x = region.x;
-    capture_request.y = region.y;
-    capture_request.width = region.width;
-    capture_request.height = region.height;
+    const ScreenPhysicalRect screen_region = region.screenRect();
+    capture_request.x = screen_region.x;
+    capture_request.y = screen_region.y;
+    capture_request.width = screen_region.width;
+    capture_request.height = screen_region.height;
 
     ActionResult capture_result;
     {
@@ -354,10 +357,11 @@ struct CaptureWorkflow::Impl {
     pending_longshot_request = LongShotRequest{};
     // 截屏失败时 background 为空，遮罩仍会退回纯半透明模式。
     selection_background = captureDesktopBackground();
-    initial_selection = SelectionResult{};
-    pending_selection = SelectionResult{};
+    initial_selection = SelectionIntent{};
+    pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     longshot_result_ready = false;
+    annotated_result_ready = false;
     stage = WorkflowStage::Selecting;
     showSelectionOverlay();
     if (!active) {
@@ -376,13 +380,14 @@ struct CaptureWorkflow::Impl {
       if (!selection_closed) {
         return;
       }
-      if (!selection_result_ready || pending_selection.cancelled) {
+      if (!selection_result_ready || !pending_selection.valid()) {
         finishWorkflow();
         return;
       }
 
       const CaptureWorkflowRoute route =
-          decideCaptureWorkflowRoute(pending_selection, longshot_result_ready);
+          decideCaptureWorkflowRoute(pending_selection, longshot_result_ready,
+                                     annotated_result_ready);
       if (route == CaptureWorkflowRoute::Edit) {
         if (!beginAnnotation(pending_selection)) {
           finishWorkflow();
@@ -404,10 +409,14 @@ struct CaptureWorkflow::Impl {
       return;
     }
 
-    pending_selection.annotated_image =
-        std::move(pending_annotation.rendered_image);
-    active_result_id = results.publish(pending_selection.annotated_image);
+    Image annotated_image = std::move(pending_annotation.rendered_image);
+    active_result_id = results.publish(std::move(annotated_image));
     if (active_result_id == kInvalidResultId) {
+      finishWorkflow();
+      return;
+    }
+    const Image* annotated_result = results.getImage(active_result_id);
+    if (annotated_result == nullptr) {
       finishWorkflow();
       return;
     }
@@ -419,14 +428,15 @@ struct CaptureWorkflow::Impl {
     // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
     selection_background = captureDesktopBackground();
     (void)composeCapturePreview(selection_background,
-                                pending_selection.annotated_image,
-                                pending_selection, coord::getVirtualScreen());
+                                *annotated_result, pending_selection.screenRect(),
+                                coord::getVirtualScreen());
     pending_selection.action = SelectionAction::None;
     pending_selection.cancelled = false;
     initial_selection = std::move(pending_selection);
-    pending_selection = SelectionResult{};
+    pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     annotation_result_ready = false;
+    annotated_result_ready = true;
     stage = WorkflowStage::Selecting;
     showSelectionOverlay();
   }
@@ -438,12 +448,13 @@ struct CaptureWorkflow::Impl {
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
-    initial_selection = SelectionResult{};
-    pending_selection = SelectionResult{};
+    initial_selection = SelectionIntent{};
+    pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     selection_closed = false;
     selection_result_ready = false;
     annotation_result_ready = false;
+    annotated_result_ready = false;
     stage = WorkflowStage::Idle;
     active = false;
 
@@ -473,12 +484,13 @@ struct CaptureWorkflow::Impl {
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
-    initial_selection = SelectionResult{};
-    pending_selection = SelectionResult{};
+    initial_selection = SelectionIntent{};
+    pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     selection_closed = false;
     selection_result_ready = false;
     annotation_result_ready = false;
+    annotated_result_ready = false;
     pending_overlay_error.clear();
   }
 
@@ -498,12 +510,13 @@ struct CaptureWorkflow::Impl {
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
     selection_background = Image{};
-    initial_selection = SelectionResult{};
-    pending_selection = SelectionResult{};
+    initial_selection = SelectionIntent{};
+    pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     selection_closed = false;
     selection_result_ready = false;
     annotation_result_ready = false;
+    annotated_result_ready = false;
     pending_overlay_error.clear();
     owner_window = nullptr;
   }
@@ -522,12 +535,13 @@ struct CaptureWorkflow::Impl {
   HWND recorded_owner_window{nullptr};
   LongShotRequest pending_longshot_request{};
   Image selection_background;
-  SelectionResult initial_selection;
-  SelectionResult pending_selection;
+  SelectionIntent initial_selection;
+  SelectionIntent pending_selection;
   AnnotationFinishResult pending_annotation;
   std::atomic<bool> shutting_down{false};
   bool active{false};
   bool longshot_result_ready{false};
+  bool annotated_result_ready{false};
   ResultId active_result_id{kInvalidResultId};
   bool selection_closed{false};
   bool selection_result_ready{false};

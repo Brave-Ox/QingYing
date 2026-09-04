@@ -54,7 +54,7 @@ void setOverlayPixel(std::vector<std::uint32_t>& pixels, int width, int height,
 
 // 绘制窗口吸附悬停高亮边框（矩形轮廓）。
 void drawHoverOutline(std::vector<std::uint32_t>& pixels, int width, int height,
-                      const SelectionResult& rect, std::uint32_t color,
+                      const OverlayClientRect& rect, std::uint32_t color,
                       int thickness) {
   if (rect.width <= 0 || rect.height <= 0) {
     return;
@@ -99,7 +99,7 @@ struct PreviewPanelCandidate {
 };
 
 PreviewPanel chooseLongShotPreviewPanel(int width, int height,
-                                        const SelectionResult& selection) {
+                                        const OverlayClientRect& selection) {
   const int selection_right = selection.x + selection.width;
   const int selection_bottom = selection.y + selection.height;
   const PreviewPanelCandidate candidates[] = {
@@ -160,7 +160,7 @@ PreviewPanel chooseLongShotPreviewPanel(int width, int height,
 }
 
 void drawLongShotPreview(std::vector<std::uint32_t>& pixels, int width,
-                          int height, const SelectionResult& selection,
+                          int height, const OverlayClientRect& selection,
                           const Image& preview) {
   if (preview.empty() || width <= 0 || height <= 0) {
     return;
@@ -254,8 +254,8 @@ bool OverlayRenderer::renderPixels(
   drawLongShotPreview(pixels, width, height, state.selection,
                       state.longshot_preview);
 
-  if (state.capture_passthrough &&
-      overlayPhaseHasSelection(state.phase) && !state.selection.cancelled) {
+  if (state.capture_passthrough && overlayPhaseHasSelection(state.phase) &&
+      !state.selection.empty()) {
     // Remove the border/handles as well as the hole's 1-alpha marker while a
     // worker captures. This keeps the selected pixels free of overlay UI.
     const int left = (std::max)(0, state.selection.x);
@@ -326,7 +326,7 @@ bool OverlayRenderer::render(HWND hwnd, const coord::VirtualScreenRect& screen,
   std::copy(pixels.begin(), pixels.end(),
             reinterpret_cast<std::uint32_t*>(dib_bits));
 
-  POINT dst{screen.left, screen.top};
+  POINT dst{screen.x, screen.y};
   SIZE size{screen.width, screen.height};
   POINT pt_src{0, 0};
   BLENDFUNCTION blend{};

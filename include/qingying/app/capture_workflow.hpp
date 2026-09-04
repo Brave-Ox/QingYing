@@ -28,8 +28,9 @@ enum class CaptureWorkflowRoute {
 };
 
 CaptureWorkflowRoute decideCaptureWorkflowRoute(
-    const SelectionResult& selection,
-    bool longshot_result_ready) noexcept;
+    const SelectionIntent& selection,
+    bool longshot_result_ready,
+    bool annotated_result_ready = false) noexcept;
 
 // Owns one interactive capture workflow. Overlay windows are non-modal; this
 // object keeps the small continuation state machine that advances selection,

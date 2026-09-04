@@ -1,4 +1,4 @@
-#include "qingying/app/capture_preview.hpp"
+﻿#include "qingying/app/capture_preview.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -19,11 +19,11 @@ bool imageStorageIsValid(const Image& image) {
 }  // namespace
 
 bool composeCapturePreview(Image& background, const Image& selection_image,
-                           const SelectionResult& selection,
+                           const ScreenPhysicalRect& selection,
                            const coord::VirtualScreenRect& screen) {
   if (!imageStorageIsValid(background) ||
       !imageStorageIsValid(selection_image) ||
-      selection.cancelled || selection.width <= 0 || selection.height <= 0 ||
+      selection.empty() ||
       selection_image.width != selection.width ||
       selection_image.height != selection.height ||
       background.width != screen.width || background.height != screen.height) {
@@ -34,15 +34,15 @@ bool composeCapturePreview(Image& background, const Image& selection_image,
       (std::min)(selection.width, selection_image.width);
   const int copy_height =
       (std::min)(selection.height, selection_image.height);
-  const int destination_x = selection.x - screen.left;
-  const int destination_y = selection.y - screen.top;
+  const ImagePixelRect destination =
+      coord::screenToImage(selection, screen);
   for (int source_y = 0; source_y < copy_height; ++source_y) {
-    const int target_y = destination_y + source_y;
+    const int target_y = destination.y + source_y;
     if (target_y < 0 || target_y >= background.height) {
       continue;
     }
     for (int source_x = 0; source_x < copy_width; ++source_x) {
-      const int target_x = destination_x + source_x;
+      const int target_x = destination.x + source_x;
       if (target_x < 0 || target_x >= background.width) {
         continue;
       }

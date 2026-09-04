@@ -1,19 +1,34 @@
 ﻿#pragma once
 
+#include "qingying/geometry/rect_types.h"
+
 #include <cstdint>
 
 namespace qingying {
 
 // 用户选中的屏幕矩形。owner window 在选区遮罩接管桌面之前记录。
-struct LongShotRequest {
+struct LongShotRequest : ScreenPhysicalRect {
   std::uintptr_t owner_window{0};
-  int x{0};
-  int y{0};
-  int width{0};
-  int height{0};
+
+  constexpr LongShotRequest() = default;
+
+  // Compatibility constructor for existing plugin and application callers.
+  // New code should pass a ScreenPhysicalRect explicitly.
+  constexpr LongShotRequest(std::uintptr_t owner_window_in, int x_in, int y_in,
+                            int width_in, int height_in)
+      : ScreenPhysicalRect{x_in, y_in, width_in, height_in},
+        owner_window(owner_window_in) {}
+
+  constexpr LongShotRequest(std::uintptr_t owner_window_in,
+                            ScreenPhysicalRect selection)
+      : ScreenPhysicalRect(selection), owner_window(owner_window_in) {}
 
   bool valid() const {
-    return owner_window != 0 && width > 0 && height > 0;
+    return owner_window != 0 && ScreenPhysicalRect::valid();
+  }
+
+  constexpr ScreenPhysicalRect selectionRect() const noexcept {
+    return ScreenPhysicalRect{x, y, width, height};
   }
 };
 
@@ -21,12 +36,23 @@ struct LongShotRequest {
 // 屏幕矩形为准；内容边界只用于判断当前 profile 是否能够处理该选区。
 struct LongShotProfileResult {
   std::uintptr_t scroll_target{0};
-  int content_x{0};
-  int content_y{0};
-  int content_width{0};
-  int content_height{0};
+  ScreenPhysicalRect content{};
+
+  constexpr LongShotProfileResult() = default;
+
+  // Compatibility constructor for profile implementations that still return
+  // four raw coordinates while migrating to the named rectangle.
+  constexpr LongShotProfileResult(std::uintptr_t scroll_target_in, int x_in,
+                                  int y_in, int width_in, int height_in)
+      : scroll_target(scroll_target_in),
+        content{x_in, y_in, width_in, height_in} {}
+
+  constexpr LongShotProfileResult(std::uintptr_t scroll_target_in,
+                                  ScreenPhysicalRect content_in)
+      : scroll_target(scroll_target_in), content(content_in) {}
 
   bool valid() const;
+  bool containsSelection(const ScreenPhysicalRect& selection) const;
   bool containsSelection(int x, int y, int width, int height) const;
 };
 

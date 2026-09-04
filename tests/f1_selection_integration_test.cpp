@@ -24,7 +24,7 @@ TEST(F1SelectionIntegrationTest, SelectionToPhysicalPixelsToCapture) {
   controller.begin(10, 10);
   controller.update(210, 160);
   controller.confirm();
-  ASSERT_FALSE(controller.selection().cancelled);
+  ASSERT_FALSE(controller.selection().empty());
   EXPECT_EQ(controller.selection().x, 10);
   EXPECT_EQ(controller.selection().y, 10);
   EXPECT_EQ(controller.selection().width, 200);
@@ -47,15 +47,14 @@ TEST(F1SelectionIntegrationTest, SelectionToPhysicalPixelsToCapture) {
   EXPECT_EQ(controller.selection().y, 30);
 
   // 4. 出参转物理（屏幕）坐标。
-  const SelectionResult sel = controller.selection();
-  const int screen_x = coord::clientToScreenX(sel.x, screen);
-  const int screen_y = coord::clientToScreenY(sel.y, screen);
+  const OverlayClientRect& client_selection = controller.selection();
+  const ScreenPhysicalRect sel =
+      coord::clientToScreen(client_selection, screen);
 
   // 5. 用真实 CaptureEngine 按物理像素截图，验证宽高与像素数量契约。
   CaptureEngine engine;
   Image image;
-  const ActionResult result =
-      engine.captureRegion(screen_x, screen_y, sel.width, sel.height, image);
+  const ActionResult result = engine.captureRegion(sel, image);
   ASSERT_TRUE(result.ok) << result.message;
   EXPECT_EQ(image.width, sel.width);
   EXPECT_EQ(image.height, sel.height);

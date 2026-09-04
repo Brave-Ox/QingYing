@@ -50,20 +50,20 @@ struct OverlayWindowData {
   SelectionHandle active_handle{SelectionHandle::None};
   WindowDetector window_detector;  // 窗口吸附检测
   bool has_hover{false};           // 是否悬停在可吸附窗口上
-  SelectionResult hover_rect;      // 悬停窗口矩形（客户区坐标）
+  OverlayClientRect hover_rect;     // 悬停窗口矩形（客户区坐标）
   Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
   SelectionAction longshot_pending_action{SelectionAction::None};
   bool capture_passthrough{false};
+  bool selection_locked{false};
   Image longshot_preview;
-  Image annotated_image;
 };
 
-SelectionResult toScreenSelection(const SelectionResult& client,
+SelectionIntent toScreenSelection(const OverlayClientRect& client,
                                   const coord::VirtualScreenRect& screen);
 bool updateOverlay(HWND hwnd, OverlayWindowData* data);
 bool showToolbar(HWND overlay, OverlayWindowData* data,
-                 const SelectionResult& selection_screen,
+                 const SelectionIntent& selection_screen,
                  const coord::VirtualScreenRect& screen);
 void handleToolbarCommand(OverlayWindowData* data,
                           SelectionToolbarCommand command);
@@ -87,7 +87,6 @@ void releaseImagePayload(OverlayWindowData* data) noexcept {
   }
   data->background = Image{};
   data->longshot_preview = Image{};
-  data->annotated_image = Image{};
 }
 
 void refreshToolbar(OverlayWindowData* data) {
@@ -138,7 +137,6 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
       return;
     }
     data->action = SelectionAction::LongShot;
-    data->annotated_image = Image{};
     data->longshot_pending_action = SelectionAction::None;
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
@@ -146,7 +144,7 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     refreshToolbar(data);
     updateOverlay(data->overlay, data);
 
-    SelectionResult result = toScreenSelection(data->controller.selection(),
+    SelectionIntent result = toScreenSelection(data->controller.selection(),
                                                data->screen);
     result.action = SelectionAction::LongShot;
     if (data->callback) {
@@ -237,7 +235,7 @@ void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
   }
 
   const bool selection_editable =
-      overlayPhaseHasSelection(data->phase) && data->annotated_image.empty();
+      overlayPhaseHasSelection(data->phase) && !data->selection_locked;
   SelectionHandle handle = SelectionHandle::None;
   if (data->drag == DragKind::Resize || data->drag == DragKind::Move) {
     handle = data->active_handle;
@@ -253,11 +251,14 @@ void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
 }
 
 // 选区从覆盖层客户区坐标 → 屏幕坐标（供工具栏定位与最终出参使用）。
-SelectionResult toScreenSelection(const SelectionResult& client,
+SelectionIntent toScreenSelection(const OverlayClientRect& client,
                                   const coord::VirtualScreenRect& screen) {
-  SelectionResult out = client;
-  out.x += screen.left;
-  out.y += screen.top;
+  SelectionIntent out;
+  out.cancelled = client.empty();
+  out.x = client.x + screen.x;
+  out.y = client.y + screen.y;
+  out.width = client.width;
+  out.height = client.height;
   return out;
 }
 
@@ -273,7 +274,6 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y) {
   HWND window = nullptr;
   WindowRect rect;
   if (data->window_detector.detectAt(screen_x, screen_y, window, rect)) {
-    data->hover_rect.cancelled = false;
     data->hover_rect.x = coord::screenToClientX(rect.left, data->screen);
     data->hover_rect.y = coord::screenToClientY(rect.top, data->screen);
     data->hover_rect.width = rect.width();
@@ -285,7 +285,7 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y) {
 }
 
 bool showToolbar(HWND overlay, OverlayWindowData* data,
-                 const SelectionResult& selection_screen,
+                 const SelectionIntent& selection_screen,
                  const coord::VirtualScreenRect& screen) {
   if (data == nullptr) {
     return false;
@@ -295,8 +295,8 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
   placement.selection_y = selection_screen.y;
   placement.selection_width = selection_screen.width;
   placement.selection_height = selection_screen.height;
-  placement.screen_left = screen.left;
-  placement.screen_top = screen.top;
+  placement.screen_left = screen.x;
+  placement.screen_top = screen.y;
   placement.screen_right = screen.right();
   placement.screen_bottom = screen.bottom();
   return data->toolbar.show(
@@ -311,12 +311,12 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   if (data == nullptr) {
     return false;
   }
-  const SelectionResult& selection = data->controller.selection();
+  const OverlayClientRect& selection = data->controller.selection();
   const OverlayRenderState render_state(
       selection, data->hover_rect, data->background, data->longshot_preview,
       data->phase,
-      overlayPhaseHasSelection(data->phase) && !selection.cancelled &&
-          data->annotated_image.empty(),
+      overlayPhaseHasSelection(data->phase) && !selection.empty() &&
+          !data->selection_locked,
       data->handle_radius, data->drag == DragKind::None && data->has_hover,
       data->capture_passthrough);
   return OverlayRenderer::render(hwnd, data->screen, render_state);
@@ -348,7 +348,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       if (data->phase == OverlayPhase::Selected) {
-        const SelectionResult selection_screen =
+        const SelectionIntent selection_screen =
             toScreenSelection(data->controller.selection(), data->screen);
         if (!showToolbar(hwnd, data, selection_screen, data->screen)) {
           data->controller.cancel();
@@ -436,7 +436,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       // 标注后的栅格结果与当前物理选区是一组不可拆分的结果。恢复操作条
       // 时锁定选区，避免拖动 / 缩放后继续对尺寸不匹配的旧图执行动作。
-      if (!data->annotated_image.empty()) {
+      if (data->selection_locked) {
         return 0;
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
@@ -530,7 +530,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         case DragKind::Create:
           data->controller.update(x, y);
           data->controller.confirm();
-          if (data->controller.selection().cancelled && data->has_hover) {
+          if (data->controller.selection().empty() && data->has_hover) {
             // 纯点击未拖拽 → 吸附悬停窗口。
             data->controller.setSelection(
                 data->hover_rect.x, data->hover_rect.y, data->hover_rect.width,
@@ -551,8 +551,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       data->drag = DragKind::None;
       data->active_handle = SelectionHandle::None;
 
-      const SelectionResult& selection = data->controller.selection();
-      if (selection.cancelled) {
+      const OverlayClientRect& selection = data->controller.selection();
+      if (selection.empty()) {
         (void)transitionOverlayPhase(data->phase, OverlayPhase::Sniffing);
         destroyToolbar(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -564,7 +564,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
-      const SelectionResult selection_screen =
+      const SelectionIntent selection_screen =
           toScreenSelection(selection, data->screen);
       if (!showToolbar(hwnd, data, selection_screen, data->screen)) {
         data->controller.cancel();
@@ -626,10 +626,9 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           (void)transitionOverlayPhase(data->phase, OverlayPhase::Closing);
         }
         destroyToolbar(data);
-        SelectionResult result = toScreenSelection(data->controller.selection(),
+        SelectionIntent result = toScreenSelection(data->controller.selection(),
                                                    data->screen);
         result.action = data->action;
-        result.annotated_image = std::move(data->annotated_image);
         SelectionCallback callback = std::move(data->callback);
         SelectionClosedCallback closed_callback =
             std::move(data->closed_callback);
@@ -691,8 +690,9 @@ bool SelectionOverlay::show(const Image& background,
                              SelectionCallback callback,
                              LongShotControlCallback
                                  longshot_control_callback,
-                             const SelectionResult& initial_selection,
-                             SelectionClosedCallback closed_callback) {
+                             const SelectionIntent& initial_selection,
+                             SelectionClosedCallback closed_callback,
+                             bool initial_selection_locked) {
   if (isVisible()) {
     return false;
   }
@@ -725,19 +725,18 @@ bool SelectionOverlay::show(const Image& background,
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
   data->longshot_control_callback = std::move(longshot_control_callback);
+  data->selection_locked = initial_selection_locked;
   data->owner_hwnd = &overlay_hwnd_;
   data->screen = coord::getVirtualScreen();
   data->controller.setBounds(data->screen.width, data->screen.height);
 
-  if (!initial_selection.cancelled && initial_selection.width > 0 &&
-      initial_selection.height > 0) {
-    data->controller.setSelection(
-        coord::screenToClientX(initial_selection.x, data->screen),
-        coord::screenToClientY(initial_selection.y, data->screen),
-        initial_selection.width, initial_selection.height);
-    if (!data->controller.selection().cancelled) {
+  if (initial_selection.valid()) {
+    const OverlayClientRect initial_client =
+        coord::screenToClient(initial_selection.screenRect(), data->screen);
+    data->controller.setSelection(initial_client.x, initial_client.y,
+                                  initial_client.width, initial_client.height);
+    if (!data->controller.selection().empty()) {
       (void)transitionOverlayPhase(data->phase, OverlayPhase::Selected);
-      data->annotated_image = initial_selection.annotated_image;
     }
   }
 
@@ -749,8 +748,8 @@ bool SelectionOverlay::show(const Image& background,
 
   HWND hwnd = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-      kOverlayClassName, L"", WS_POPUP | WS_VISIBLE, data->screen.left,
-      data->screen.top, data->screen.width, data->screen.height, nullptr,
+      kOverlayClassName, L"", WS_POPUP | WS_VISIBLE, data->screen.x,
+      data->screen.y, data->screen.width, data->screen.height, nullptr,
       nullptr, instance, data.get());
   if (hwnd == nullptr) {
     impl_->messages.drain();

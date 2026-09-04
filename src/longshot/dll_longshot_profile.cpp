@@ -66,20 +66,19 @@ bool toCoreTarget(const TargetApi& source, LongShotProfileResult& target) {
   }
 
   target.scroll_target = static_cast<std::uintptr_t>(source.scroll_target);
-  target.content_x = source.content_x;
-  target.content_y = source.content_y;
-  target.content_width = source.content_width;
-  target.content_height = source.content_height;
+  target.content = ScreenPhysicalRect{source.content_x, source.content_y,
+                                      source.content_width,
+                                      source.content_height};
   return target.valid();
 }
 
 bool sameProfileResult(const LongShotProfileResult& left,
                        const LongShotProfileResult& right) {
   return left.scroll_target == right.scroll_target &&
-         left.content_x == right.content_x &&
-         left.content_y == right.content_y &&
-         left.content_width == right.content_width &&
-         left.content_height == right.content_height;
+         left.content.x == right.content.x &&
+         left.content.y == right.content.y &&
+         left.content.width == right.content.width &&
+         left.content.height == right.content.height;
 }
 
 void closePluginSession(const PluginApi& plugin, SessionApi*& session) noexcept {

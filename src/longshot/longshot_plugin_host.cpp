@@ -71,10 +71,9 @@ bool convertTarget(const QingYingLongShotTargetV1& source,
   }
 
   target.scroll_target = static_cast<std::uintptr_t>(source.scroll_target);
-  target.content_x = source.content_x;
-  target.content_y = source.content_y;
-  target.content_width = source.content_width;
-  target.content_height = source.content_height;
+  target.content = ScreenPhysicalRect{source.content_x, source.content_y,
+                                      source.content_width,
+                                      source.content_height};
   return target.valid();
 }
 
