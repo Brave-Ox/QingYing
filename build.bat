@@ -58,37 +58,43 @@ if "%DO_CLEAN%"=="1" (
   if exist "build" rmdir /s /q "build"
 )
 
-rem Pick VS generator without writing a half-configured cache
-set "GENERATOR="
+rem Team baseline: require installed Visual Studio 2019 C++ build tools.
+rem CMake listing a generator does not prove that the corresponding VS is installed.
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+  echo [ERROR] Visual Studio Installer was not found.
+  echo         Install Visual Studio 2019 with the Desktop development with C++ workload.
+  exit /b 1
+)
+"%VSWHERE%" -latest -products * -version "[16.0,17.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | findstr /r "." >nul
+if errorlevel 1 (
+  echo [ERROR] Visual Studio 2019 C++ build tools are required by this project.
+  echo         Install the Desktop development with C++ workload, then run this script again.
+  exit /b 1
+)
+set "GENERATOR=Visual Studio 16 2019"
 set "ARCH=-A x64"
-cmake --help | findstr /C:"Visual Studio 16 2019" >nul 2>&1
-if not errorlevel 1 (
-  set "GENERATOR=Visual Studio 16 2019"
-  goto configure
-)
-cmake --help | findstr /C:"Visual Studio 17 2022" >nul 2>&1
-if not errorlevel 1 (
-  set "GENERATOR=Visual Studio 17 2022"
-  goto configure
-)
-set "ARCH="
-echo [WARN] VS 2019/2022 not listed by cmake --help, using default generator.
 
 :configure
 echo [INFO] Configure  config=%CONFIG%  tests=%BUILD_TESTS%
 
-set "CMAKE_ARGS=-DQINGYING_BUILD_TESTS=%BUILD_TESTS% -DQINGYING_VCPKG_ROOT=%VCPKG_ROOT%"
+set "CMAKE_ARGS=-DQINGYING_BUILD_TESTS=%BUILD_TESTS%"
 if "%BUILD_TESTS%"=="ON" (
   rem Toolchain is optional; CMakeLists also appends vcpkg installed prefix.
-  set "CMAKE_ARGS=!CMAKE_ARGS! -DCMAKE_TOOLCHAIN_FILE=%VCPKG_TOOLCHAIN%"
+  set "CMAKE_ARGS=!CMAKE_ARGS! -DQINGYING_VCPKG_ROOT=%VCPKG_ROOT% -DCMAKE_TOOLCHAIN_FILE=%VCPKG_TOOLCHAIN%"
 )
 
-if defined GENERATOR (
-  echo [INFO] Generator: %GENERATOR% ^(x64^)
-  cmake -S . -B build -G "!GENERATOR!" !ARCH! !CMAKE_ARGS!
-) else (
-  cmake -S . -B build !CMAKE_ARGS!
+if exist "build\CMakeCache.txt" (
+  findstr /C:"CMAKE_GENERATOR:INTERNAL=Visual Studio 16 2019" "build\CMakeCache.txt" >nul
+  if errorlevel 1 (
+    echo [ERROR] build\ was configured with a generator other than Visual Studio 2019.
+    echo         Run: build.bat clean
+    exit /b 1
+  )
 )
+echo [INFO] Toolchain: Visual Studio 2019 C++ build tools
+echo [INFO] Generator: %GENERATOR% ^(x64^)
+cmake -S . -B build -G "%GENERATOR%" %ARCH% %CMAKE_ARGS%
 if errorlevel 1 (
   echo [ERROR] CMake configure failed.
   exit /b 1
