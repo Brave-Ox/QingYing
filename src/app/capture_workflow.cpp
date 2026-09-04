@@ -249,13 +249,9 @@ void showSelectionOverlay() {
         return;
     }
 
-    ActionRequest capture_request;
-    capture_request.type = ActionType::CaptureRegion;
     const ScreenPhysicalRect screen_region = region.screenRect();
-    capture_request.x = screen_region.x;
-    capture_request.y = screen_region.y;
-    capture_request.width = screen_region.width;
-    capture_request.height = screen_region.height;
+    ActionRequest capture_request = makeActionRequest(
+        CaptureRegionRequest{screen_region});
 
     ActionResult capture_result;
     {

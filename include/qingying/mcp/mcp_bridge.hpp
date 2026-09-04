@@ -18,6 +18,11 @@ class McpBridge {
   bool start();
   void stop();
 
+  // The protocol layer hands the already-decoded typed request to this
+  // boundary. It validates the schema and forwards only to ActionDispatcher;
+  // no CaptureSession or GUI object is retained by MCP.
+  ActionResult submit(const ActionRequest& request) const;
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

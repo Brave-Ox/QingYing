@@ -12,6 +12,15 @@
 namespace qingying {
 namespace {
 
+ActionResult invalidPayload(const char* action) {
+  ActionResult result;
+  result.ok = false;
+  result.error_code = ErrorCode::kInvalidArgument;
+  result.message = "invalid payload for ";
+  result.message += action;
+  return result;
+}
+
 class StatusHandler final : public IActionHandler {
  public:
   ActionType type() const override { return ActionType::Status; }
@@ -36,12 +45,9 @@ class CaptureRegionHandler final : public IActionHandler {
   ActionType type() const override { return ActionType::CaptureRegion; }
 
   ActionResult handle(const ActionRequest& request) override {
-    if (request.width <= 0 || request.height <= 0) {
-      ActionResult r;
-      r.ok = false;
-      r.error_code = ErrorCode::kInvalidArgument;
-      r.message = "invalid capture region";
-      return r;
+    const auto* payload = std::get_if<CaptureRegionRequest>(&request.payload);
+    if (payload == nullptr) {
+      return invalidPayload("capture region");
     }
 
     Image image;
@@ -49,8 +55,7 @@ class CaptureRegionHandler final : public IActionHandler {
     if (capture_region_) {
       result = capture_region_(request, image);
     } else {
-      result = capture_.captureRegion(request.x, request.y, request.width,
-                                      request.height, image);
+      result = capture_.captureRegion(payload->region, image);
     }
     if (result.ok &&
         results_.publish(std::move(image)) == kInvalidResultId) {
@@ -74,8 +79,12 @@ class CopyHandler final : public IActionHandler {
 
   ActionType type() const override { return ActionType::Copy; }
 
-  ActionResult handle(const ActionRequest& /*request*/) override {
-    return result_actions_.copy(results_.currentId());
+  ActionResult handle(const ActionRequest& request) override {
+    const auto* payload = std::get_if<CopyRequest>(&request.payload);
+    if (payload == nullptr) {
+      return invalidPayload("copy");
+    }
+    return result_actions_.copy(results_.resolve(payload->result));
   }
 
  private:
@@ -91,7 +100,12 @@ class SaveHandler final : public IActionHandler {
   ActionType type() const override { return ActionType::Save; }
 
   ActionResult handle(const ActionRequest& request) override {
-    return result_actions_.save(results_.currentId(), request.save_path);
+    const auto* payload = std::get_if<SaveRequest>(&request.payload);
+    if (payload == nullptr) {
+      return invalidPayload("save");
+    }
+    return result_actions_.save(results_.resolve(payload->result),
+                                payload->path);
   }
 
  private:
@@ -106,8 +120,12 @@ class PinHandler final : public IActionHandler {
 
   ActionType type() const override { return ActionType::Pin; }
 
-  ActionResult handle(const ActionRequest& /*request*/) override {
-    return result_actions_.pin(results_.currentId());
+  ActionResult handle(const ActionRequest& request) override {
+    const auto* payload = std::get_if<PinRequest>(&request.payload);
+    if (payload == nullptr) {
+      return invalidPayload("pin");
+    }
+    return result_actions_.pin(results_.resolve(payload->result));
   }
 
  private:

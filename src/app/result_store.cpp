@@ -88,6 +88,18 @@ const Image* ResultStore::currentImage() const noexcept {
   return getImage(current_id_);
 }
 
+ResultId ResultStore::resolve(const ResultSelection& selection) const noexcept {
+  if (selection.kind == ResultSelectionKind::Current) {
+    return selection.result_id == kInvalidResultId ? current_id_
+                                                    : kInvalidResultId;
+  }
+  if (selection.kind == ResultSelectionKind::Explicit &&
+      selection.result_id != kInvalidResultId) {
+    return selection.result_id;
+  }
+  return kInvalidResultId;
+}
+
 void ResultStore::clear() noexcept {
   results_.clear();
   current_id_ = kInvalidResultId;

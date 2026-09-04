@@ -1,4 +1,4 @@
-# 轻映单元测试（通过 vcpkg 引入 GoogleTest）
+﻿# 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
   action_dispatcher_test.cpp
@@ -12,6 +12,7 @@ add_executable(qingying_tests
   color_convert_test.cpp
   color_picker_state_test.cpp
   longshot_request_adapter_test.cpp
+  mcp_bridge_test.cpp
   longshot_controller_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
@@ -99,6 +100,7 @@ target_include_directories(qingying_tests
 target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
+    qingying_mcp
     qingying_annotate
     qingying_capture
     qingying_export

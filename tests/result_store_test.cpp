@@ -47,6 +47,18 @@ TEST(ResultStoreTest, PublishCreatesIdsAndKeepsExplicitSnapshots) {
   EXPECT_EQ(current->image.pixels[0], 0xFF445566u);
 }
 
+TEST(ResultStoreTest, ResolvesCurrentAndExplicitResultSelections) {
+  ResultStore store;
+  const ResultId first_id = store.publish(makeImage(0xFF112233u));
+  const ResultId second_id = store.publish(makeImage(0xFF445566u));
+
+  EXPECT_EQ(store.resolve(ResultSelection::current()), second_id);
+  EXPECT_EQ(store.resolve(ResultSelection::specific(first_id)), first_id);
+  EXPECT_EQ(store.resolve(ResultSelection{
+                ResultSelectionKind::Explicit, kInvalidResultId}),
+            kInvalidResultId);
+}
+
 TEST(ResultStoreTest, InvalidPublishDoesNotReplaceCurrentResult) {
   ResultStore store;
   const ResultId current_id = store.publish(makeImage(0xFF112233u));

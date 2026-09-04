@@ -23,27 +23,26 @@ TEST(AppActionHandlersTest, RegistersP0Handlers) {
   qingying::registerAppHandlers(dispatcher, capture, result_store,
                                 result_actions);
 
-  qingying::ActionRequest status;
-  status.type = qingying::ActionType::Status;
+  const qingying::ActionRequest status =
+      qingying::makeActionRequest(qingying::StatusRequest{});
   const qingying::ActionResult status_result = dispatcher.dispatch(status);
   EXPECT_TRUE(status_result.ok);
 
-  qingying::ActionRequest copy;
-  copy.type = qingying::ActionType::Copy;
+  const qingying::ActionRequest copy =
+      qingying::makeActionRequest(qingying::CopyRequest{});
   const qingying::ActionResult copy_result = dispatcher.dispatch(copy);
   EXPECT_FALSE(copy_result.ok);
   EXPECT_EQ(copy_result.error_code, qingying::ErrorCode::kNotReady);
 
-  qingying::ActionRequest region;
-  region.type = qingying::ActionType::CaptureRegion;
-  region.width = 0;  // 非法宽高：handler 应在触达截屏前就拒绝，避免 GDI 环境依赖
-  region.height = 0;
+  const qingying::ActionRequest region = qingying::makeActionRequest(
+      qingying::CaptureRegionRequest{
+          qingying::ScreenPhysicalRect{0, 0, 0, 0}});
   const qingying::ActionResult region_result = dispatcher.dispatch(region);
   EXPECT_FALSE(region_result.ok);
   EXPECT_EQ(region_result.error_code, qingying::ErrorCode::kInvalidArgument);
 
-  qingying::ActionRequest pin;
-  pin.type = qingying::ActionType::Pin;
+  const qingying::ActionRequest pin =
+      qingying::makeActionRequest(qingying::PinRequest{});
   const qingying::ActionResult pin_result = dispatcher.dispatch(pin);
   EXPECT_FALSE(pin_result.ok);
   EXPECT_EQ(pin_result.error_code, qingying::ErrorCode::kNotReady);
@@ -70,10 +69,9 @@ TEST(AppActionHandlersTest, SuccessfulCapturePublishesExplicitResult) {
   qingying::registerAppHandlers(dispatcher, capture, result_store,
                                 result_actions, capture_region);
 
-  qingying::ActionRequest request;
-  request.type = qingying::ActionType::CaptureRegion;
-  request.width = 10;
-  request.height = 10;
+  const qingying::ActionRequest request = qingying::makeActionRequest(
+      qingying::CaptureRegionRequest{
+          qingying::ScreenPhysicalRect{0, 0, 10, 10}});
   const qingying::ActionResult result = dispatcher.dispatch(request);
 
   ASSERT_TRUE(result.ok);
@@ -103,8 +101,8 @@ TEST(AppActionHandlersTest, PinUsesLatestCaptureResult) {
   qingying::registerAppHandlers(dispatcher, capture, result_store,
                                 result_actions);
 
-  qingying::ActionRequest pin;
-  pin.type = qingying::ActionType::Pin;
+  const qingying::ActionRequest pin =
+      qingying::makeActionRequest(qingying::PinRequest{});
   const qingying::ActionResult result = dispatcher.dispatch(pin);
 
   EXPECT_TRUE(result.ok);
@@ -139,10 +137,9 @@ TEST(AppActionHandlersTest, FailedCaptureKeepsPreviousResult) {
   qingying::registerAppHandlers(dispatcher, capture, result_store,
                                 result_actions, fail_capture);
 
-  qingying::ActionRequest request;
-  request.type = qingying::ActionType::CaptureRegion;
-  request.width = 10;
-  request.height = 10;
+  const qingying::ActionRequest request = qingying::makeActionRequest(
+      qingying::CaptureRegionRequest{
+          qingying::ScreenPhysicalRect{0, 0, 10, 10}});
   const qingying::ActionResult result = dispatcher.dispatch(request);
 
   EXPECT_FALSE(result.ok);

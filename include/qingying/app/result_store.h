@@ -1,16 +1,13 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
+#include "qingying/action/types.hpp"
 
 #include <cstdint>
 #include <map>
 #include <optional>
 
 namespace qingying {
-
-using ResultId = std::uint64_t;
-
-constexpr ResultId kInvalidResultId = 0;
 
 // A stable, explicitly selected capture result. The image is copied out of
 // ResultStore so callers cannot mutate the stored result through a snapshot.
@@ -40,6 +37,10 @@ class ResultStore {
   const Image* getImage(ResultId result_id) const noexcept;
   const Image* currentImage() const noexcept;
   ResultId currentId() const noexcept { return current_id_; }
+
+  // Resolves current-result or explicit-result selection without exposing the
+  // store's internal map to action handlers.
+  ResultId resolve(const ResultSelection& selection) const noexcept;
 
   // Explicit reset for session/application teardown. Publishing a new result
   // does not discard older ids, which keeps explicit result selection valid;
