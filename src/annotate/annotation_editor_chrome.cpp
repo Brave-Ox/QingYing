@@ -1121,9 +1121,14 @@ void paintEditorToolbar(HDC hdc,
       default:
         break;
     }
-    drawToolbarItem(hdc, item.rect, item.icon, i == snapshot.toolbar_hover,
-                    selected, true, item.accent,
-                    item.id == kButtonGeometryId);
+    const ToolbarItemModel toolbar_item{
+        item.icon,
+        i == snapshot.toolbar_hover,
+        selected,
+        true,
+        item.accent,
+        item.id == kButtonGeometryId};
+    drawToolbarItem(hdc, item.rect, toolbar_item);
   }
 
   const int divider_top = snapshot.main_bar_rect.top + 8;

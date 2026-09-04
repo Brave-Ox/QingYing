@@ -28,6 +28,21 @@ if(WIN32)
   )
 endif()
 
+add_library(qingying_app_handlers STATIC
+  action_handlers.cpp
+)
+
+target_include_directories(qingying_app_handlers
+  PUBLIC ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(qingying_app_handlers
+  PUBLIC qingying_action
+  PRIVATE
+    qingying_capture
+    qingying_workflow
+)
+
 add_executable(qingying WIN32
   main.cpp
   application.cpp
@@ -35,7 +50,6 @@ add_executable(qingying WIN32
   autostart_settings.cpp
   tray_controller.cpp
   hotkey_manager.cpp
-  action_handlers.cpp
   ${PROJECT_SOURCE_DIR}/res/qingying.rc
 )
 
@@ -58,6 +72,7 @@ target_link_libraries(qingying
     qingying_command
     qingying_mcp
     qingying_workflow
+    qingying_app_handlers
 )
 
 if(WIN32)

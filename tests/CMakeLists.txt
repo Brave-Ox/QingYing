@@ -45,7 +45,6 @@ add_executable(qingying_tests
   window_detector_test.cpp
   tray_notify_icon_test.cpp
   tray_context_menu_test.cpp
-  ${CMAKE_SOURCE_DIR}/src/app/action_handlers.cpp
 )
 
 add_library(qingying_test_longshot_plugin MODULE
@@ -109,6 +108,7 @@ target_link_libraries(qingying_tests
     qingying_pin
     qingying_longshot
     qingying_workflow
+    qingying_app_handlers
     GTest::gtest
     GTest::gtest_main
 )

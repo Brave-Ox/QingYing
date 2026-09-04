@@ -175,10 +175,14 @@ struct SelectionToolbar::Impl {
     drawToolbarDivider(hdc, divider_x, client.top + divider_pad,
                        client.bottom - divider_pad);
     for (std::size_t i = 0; i < items.size(); ++i) {
-      drawToolbarItem(hdc, items[i].rect,
-                      toModernToolbarIcon(items[i].model.icon),
-                      static_cast<int>(i) == hover, false,
-                      items[i].model.enabled, false);
+      const ToolbarItemModel toolbar_item{
+          toModernToolbarIcon(items[i].model.icon),
+          static_cast<int>(i) == hover,
+          false,
+          items[i].model.enabled,
+          false,
+          false};
+      drawToolbarItem(hdc, items[i].rect, toolbar_item);
     }
     EndPaint(hwnd, &ps);
   }

@@ -6,7 +6,8 @@
 namespace qingying {
 
 // 把标注文档栅格化到源图的副本上：源图保持只读，结果写入 out。
-// 纯计算，无 Win32 依赖，可单元测试。
+// 几何图形、马赛克和像素合成不依赖 Win32；文字通过内部 GDI 栅格化边界
+// 写回 BGRA32 图像，公共 API 不暴露 HDC 等平台句柄。
 class AnnotationRenderer
 {
  public:

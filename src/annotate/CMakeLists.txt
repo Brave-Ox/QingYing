@@ -11,6 +11,7 @@ add_library(qingying_annotate STATIC
   annotation_color_picker.cpp
   annotation_editor_paint.cpp
   annotation_renderer.cpp
+  annotation_text_rasterizer.cpp
 )
 
 target_include_directories(qingying_annotate

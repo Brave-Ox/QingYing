@@ -1,4 +1,5 @@
 add_library(qingying_ui STATIC
+  toolbar_model.cpp
   modern_toolbar.cpp
 )
 

@@ -1485,6 +1485,14 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
                      bool hovered, bool selected, bool enabled, bool accent,
                      bool grouped)
 {
+  drawToolbarItem(hdc, cell,
+                  ToolbarItemModel{kind, hovered, selected, enabled, accent,
+                                   grouped});
+}
+
+void drawToolbarItem(HDC hdc, const RECT& cell,
+                     const ToolbarItemModel& model)
+{
   if (hdc == nullptr)
   {
     return;
@@ -1492,25 +1500,27 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
 
   const ModernToolbarColors colors = DefaultModernToolbarColors;
   const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-  const bool highlight = enabled && (hovered || selected || accent);
+  const bool highlight =
+      model.enabled && (model.hovered || model.selected || model.accent);
   if (highlight)
   {
-    const COLORREF fill = hovered ? colors.hover_fill : colors.selected_fill;
+    const COLORREF fill = model.hovered ? colors.hover_fill
+                                        : colors.selected_fill;
     fillRoundRect(hdc, cell, fill, fill, metrics.hover_radius);
   }
 
-  COLORREF icon_color = enabled ? colors.icon : colors.icon_disabled;
-  if (enabled && kind == ToolbarIconKind::Confirm)
+  COLORREF icon_color = model.enabled ? colors.icon : colors.icon_disabled;
+  if (model.enabled && model.icon == ToolbarIconKind::Confirm)
   {
     icon_color = colors.confirm;
   }
-  else if (enabled && kind == ToolbarIconKind::Cancel)
+  else if (model.enabled && model.icon == ToolbarIconKind::Cancel)
   {
     icon_color = colors.cancel;
   }
-  drawToolbarIcon(hdc, cell, kind, icon_color);
+  drawToolbarIcon(hdc, cell, model.icon, icon_color);
 
-  if (grouped && ensureGdiplus())
+  if (model.grouped && ensureGdiplus())
   {
     Gdiplus::Graphics graphics(hdc);
     configureIconGraphics(graphics);
@@ -1547,106 +1557,6 @@ void drawToolbarDivider(HDC hdc, int x, int top, int bottom)
   }
   MoveToEx(hdc, x, top, nullptr);
   lineTo(hdc, x, bottom);
-}
-
-const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
-{
-  // 使用码点转义，避免源文件编码导致 Tooltip 显示乱码。
-  switch (kind)
-  {
-    case ToolbarIconKind::Copy:
-      return L"\x590D\x5236";
-    case ToolbarIconKind::Save:
-      return L"\x4E0B\x8F7D\x56FE\x7247";
-    case ToolbarIconKind::Edit:
-      return L"\x7F16\x8F91";
-    case ToolbarIconKind::Pin:
-      return L"\x9489\x56FE";
-    case ToolbarIconKind::Rectangle:
-      return L"\x77E9\x5F62";
-    case ToolbarIconKind::Ellipse:
-      return L"\x692D\x5706";
-    case ToolbarIconKind::Geometry:
-      return L"\x51E0\x4F55";
-    case ToolbarIconKind::Fill:
-      return L"\x586B\x5145";
-    case ToolbarIconKind::LineSolid:
-      return L"\x5B9E\x7EBF";
-    case ToolbarIconKind::LineDashed:
-      return L"\x865A\x7EBF";
-    case ToolbarIconKind::LineDotted:
-      return L"\x70B9\x7EBF";
-    case ToolbarIconKind::Arrow:
-      return L"\x7BAD\x5934";
-    case ToolbarIconKind::Pen:
-      return L"\x753B\x7B14";
-    case ToolbarIconKind::Mosaic:
-      return L"\x9A6C\x8D5B\x514B";
-    case ToolbarIconKind::StrokeWidth:
-      return L"\x7C97\x7EC6";
-    case ToolbarIconKind::Text:
-      return L"\x6587\x5B57";
-    case ToolbarIconKind::Undo:
-      return L"\x64A4\x9500";
-    case ToolbarIconKind::Confirm:
-      return L"\x5B8C\x6210";
-    case ToolbarIconKind::Cancel:
-      return L"\x53D6\x6D88";
-    case ToolbarIconKind::Move:
-      return L"\x79FB\x52A8";
-    case ToolbarIconKind::Eyedropper:
-      return L"\x53D6\x8272\x5668";
-    case ToolbarIconKind::LongShot:
-      return L"\x957F\x622A\x56FE";
-    case ToolbarIconKind::Pause:
-      return L"\x6682\x505C";
-    case ToolbarIconKind::Resume:
-      return L"\x7EE7\x7EED";
-    case ToolbarIconKind::Stop:
-      return L"\x505C\x6B62";
-    default:
-      return L"";
-  }
-}
-
-const wchar_t* toolbarStrokePresetLabel(int index)
-{
-  switch (index)
-  {
-    case 0:
-      return L"\x7EC6";
-    case 1:
-      return L"\x4E2D";
-    case 2:
-      return L"\x7C97";
-    default:
-      return L"";
-  }
-}
-
-const wchar_t* toolbarColorPresetLabel(int index)
-{
-  switch (index)
-  {
-    case 0:
-      return L"\x7EA2";
-    case 1:
-      return L"\x6A59";
-    case 2:
-      return L"\x9EC4";
-    case 3:
-      return L"\x7EFF";
-    case 4:
-      return L"\x9752";
-    case 5:
-      return L"\x84DD";
-    case 6:
-      return L"\x7D2B";
-    case 7:
-      return L"\x767D";
-    default:
-      return L"";
-  }
 }
 
 HWND createToolbarTooltip(HWND owner)
@@ -1712,23 +1622,6 @@ void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,
   copyWide(storage, storage_chars, text);
   SendMessageW(tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&info));
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-}
-
-int modernToolbarHeight(const ModernToolbarMetrics& metrics)
-{
-  return metrics.item_size + metrics.bar_padding * 2;
-}
-
-int modernToolbarWidth(int item_count, int extra_width,
-                       const ModernToolbarMetrics& metrics)
-{
-  if (item_count < 0)
-  {
-    item_count = 0;
-  }
-  const int gaps = item_count > 0 ? item_count - 1 : 0;
-  return metrics.bar_padding * 2 + item_count * metrics.item_size +
-         gaps * metrics.gap + extra_width;
 }
 
 }  // namespace qingying

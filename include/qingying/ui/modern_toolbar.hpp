@@ -11,56 +11,13 @@
 
 #include <cstddef>
 
+#include "qingying/ui/toolbar_model.h"
+
 namespace qingying {
 
+// Win32/GDI 与 layered-window 绘制后端。纯布局和图标状态见 toolbar_model.h。
 // 框选操作条 / 标注底栏共用：白色圆角条 + 深色线标（PixPin 风格）。
 // 空闲态不铺深灰方钮；悬停/选中只用浅灰底。条上说明文字用 label。
-enum class ToolbarIconKind
-{
-  Copy,
-  Save,
-  Edit,
-  Pin,
-  Rectangle,
-  Ellipse,
-  Geometry,
-  Fill,
-  LineSolid,
-  LineDashed,
-  LineDotted,
-  Arrow,
-  Pen,
-  Mosaic,
-  Text,
-  StrokeWidth,
-  Undo,
-  Confirm,
-  Cancel,
-  Move,
-  Eyedropper,
-  LongShot,
-  Pause,
-  Resume,
-  Stop,
-};
-
-inline constexpr int kToolbarTooltipMaxChars = 16;
-
-struct ModernToolbarMetrics
-{
-  int item_size{28};
-  int gap{4};
-  int bar_padding{8};
-  int corner_radius{22};
-  int hover_radius{6};
-  int divider_gap{10};
-  int divider_width{1};
-  int font_combo_width{52};
-  int tooltip_delay_ms{400};
-};
-
-inline constexpr ModernToolbarMetrics DefaultModernToolbarMetrics{};
-
 struct ModernToolbarColors
 {
   COLORREF bar_fill{RGB(255, 255, 255)};
@@ -105,19 +62,14 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
                      bool hovered, bool selected, bool enabled, bool accent,
                      bool grouped = false);
 
-void drawToolbarDivider(HDC hdc, int x, int top, int bottom);
+// GDI 绘制后端的 Model 入口；上面的布尔参数保留旧调用兼容性。
+void drawToolbarItem(HDC hdc, const RECT& cell, const ToolbarItemModel& model);
 
-const wchar_t* toolbarIconLabel(ToolbarIconKind kind);
-const wchar_t* toolbarStrokePresetLabel(int index);
-const wchar_t* toolbarColorPresetLabel(int index);
+void drawToolbarDivider(HDC hdc, int x, int top, int bottom);
 
 HWND createToolbarTooltip(HWND owner);
 void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,
                         const wchar_t* text, wchar_t* storage,
                         std::size_t storage_chars);
-
-int modernToolbarHeight(const ModernToolbarMetrics& metrics);
-int modernToolbarWidth(int item_count, int extra_width,
-                       const ModernToolbarMetrics& metrics);
 
 }  // namespace qingying
