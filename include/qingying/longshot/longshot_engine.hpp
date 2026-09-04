@@ -5,6 +5,7 @@
 #include "qingying/longshot/longshot_profile.hpp"
 #include "qingying/longshot/longshot_profile_registry.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -34,12 +35,35 @@ struct LongShotFramePair {
 
 using LongShotProgressCallback = std::function<void(const Image&)>;
 using LongShotContinueCallback = std::function<bool()>;
+using LongShotCaptureCallback =
+    std::function<ActionResult(const ScreenPhysicalRect&, Image&)>;
+
+// Stable diagnostic stages for the synchronous long-shot engine. The value is
+// exposed as a string through ActionResult so the generic action layer does
+// not depend on long-shot headers or plugin ABI details.
+enum class LongShotFailureStage : std::uint8_t {
+  None,
+  RequestValidation,
+  SafetyLimit,
+  ProfileResolution,
+  ScrollInput,
+  ScrollSettle,
+  InitialCapture,
+  FrameCapture,
+  FrameValidation,
+  OverlapDetection,
+  Stitching,
+};
+
+const char* longShotFailureStageName(LongShotFailureStage stage) noexcept;
 
 class LongShotEngine {
  public:
   explicit LongShotEngine(CaptureEngine& capture, LongShotLimits limits = {});
   LongShotEngine(CaptureEngine& capture, LongShotProfileRegistry profiles,
                  LongShotLimits limits = {});
+  LongShotEngine(LongShotCaptureCallback capture,
+                 LongShotProfileRegistry profiles, LongShotLimits limits = {});
   ~LongShotEngine();
 
   LongShotEngine(const LongShotEngine&) = delete;

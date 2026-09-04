@@ -9,6 +9,7 @@
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 #include "qingying/capture/capture_engine.hpp"
+#include "qingying/longshot/longshot_engine.hpp"
 #include "qingying/overlay/coordinate_transform.hpp"
 #include "qingying/pin/pin_manager.hpp"
 #include "qingying/window/window_detector.hpp"
@@ -23,12 +24,58 @@ namespace qingying {
 
 namespace {
 
-const wchar_t* longShotFailureText(int error_code) {
-  if (error_code == ErrorCode::kLongShotUnsupported) {
+const wchar_t* longShotFailureStageText(const std::string& stage) {
+  if (stage == "request_validation") {
+    return L"请求校验";
+  }
+  if (stage == "safety_limit") {
+    return L"安全限制";
+  }
+  if (stage == "profile_resolution") {
+    return L"滚动目标识别";
+  }
+  if (stage == "scroll_input") {
+    return L"滚动输入";
+  }
+  if (stage == "scroll_settle") {
+    return L"等待滚动稳定";
+  }
+  if (stage == "initial_capture" || stage == "frame_capture") {
+    return L"屏幕采集";
+  }
+  if (stage == "frame_validation") {
+    return L"图像帧校验";
+  }
+  if (stage == "overlap_detection") {
+    return L"重叠区域匹配";
+  }
+  if (stage == "stitching") {
+    return L"图像拼接";
+  }
+  return L"未知阶段";
+}
+
+std::wstring longShotFailureText(const ActionResult& result) {
+  if (result.error_code == ErrorCode::kLongShotUnsupported &&
+      (result.failure_stage.empty() ||
+       (result.failure_stage == "profile_resolution" &&
+        result.failure_frame == 0))) {
     return L"当前窗口或框选区域不支持长截图。\n"
            L"请在受支持应用的可滚动内容区域内重新框选。";
   }
-  return L"长截图失败，请重新框选后再试。";
+
+  std::wstring text = L"长截图失败";
+  if (!result.failure_stage.empty()) {
+    text += L"\n失败阶段：";
+    text += longShotFailureStageText(result.failure_stage);
+  }
+  if (result.failure_frame > 0) {
+    text += L"（第 ";
+    text += std::to_wstring(result.failure_frame);
+    text += L" 帧）";
+  }
+  text += L"。\n请重新框选后再试。";
+  return text;
 }
 
 }  // 匿名命名空间
@@ -319,7 +366,7 @@ void showSelectionOverlay() {
     } else {
       longshot_result_ready = false;
       pending_overlay_error =
-          longShotFailureText(completion_result.error_code);
+          longShotFailureText(completion_result);
     }
 
     if (!selection_overlay.postLongShotFinished(overlay_success)) {

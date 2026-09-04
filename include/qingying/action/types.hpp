@@ -255,6 +255,10 @@ struct ActionResult {
   std::string message;
   // Optional payload: save path / MCP return value; plain UTF-8 text, no JSON dep.
   std::string data;
+  // Optional diagnostic context for failed operations. Empty/zero means the
+  // producer did not expose a more precise failure location.
+  std::string failure_stage;
+  int failure_frame{0};
 };
 
 }  // namespace qingying
