@@ -36,6 +36,7 @@ add_executable(qingying_tests
   longshot_plugin_host_test.cpp
   dll_longshot_profile_test.cpp
   builtin_longshot_plugin_test.cpp
+  browser_longshot_profile_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
   window_detector_test.cpp
@@ -69,6 +70,7 @@ if(WIN32)
   add_dependencies(qingying_tests
     qingying_notepad_longshot_plugin
     qingying_explorer_longshot_plugin
+    qingying_browser_longshot_plugin
   )
   add_custom_command(TARGET qingying_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -79,12 +81,17 @@ if(WIN32)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:qingying_explorer_longshot_plugin>
       "$<TARGET_FILE_DIR:qingying_tests>/plugins/longshot"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:qingying_browser_longshot_plugin>
+      "$<TARGET_FILE_DIR:qingying_tests>/plugins/longshot"
     COMMENT "Copy built-in long-shot plugins next to qingying_tests"
   )
 endif()
 
 target_include_directories(qingying_tests
-  PRIVATE ${CMAKE_SOURCE_DIR}/include
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/longshot
 )
 
 target_link_libraries(qingying_tests

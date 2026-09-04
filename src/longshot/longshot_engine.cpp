@@ -247,7 +247,12 @@ ActionResult LongShotEngine::captureSelection(
     return makeSuccess();
   }
 
-  ImageStitcher stitcher;
+  ImageStitchOptions stitch_options;
+  stitch_options.min_overlap_rows = 16;
+  stitch_options.right_edge_exclusion_pixels = 12;
+  stitch_options.minimum_match_per_mille = 980;
+  stitch_options.require_overlap = true;
+  ImageStitcher stitcher(stitch_options);
   int frame_count = 1;
   while (frame_count < impl_->limits.max_frames &&
          stitched.height < impl_->limits.max_output_height) {

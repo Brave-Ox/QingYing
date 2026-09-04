@@ -53,6 +53,17 @@ bool ImageStitcher::rowsMatch(const Image& accumulated, const Image& next,
                               int overlap_rows) const {
   const int step = std::max(1, options_.sample_step);
   const int width = accumulated.width;
+  const int first_x = std::max(0, options_.left_edge_exclusion_pixels);
+  const int last_x =
+      width - std::max(0, options_.right_edge_exclusion_pixels);
+  if (first_x >= last_x) {
+    return false;
+  }
+
+  const std::uint16_t required_match_per_mille =
+      std::min<std::uint16_t>(options_.minimum_match_per_mille, 1000u);
+  std::uint64_t matched_samples = 0;
+  std::uint64_t total_samples = 0;
 
   const auto pixelAt = [](const Image& image, int x, int y) {
     return image.pixels[static_cast<std::size_t>(y) *
@@ -60,41 +71,45 @@ bool ImageStitcher::rowsMatch(const Image& accumulated, const Image& next,
                         static_cast<std::size_t>(x)];
   };
 
+  const auto recordMatch = [&matched_samples, &total_samples, this,
+                            &pixelAt](const Image& left, int left_x,
+                                      int left_y, const Image& right,
+                                      int right_x, int right_y) {
+    ++total_samples;
+    if (pixelsMatch(pixelAt(left, left_x, left_y),
+                    pixelAt(right, right_x, right_y))) {
+      ++matched_samples;
+    }
+  };
+
+  const auto recordSampledRow = [&recordMatch, first_x, last_x, step,
+                                 &accumulated, &next](int accumulated_y,
+                                                     int next_y) {
+    for (int x = first_x; x < last_x; x += step) {
+      recordMatch(accumulated, x, accumulated_y, next, x, next_y);
+    }
+    const int rightmost_x = last_x - 1;
+    if ((rightmost_x - first_x) % step != 0) {
+      recordMatch(accumulated, rightmost_x, accumulated_y, next, rightmost_x,
+                  next_y);
+    }
+  };
+
   for (int y = 0; y < overlap_rows; y += step) {
     const int accumulated_y = accumulated.height - overlap_rows + y;
-    for (int x = 0; x < width; x += step) {
-      if (!pixelsMatch(pixelAt(accumulated, x, accumulated_y),
-                       pixelAt(next, x, y))) {
-        return false;
-      }
-    }
-
-    // Always include the right edge of each sampled row.
-    if ((width - 1) % step != 0 &&
-        !pixelsMatch(pixelAt(accumulated, width - 1, accumulated_y),
-                     pixelAt(next, width - 1, y))) {
-      return false;
-    }
+    recordSampledRow(accumulated_y, y);
   }
 
   // Always include the last overlap row when it was skipped by the step.
   if ((overlap_rows - 1) % step != 0) {
     const int accumulated_y = accumulated.height - 1;
     const int next_y = overlap_rows - 1;
-    for (int x = 0; x < width; x += step) {
-      if (!pixelsMatch(pixelAt(accumulated, x, accumulated_y),
-                       pixelAt(next, x, next_y))) {
-        return false;
-      }
-    }
-    if ((width - 1) % step != 0 &&
-        !pixelsMatch(pixelAt(accumulated, width - 1, accumulated_y),
-                     pixelAt(next, width - 1, next_y))) {
-      return false;
-    }
+    recordSampledRow(accumulated_y, next_y);
   }
 
-  return true;
+  return total_samples > 0 &&
+         matched_samples * 1000u >=
+             total_samples * required_match_per_mille;
 }
 
 bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
@@ -143,6 +158,9 @@ bool ImageStitcher::append(Image& accumulated, const Image& next,
 
   int detected_overlap = 0;
   if (!findOverlap(accumulated, next, detected_overlap)) {
+    return false;
+  }
+  if (options_.require_overlap && detected_overlap == 0) {
     return false;
   }
 

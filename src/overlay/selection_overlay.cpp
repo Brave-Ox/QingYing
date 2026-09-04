@@ -374,6 +374,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
+        data->capture_passthrough = false;
         data->longshot_pending_action = SelectionAction::None;
         if (!success) {
           // Failure dialogs are shown by Application only after this topmost

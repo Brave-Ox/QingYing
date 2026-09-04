@@ -94,6 +94,58 @@ TEST(ImageStitcherTest, SupportsSmallChannelDifferences) {
   EXPECT_EQ(overlap, 3);
 }
 
+TEST(ImageStitcherTest, IgnoresMovingRightEdgeWhenFindingOverlap) {
+  Image accumulated = makeStrip(40, 30, 0);  // rows 0..29
+  Image next = makeStrip(40, 24, 6);         // rows 6..29; overlap is 24
+  for (int y = 0; y < next.height; ++y) {
+    for (int x = 38; x < next.width; ++x) {
+      next.pixels[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(next.width) +
+                  static_cast<std::size_t>(x)] = 0xFF101010u;
+    }
+  }
+
+  ImageStitchOptions options;
+  options.right_edge_exclusion_pixels = 2;
+  ImageStitcher stitcher(options);
+
+  int overlap = 0;
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, overlap));
+  EXPECT_EQ(overlap, 24);
+}
+
+TEST(ImageStitcherTest, ToleratesSparseDynamicPixelsWhenFindingOverlap) {
+  Image accumulated = makeStrip(40, 30, 0);  // rows 0..29
+  Image next = makeStrip(40, 24, 6);         // rows 6..29; overlap is 24
+  for (int y = 0; y < next.height; y += 8) {
+    next.pixels[static_cast<std::size_t>(y) *
+                    static_cast<std::size_t>(next.width) +
+                12u] = 0xFF102030u;
+  }
+
+  ImageStitchOptions options;
+  options.minimum_match_per_mille = 950;
+  ImageStitcher stitcher(options);
+
+  int overlap = 0;
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, overlap));
+  EXPECT_EQ(overlap, 24);
+}
+
+TEST(ImageStitcherTest, RefusesToAppendNonOverlappingFramesWhenRequired) {
+  Image accumulated = makeStrip(8, 10, 0);
+  const Image next = makeStrip(8, 6, 100);
+
+  ImageStitchOptions options;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+
+  int overlap = -1;
+  EXPECT_FALSE(stitcher.append(accumulated, next, &overlap));
+  EXPECT_EQ(overlap, 0);
+  EXPECT_EQ(accumulated.height, 10);
+}
+
 TEST(ImageStitcherTest, RejectsDifferentWidths) {
   Image accumulated = makeStrip(4, 5, 0);
   const Image next = makeStrip(5, 3, 3);

@@ -6,6 +6,7 @@ add_library(qingying_longshot STATIC
   longshot_profile.cpp
   longshot_profile_registry.cpp
   win32_scroll_helpers.cpp
+  browser_longshot_resolver.cpp
 )
 
 target_include_directories(qingying_longshot
@@ -64,11 +65,23 @@ if(WIN32)
     qingying_explorer_longshot_plugin
   )
 
+  add_library(qingying_browser_longshot_plugin MODULE
+    browser_longshot_plugin.cpp
+    browser_longshot_resolver.cpp
+    builtin_longshot_plugin_support.cpp
+    longshot_profile.cpp
+  )
+  qingying_configure_longshot_plugin(
+    qingying_browser_longshot_plugin
+    qingying_browser_longshot_plugin
+  )
+
   # app 仅调用这一通用入口，不再维护内置长截图插件的具体依赖。
   function(qingying_deploy_longshot_runtime application_target)
     add_dependencies(${application_target}
       qingying_notepad_longshot_plugin
       qingying_explorer_longshot_plugin
+      qingying_browser_longshot_plugin
     )
     add_custom_command(TARGET ${application_target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -78,6 +91,9 @@ if(WIN32)
         "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:qingying_explorer_longshot_plugin>
+        "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:qingying_browser_longshot_plugin>
         "$<TARGET_FILE_DIR:${application_target}>/plugins/longshot"
       COMMENT "Deploy built-in long-shot plugins next to ${application_target}"
     )

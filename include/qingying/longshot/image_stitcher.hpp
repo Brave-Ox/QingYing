@@ -13,6 +13,10 @@ struct ImageStitchOptions {
   int max_overlap_rows{0};  // 0 means no explicit upper bound.
   int sample_step{4};
   std::uint8_t channel_tolerance{0};
+  int left_edge_exclusion_pixels{0};
+  int right_edge_exclusion_pixels{0};
+  std::uint16_t minimum_match_per_mille{1000};
+  bool require_overlap{false};
 };
 
 class ImageStitcher {

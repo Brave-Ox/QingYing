@@ -73,78 +73,132 @@ void drawHoverOutline(std::vector<std::uint32_t>& pixels, int width, int height,
   }
 }
 
-bool rectanglesIntersect(int left_a, int top_a, int right_a, int bottom_a,
-                         int left_b, int top_b, int right_b, int bottom_b) {
-  return left_a < right_b && left_b < right_a && top_a < bottom_b &&
-         top_b < bottom_a;
+constexpr int kMaxPreviewWidth = 440;
+constexpr int kMaxPreviewHeight = 720;
+constexpr int kPreviewPadding = 6;
+constexpr int kPreviewGap = 14;
+constexpr std::uint32_t kPreviewPanelPixel = 0xF0222222u;
+constexpr std::uint32_t kPreviewPanelBorder = 0xFFFF8000u;
+
+struct PreviewPanel {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+  bool valid{false};
+};
+
+enum class PreviewPanelAnchor { Right, Left, Below, Above };
+
+struct PreviewPanelCandidate {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+  PreviewPanelAnchor anchor{PreviewPanelAnchor::Right};
+};
+
+PreviewPanel chooseLongShotPreviewPanel(int width, int height,
+                                        const SelectionResult& selection) {
+  const int selection_right = selection.x + selection.width;
+  const int selection_bottom = selection.y + selection.height;
+  const PreviewPanelCandidate candidates[] = {
+      {selection_right + kPreviewGap, selection.y,
+       width - selection_right - kPreviewGap, selection.height,
+       PreviewPanelAnchor::Right},
+      {0, selection.y, selection.x - kPreviewGap, selection.height,
+       PreviewPanelAnchor::Left},
+      {selection.x, selection_bottom + kPreviewGap, selection.width,
+       height - selection_bottom - kPreviewGap, PreviewPanelAnchor::Below},
+      {selection.x, 0, selection.width, selection.y - kPreviewGap,
+       PreviewPanelAnchor::Above},
+  };
+
+  PreviewPanel panel;
+  int best_area = 0;
+  for (const PreviewPanelCandidate& candidate : candidates) {
+    const int panel_width = (std::min)(
+        candidate.width, kMaxPreviewWidth + kPreviewPadding * 2);
+    const int panel_height = (std::min)(
+        candidate.height, kMaxPreviewHeight + kPreviewPadding * 2);
+    if (panel_width <= kPreviewPadding * 2 ||
+        panel_height <= kPreviewPadding * 2) {
+      continue;
+    }
+
+    const int area = panel_width * panel_height;
+    if (area <= best_area) {
+      continue;
+    }
+
+    PreviewPanel candidate_panel;
+    candidate_panel.width = panel_width;
+    candidate_panel.height = panel_height;
+    switch (candidate.anchor) {
+      case PreviewPanelAnchor::Right:
+        candidate_panel.x = candidate.x;
+        candidate_panel.y = candidate.y;
+        break;
+      case PreviewPanelAnchor::Left:
+        candidate_panel.x = candidate.x + candidate.width - panel_width;
+        candidate_panel.y = candidate.y;
+        break;
+      case PreviewPanelAnchor::Below:
+        candidate_panel.x = candidate.x + candidate.width - panel_width;
+        candidate_panel.y = candidate.y;
+        break;
+      case PreviewPanelAnchor::Above:
+        candidate_panel.x = candidate.x + candidate.width - panel_width;
+        candidate_panel.y = candidate.y + candidate.height - panel_height;
+        break;
+    }
+    candidate_panel.valid = true;
+    panel = candidate_panel;
+    best_area = area;
+  }
+  return panel;
 }
 
 void drawLongShotPreview(std::vector<std::uint32_t>& pixels, int width,
-                         int height, const SelectionResult& selection,
-                         const Image& preview) {
+                          int height, const SelectionResult& selection,
+                          const Image& preview) {
   if (preview.empty() || width <= 0 || height <= 0) {
     return;
   }
 
-  constexpr int kMaxPreviewWidth = 440;
-  constexpr int kMaxPreviewHeight = 720;
-  constexpr int kPreviewPadding = 6;
-  constexpr int kPreviewGap = 14;
-  constexpr std::uint32_t kPanelPixel = 0xF0222222u;
-  constexpr std::uint32_t kPanelBorder = 0xFFFF8000u;
-
-  const int scale_x = kMaxPreviewWidth / preview.width;
-  const int scale_y = kMaxPreviewHeight / preview.height;
-  const int scale = (std::max)(1, (std::min)(scale_x, scale_y));
-  const int image_width =
-      (std::max)(1, (std::min)(kMaxPreviewWidth, preview.width * scale));
-  const int image_height =
-      (std::max)(1, (std::min)(kMaxPreviewHeight, preview.height * scale));
-  const int panel_width = image_width + kPreviewPadding * 2;
-  const int panel_height = image_height + kPreviewPadding * 2;
-
-  const int selection_left = selection.x;
-  const int selection_top = selection.y;
-  const int selection_right = selection.x + selection.width;
-  const int selection_bottom = selection.y + selection.height;
-
-  struct Candidate {
-    int x;
-    int y;
-  };
-  const Candidate candidates[] = {
-      {selection_right + kPreviewGap, selection_top},
-      {selection_left - panel_width - kPreviewGap, selection_top},
-      {selection_left, selection_bottom + kPreviewGap},
-      {selection_left, selection_top - panel_height - kPreviewGap},
-      {(width - panel_width) / 2, (height - panel_height) / 2},
-  };
-
-  int panel_x = candidates[0].x;
-  int panel_y = candidates[0].y;
-  for (const Candidate& candidate : candidates) {
-    const int right = candidate.x + panel_width;
-    const int bottom = candidate.y + panel_height;
-    if (candidate.x >= 0 && candidate.y >= 0 && right <= width &&
-        bottom <= height &&
-        !rectanglesIntersect(candidate.x, candidate.y, right, bottom,
-                             selection_left, selection_top, selection_right,
-                             selection_bottom)) {
-      panel_x = candidate.x;
-      panel_y = candidate.y;
-      break;
-    }
+  const PreviewPanel panel =
+      chooseLongShotPreviewPanel(width, height, selection);
+  if (!panel.valid) {
+    return;
   }
 
-  panel_x = (std::max)(0, (std::min)(panel_x, width - panel_width));
-  panel_y = (std::max)(0, (std::min)(panel_y, height - panel_height));
+  const int available_width = panel.width - kPreviewPadding * 2;
+  const int available_height = panel.height - kPreviewPadding * 2;
+  const std::int64_t width_for_full_height =
+      static_cast<std::int64_t>(preview.width) * available_height /
+      preview.height;
+  int image_width = 0;
+  int image_height = 0;
+  if (width_for_full_height <= available_width) {
+    image_width = (std::max)(1, static_cast<int>(width_for_full_height));
+    image_height = available_height;
+  } else {
+    image_width = available_width;
+    image_height = (std::max)(
+        1, static_cast<int>(static_cast<std::int64_t>(preview.height) *
+                            available_width / preview.width));
+  }
+  const int image_x = panel.x + kPreviewPadding +
+                      (available_width - image_width) / 2;
+  const int image_y = panel.y + kPreviewPadding +
+                      (available_height - image_height) / 2;
 
-  for (int y = 0; y < panel_height; ++y) {
-    for (int x = 0; x < panel_width; ++x) {
-      const bool border = x == 0 || y == 0 || x == panel_width - 1 ||
-                          y == panel_height - 1;
-      setOverlayPixel(pixels, width, height, panel_x + x, panel_y + y,
-                      border ? kPanelBorder : kPanelPixel);
+  for (int y = 0; y < panel.height; ++y) {
+    for (int x = 0; x < panel.width; ++x) {
+      const bool border = x == 0 || y == 0 || x == panel.width - 1 ||
+                          y == panel.height - 1;
+      setOverlayPixel(pixels, width, height, panel.x + x, panel.y + y,
+                      border ? kPreviewPanelBorder : kPreviewPanelPixel);
     }
   }
 
@@ -159,8 +213,7 @@ void drawLongShotPreview(std::vector<std::uint32_t>& pixels, int width,
           static_cast<int>(static_cast<std::int64_t>(x) * preview.width /
                            image_width));
       setOverlayPixel(
-          pixels, width, height, panel_x + kPreviewPadding + x,
-          panel_y + kPreviewPadding + y,
+          pixels, width, height, image_x + x, image_y + y,
           preview.pixels[static_cast<std::size_t>(source_y) *
                              static_cast<std::size_t>(preview.width) +
                          static_cast<std::size_t>(source_x)]);
