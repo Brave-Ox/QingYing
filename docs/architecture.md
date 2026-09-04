@@ -148,7 +148,7 @@ app → workflow + 上述服务（Composition Root）
 - `ActionResult.ok == false` 时必须给稳定 `error_code` 和可读 `message`；
 - `ActionResult.data` 只放轻量 UTF-8 结果，不传像素；
 - `CaptureSession` 当前承载“最近一张有效结果”的 UI 语义；
-- 失败不得用空图覆盖上一张有效长截图结果。
+- 新截图开始时释放上一张结果；失败后不恢复旧结果，避免常驻进程长期持有大块像素缓冲。
 
 `ActionRequest` 目前是包含所有动作字段的统一结构体。F8/F9 扩展前应迁移为类型安全 payload，见 [架构如何调整](架构如何调整.md)。
 

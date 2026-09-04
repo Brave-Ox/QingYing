@@ -113,7 +113,7 @@
 - `LongShotController` 管理长截图 worker、暂停 / 停止 token 与 UI 线程完成消息；
 - Overlay 保持选区孔洞透传并显示累计预览；
 - 暂停 / 继续、停止，以及暂停后选择复制 / 保存 / Pin 的收尾行为；
-- 失败时结束 worker、关闭或恢复 Overlay，并保留上一张有效 Session 结果。
+- 失败时结束 worker、关闭或恢复 Overlay，并清理当前 ResultStore 结果，避免常驻进程保留上一张大图。
 
 尚未完成：
 

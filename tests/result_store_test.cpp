@@ -25,7 +25,7 @@ TEST(ResultStoreTest, EmptyByDefault) {
   EXPECT_FALSE(store.get(1).has_value());
 }
 
-TEST(ResultStoreTest, PublishCreatesIdsAndKeepsExplicitSnapshots) {
+TEST(ResultStoreTest, PublishReplacesPreviousResult) {
   ResultStore store;
 
   const ResultId first_id = store.publish(makeImage(0xFF112233u));
@@ -36,10 +36,7 @@ TEST(ResultStoreTest, PublishCreatesIdsAndKeepsExplicitSnapshots) {
   EXPECT_NE(first_id, second_id);
   EXPECT_EQ(store.currentId(), second_id);
 
-  const auto first = store.get(first_id);
-  ASSERT_TRUE(first.has_value());
-  EXPECT_EQ(first->result_id, first_id);
-  EXPECT_EQ(first->image.pixels[0], 0xFF112233u);
+  EXPECT_FALSE(store.get(first_id).has_value());
 
   const auto current = store.current();
   ASSERT_TRUE(current.has_value());
@@ -54,6 +51,7 @@ TEST(ResultStoreTest, ResolvesCurrentAndExplicitResultSelections) {
 
   EXPECT_EQ(store.resolve(ResultSelection::current()), second_id);
   EXPECT_EQ(store.resolve(ResultSelection::specific(first_id)), first_id);
+  EXPECT_FALSE(store.get(first_id).has_value());
   EXPECT_EQ(store.resolve(ResultSelection{
                 ResultSelectionKind::Explicit, kInvalidResultId}),
             kInvalidResultId);
@@ -79,6 +77,17 @@ TEST(ResultStoreTest, ClearDropsAllPublishedResults) {
   const ResultId result_id = store.publish(makeImage(0xFF112233u));
 
   store.clear();
+
+  EXPECT_EQ(store.currentId(), kInvalidResultId);
+  EXPECT_FALSE(store.current().has_value());
+  EXPECT_FALSE(store.get(result_id).has_value());
+}
+
+TEST(ResultStoreTest, ReleaseDropsTheSelectedResult) {
+  ResultStore store;
+  const ResultId result_id = store.publish(makeImage(0xFF112233u));
+
+  store.release(result_id);
 
   EXPECT_EQ(store.currentId(), kInvalidResultId);
   EXPECT_FALSE(store.current().has_value());

@@ -50,6 +50,10 @@ class CaptureRegionHandler final : public IActionHandler {
       return invalidPayload("capture region");
     }
 
+    // A new capture starts a new result lifetime. Do not retain the previous
+    // full-size image when this attempt later fails.
+    results_.clear();
+
     Image image;
     ActionResult result;
     if (capture_region_) {

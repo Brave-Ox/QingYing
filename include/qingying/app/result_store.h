@@ -4,7 +4,6 @@
 #include "qingying/action/types.hpp"
 
 #include <cstdint>
-#include <map>
 #include <optional>
 
 namespace qingying {
@@ -20,11 +19,14 @@ struct ResultSnapshot {
   }
 };
 
-// Owns published capture results and the current-result selection. A failed
-// capture never reaches this store, so it cannot replace the current result.
+// Owns at most one published capture result and the current-result selection.
+// Capture entry points clear the previous result before attempting a new
+// capture, so a failed capture leaves the store empty instead of retaining a
+// large stale pixel buffer.
 class ResultStore {
  public:
-  // Returns a new id, or kInvalidResultId when image is malformed.
+  // Replaces the current image and returns a new id, or kInvalidResultId when
+  // image is malformed.
   ResultId publish(Image image);
 
   // Returns a copy of the requested result so the stored image remains owned
@@ -39,19 +41,21 @@ class ResultStore {
   ResultId currentId() const noexcept { return current_id_; }
 
   // Resolves current-result or explicit-result selection without exposing the
-  // store's internal map to action handlers.
+  // store's internal storage to action handlers.
   ResultId resolve(const ResultSelection& selection) const noexcept;
 
-  // Explicit reset for session/application teardown. Publishing a new result
-  // does not discard older ids, which keeps explicit result selection valid;
-  // ids are not reused after clear().
+  // Releases the current image when the owning operation has finished.
+  void release(ResultId result_id) noexcept;
+
+  // Explicit reset for session/application teardown. Ids are not reused after
+  // clear().
   void clear() noexcept;
 
  private:
   static bool isValidImage(const Image& image) noexcept;
   ResultId allocateId();
 
-  std::map<ResultId, Image> results_;
+  std::optional<Image> current_image_;
   ResultId current_id_{kInvalidResultId};
   ResultId next_id_{1};
 };

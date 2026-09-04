@@ -19,30 +19,15 @@ bool ResultStore::isValidImage(const Image& image) noexcept {
 }
 
 ResultId ResultStore::allocateId() {
-  if (results_.size() >=
-      static_cast<std::size_t>((std::numeric_limits<ResultId>::max)() - 1)) {
-    return kInvalidResultId;
-  }
-
   ResultId candidate = next_id_;
-  do {
-    if (candidate == kInvalidResultId) {
-      candidate = 1;
-    }
-    if (results_.find(candidate) == results_.end()) {
-      next_id_ = candidate + 1;
-      if (next_id_ == kInvalidResultId) {
-        next_id_ = 1;
-      }
-      return candidate;
-    }
-    ++candidate;
-    if (candidate == kInvalidResultId) {
-      candidate = 1;
-    }
-  } while (candidate != next_id_);
-
-  return kInvalidResultId;
+  if (candidate == kInvalidResultId) {
+    candidate = 1;
+  }
+  next_id_ = candidate + 1;
+  if (next_id_ == kInvalidResultId) {
+    next_id_ = 1;
+  }
+  return candidate;
 }
 
 ResultId ResultStore::publish(Image image) {
@@ -55,7 +40,11 @@ ResultId ResultStore::publish(Image image) {
     return kInvalidResultId;
   }
 
-  results_.emplace(result_id, std::move(image));
+  // Release the old pixel buffer before taking ownership of the new one.
+  // This also makes the replacement semantics explicit when a caller does
+  // not clear at the beginning of its operation.
+  current_image_.reset();
+  current_image_.emplace(std::move(image));
   current_id_ = result_id;
   return result_id;
 }
@@ -80,8 +69,10 @@ const Image* ResultStore::getImage(ResultId result_id) const noexcept {
     return nullptr;
   }
 
-  const auto it = results_.find(result_id);
-  return it == results_.end() ? nullptr : &it->second;
+  if (result_id != current_id_ || !current_image_) {
+    return nullptr;
+  }
+  return &*current_image_;
 }
 
 const Image* ResultStore::currentImage() const noexcept {
@@ -101,8 +92,14 @@ ResultId ResultStore::resolve(const ResultSelection& selection) const noexcept {
 }
 
 void ResultStore::clear() noexcept {
-  results_.clear();
+  current_image_.reset();
   current_id_ = kInvalidResultId;
+}
+
+void ResultStore::release(ResultId result_id) noexcept {
+  if (result_id == current_id_) {
+    clear();
+  }
 }
 
 }  // namespace qingying

@@ -384,6 +384,10 @@ void showSelectionOverlay() {
         !IsWindow(owner_window)) {
       return false;
     }
+
+    // A new screenshot starts a new result lifetime. Release the previous
+    // full-size image before allocating another capture/selection buffer.
+    results.clear();
     active = true;
     active_result_id = kInvalidResultId;
 
@@ -485,6 +489,10 @@ void showSelectionOverlay() {
   }
 
   void finishWorkflow() {
+    // The result is only needed while this workflow is presenting its action
+    // surface. Once the operation ends, release the pixel buffer so an idle
+    // resident process does not retain the last screenshot.
+    results.clear();
     stopLongShotWorker();
     longshot_result_ready = false;
     active_result_id = kInvalidResultId;
@@ -520,6 +528,7 @@ void showSelectionOverlay() {
     longshot_controller.cancel();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
+    results.clear();
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;
@@ -546,6 +555,7 @@ void showSelectionOverlay() {
     selection_overlay.drainMessages();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
+    results.clear();
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;

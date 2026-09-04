@@ -110,7 +110,7 @@ TEST(AppActionHandlersTest, PinUsesLatestCaptureResult) {
   pin_manager.closeAll();
 }
 
-TEST(AppActionHandlersTest, FailedCaptureKeepsPreviousResult) {
+TEST(AppActionHandlersTest, FailedCaptureReleasesPreviousResult) {
   qingying::ActionDispatcher dispatcher;
   qingying::CaptureEngine capture;
   qingying::ExportService export_service;
@@ -144,9 +144,6 @@ TEST(AppActionHandlersTest, FailedCaptureKeepsPreviousResult) {
 
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error_code, qingying::ErrorCode::kCaptureFailed);
-  const auto current = result_store.current();
-  ASSERT_TRUE(current.has_value());
-  EXPECT_EQ(current->image.width, previous.width);
-  EXPECT_EQ(current->image.height, previous.height);
-  EXPECT_EQ(current->image.pixels, previous.pixels);
+  EXPECT_EQ(result_store.currentId(), qingying::kInvalidResultId);
+  EXPECT_FALSE(result_store.current().has_value());
 }
