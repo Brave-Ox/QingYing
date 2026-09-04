@@ -113,11 +113,11 @@ bool resolveChromiumTarget(HWND owner, const LongShotRequest& request,
   }
 
   out.scroll_target = reinterpret_cast<std::uintptr_t>(candidate.window);
-  out.content_x = candidate.screen_rect.left;
-  out.content_y = candidate.screen_rect.top;
-  out.content_width = candidate.screen_rect.right - candidate.screen_rect.left;
-  out.content_height =
-      candidate.screen_rect.bottom - candidate.screen_rect.top;
+  out.content = ScreenPhysicalRect{
+      candidate.screen_rect.left,
+      candidate.screen_rect.top,
+      candidate.screen_rect.right - candidate.screen_rect.left,
+      candidate.screen_rect.bottom - candidate.screen_rect.top};
   return out.valid();
 }
 

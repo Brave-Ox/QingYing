@@ -150,13 +150,12 @@ TEST(OverlayRendererTest, PassthroughClearsSelectionWithoutBackgroundCompose) {
 }
 
 TEST(OverlayRendererTest, KeepsLongShotPreviewOutsideCaptureSelection) {
-  SelectionResult selection{};
-  selection.cancelled = false;
+  OverlayClientRect selection{};
   selection.x = 10;
   selection.y = 10;
   selection.width = 60;
   selection.height = 60;
-  SelectionResult hover{};
+  OverlayClientRect hover{};
   const Image background = makeSolidImage(100, 100, kWhite);
   const Image preview = makeSolidImage(10, 10, 0xFFCC0000u);
   const OverlayRenderState state(selection, hover, background, preview,
@@ -176,13 +175,12 @@ TEST(OverlayRendererTest, KeepsLongShotPreviewOutsideCaptureSelection) {
 }
 
 TEST(OverlayRendererTest, KeepsLongShotPreviewPanelAtStablePosition) {
-  SelectionResult selection{};
-  selection.cancelled = false;
+  OverlayClientRect selection{};
   selection.x = 100;
   selection.y = 100;
   selection.width = 400;
   selection.height = 800;
-  SelectionResult hover{};
+  OverlayClientRect hover{};
   const Image background = makeSolidImage(1200, 1000, kWhite);
   const Image first_preview = makeSolidImage(440, 400, 0xFFCC0000u);
   const Image taller_preview = makeSolidImage(440, 720, 0xFF0000CCu);
