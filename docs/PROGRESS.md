@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前提交基线：`master` / `adeb7c60`（69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）
-> 更新日期：2026-08-31
+> 当前提交基线：`master` / `40d22e21`（104 条提交）
+> 更新日期：2026-09-07
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
 功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
@@ -12,18 +12,18 @@
 
 | 范围 | 状态 | 当前结论 |
 |---|---|---|
-| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + 11 个 static lib（含 ui / annotate / pin / longshot / workflow） |
+| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + 12 个 static lib，并部署 3 个受控 longshot profile DLL |
 | 普通截图主链路 | **基本闭环** | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin |
 | F1 自定义区域 | **代码完成** | 自由框选、八点调整、移动、取消、虚拟桌面、物理像素转换 |
 | F2 窗口吸附 | **代码完成，待人工验收** | 候选过滤、悬停高亮、点击吸附、DWM 边框修正 |
 | F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；非模态编辑器确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
-| F6 长截图 | **记事本与资源管理器 profile 已接入，待人工验收** | 固定选区拼接、应用 profile 定位滚动控件、滚动状态 / 到底 / 无新增停止、预览、暂停 / 继续 / 停止、失败清理；Edge 未实现 |
+| F6 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区拼接、应用 profile 定位滚动控件、滚动状态 / 到底 / 无新增停止、预览、暂停 / 继续 / 停止、失败清理；内置 profile 已改为受控 DLL 插件 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
 
-一句话：普通截图、窗口吸附、Pin、记事本 / 资源管理器长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三应用真实验收与 Edge profile。
+一句话：普通截图、窗口吸附、Pin、Notepad / Explorer / Chromium 长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三类应用真实验收与 F9 外部接口。
 
 ---
 
@@ -36,11 +36,12 @@
 - 全局热键 `Ctrl+Shift+Q` 与冲突提示；
 - `WM_QINGYING_BEGIN_CAPTURE` 将热键处理延后到 UI 消息流；
 - `qingying_workflow` 统一编排 Selection / Annotation / LongShot 与结果动作，Application 只负责组合根和消息转发；
-- `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；
+- `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和结果选择；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
 - `SelectionToolbar` 独立管理选区操作条 HWND、命令与阶段映射，`OverlayPhase` 集中校验选区 / 长截图 / 关闭阶段；
 - `SelectionOverlay` 与 `AnnotationOverlay` 创建后立即返回，窗口消息统一由 Application 顶层消息泵处理；Workflow 通过阶段消息续接选区和标注；
-- 共享 `Image` 与 `CaptureSession` 已打通区域截图、导出、Pin 与标注结果回写；
+- `ResultStore` 与 `ResultActionService` 已打通区域截图、导出、Pin 与标注结果回写；`CaptureSession` 仅作为兼容门面保留；
+- `ScreenPhysicalRect`、`OverlayClientRect`、`ImagePixelRect` 等中立坐标类型已接入，跨线程 UI payload 由 `UiMessageChannel` 持有；
 - 应用退出时由 `LongShotController` 停止并回收长截图 worker，同时关闭 Overlay。
 
 ### 2.2 F1 区域选择与桌面遮罩
@@ -75,10 +76,10 @@
 | 引擎组装 | `annotation_engine.*` | `annotation_engine_test` |
 | 纯逻辑会话（确认/取消） | `annotation_editor_session.*` | `annotation_editor_session_test` |
 | 拖拽交互（工具/预览/入栈） | `annotation_interaction_controller.*` | `annotation_interaction_controller_test` |
-| 就地编辑 Overlay | `annotation_overlay.*` | 自动布局 / 交互逻辑 + 1 个 `DISABLED_` 窗口冒烟 |
+| 就地编辑 Overlay | `annotation_overlay.*` | 自动布局 / 交互逻辑；当前没有显式 Disabled 用例 |
 | 标注工具条 | `modern_toolbar` | 主栏工具 + 颜色/线宽或字号二级栏；SVG 图标 |
 
-当前接线：`SelectionOverlay` 只返回 Edit 意图 → `CaptureWorkflow` 抓取编辑源图并非模态打开 `AnnotationOverlay` → 合成图写入 Session 并自动 Copy → `composeCapturePreview` 将结果贴回桌面快照 → 同一选区恢复结果操作条，可继续 Save / Pin / Edit。
+当前接线：`SelectionOverlay` 只返回 Edit 意图 → `CaptureWorkflow` 抓取编辑源图并非模态打开 `AnnotationOverlay` → 合成图写入 `ResultStore` 并自动 Copy → `composeCapturePreview` 将结果贴回桌面快照 → 同一选区恢复结果操作条，可继续 Save / Pin / Edit。
 
 ### 2.5 F4 导出
 
@@ -86,13 +87,13 @@
 - `ExportService::copyToClipboard` 正确转移 `HGLOBAL` 所有权；
 - `ExportService::savePng` 使用 WIC；
 - 空图、空路径和 PNG 输出已有自动测试；
-- GUI 保存对话框目前在 `CaptureWorkflow::saveImage`，普通 Save 尚未完全复用 `SaveHandler`。
+- GUI 保存路径已通过 `ResultActionService` 统一处理；文件选择对话框由结果服务持有 owner window，带路径的 Save 走无对话框接口。
 
 ### 2.6 F5 Pin
 
 - 无原生标题栏的置顶 `PinWindow`；
 - 保持宽高比显示，支持拖动、边缘 / 四角等比缩放和关闭；
-- 右键复制 / 保存使用各自 Pin 的 `Image`，不会串到最新 Session；
+- 右键复制 / 保存使用各自 Pin 的 `Image`，不会串到最新 `ResultStore`；
 - 多 Pin、关闭全部、数量统计与生命周期清理；
 - 新 Pin 从虚拟桌面右侧开始自动寻找不重叠位置；
 - `CaptureGuard` 支持嵌套隐藏 / 恢复，普通截图和背景快照均排除 Pin；
@@ -103,11 +104,11 @@
 已实现：
 
 - `LongShotProfile` / `LongShotProfileRegistry` 将应用识别、滚动控件、滚动输入和滚动状态查询与通用截图拼接循环分离；
-- 记事本 profile 与文件资源管理器 profile 已接入；资源管理器按选区定位 `DirectUIHWND`、`SysListView32` 或 `SysTreeView32`，不向无关窗口广播滚轮；
+- 记事本、文件资源管理器和 Chromium profile 已接入；资源管理器按选区定位 `DirectUIHWND`、`SysListView32` 或 `SysTreeView32`，浏览器按 Chromium 窗口类定位内容区，不向无关窗口广播滚轮；
 
 - `LongShotRequest` 固定使用用户选中的物理像素矩形；
 - CaptureWorkflow 在 Overlay 前记录原前台顶层窗口；
-- Notepad / Explorer profile 校验目标窗口、选区所在内容控件、内容区和滚动状态；
+- Notepad / Explorer / Chromium profile 校验目标窗口、选区所在内容控件、内容区和滚动状态；
 - 首帧、滚动后帧、重叠查找与追加拼接；
 - 到底、无新增内容、最大 30 帧和最大 30000 像素停止；
 - `LongShotController` 管理长截图 worker、暂停 / 停止 token 与 UI 线程完成消息；
@@ -119,7 +120,6 @@
 
 - 记事本真实长文手工闭环记录；
 - 资源管理器真实长文手工闭环记录；
-- Edge profile；
 - 三应用完整验收。
 
 ---
@@ -153,8 +153,8 @@
 build.bat Release test
 ```
 
-2026-08-31 Release 结果：CTest 发现 **289** 个用例，实际执行 **288** 个，其中 **284** 个通过、4 个为当前环境下既有 `BitBlt` 失败；
-`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 为显式禁用的窗口冒烟测试。30 个测试源文件已纳入构建。
+2026-09-07 当前 `build` 目录结果：CTest 发现 **382** 个用例，实际执行 **382** 个，其中 **378** 个通过、4 个为当前环境下既有 `BitBlt` 失败；当前没有显式 Disabled 用例。
+本次 `build.bat Release test` 在 MSBuild `FileTracker` 阶段遇到 `E_ACCESSDENIED`，未进入编译；因此该次命令不能作为源码回归结论。测试源和生产 Handler 已通过同一 CMake target 接入。
 
 自动测试不能替代：
 
@@ -184,7 +184,12 @@ build.bat Release test
 | 2026-08-31 | PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
 | 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | `778cd336` |
 | 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
-| 2026-08-31 | Selection / Annotation Overlay 非模态化，顶层消息泵续接 Workflow | 当前工作区，待提交 |
+| 2026-08-31 | Selection / Annotation Overlay 非模态化，顶层消息泵续接 Workflow | `adeb7c60` |
+| 2026-09-03 | ResultStore / ResultActionService、失败契约、消息所有权与 Overlay 载荷释放 | `1e3a7318`、`c7d40d21`、`2f63c92b`、`667563d0`、`65eb2c52` |
+| 2026-09-03 | AnnotationEditorHost 组件拆分 | `57004322` |
+| 2026-09-04 | 类型化 Action、结果选择、中立坐标与编译边界收口 | `ddc00c23`、`7e61cc07`、`6892a0bf` |
+| 2026-09-04 | Notepad / Explorer / Chromium 长截图插件与拼接稳定性 | `ce8fad57`、`4a1ed058` |
+| 2026-09-04 | 截图结果生命周期收口，空闲时释放像素 | `40d22e21` |
 
 ---
 
@@ -198,8 +203,10 @@ build.bat Release test
 - `LongShotRegion` 枚举存在但没有 Handler；
 - `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 CaptureWorkflow 在 SelectionOverlay 返回后产生；
 - `CaptureEngine`、`LongShotEngine`、`LongShotController`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；`LongShotController` 已集中跨线程预览 / 完成消息生命周期，两个 Overlay 的窗口状态也已由顶层消息泵收口；
-- `ActionRequest` 会随 F8/F9 继续膨胀，缺少类型安全 payload；
-- `CaptureSession` 是有意保留的“最近结果”状态，但 Handler 间数据流仍具有隐式时序依赖。
+- `ActionRequest` 的类型化 payload、请求 / 操作 ID、取消、超时和结果选择已完成；`ActionResult` 仍缺少可供 F9 直接消费的类型化输出元数据；
+- `ResultStore` 目前仍只有一个 current 槽位，`CaptureSession` 是兼容门面；F9 需要按作用域、ResultId 和租约管理结果，不能依赖工作流结束前的隐式 current；
+- `McpBridge` 仍是同步 Stub，尚未接入 Named Pipe、UI 调度、WindowResolver 或外部操作注册表；`CaptureWindow` / `CropCenter` 也仍是桩；
+- 长截图的 Notepad / Explorer / Chromium 插件代码已落地，真实 Chrome / Edge / Brave 窗口验收仍缺。
 
 整改方案见 [架构如何调整.md](架构如何调整.md)。
 
@@ -211,8 +218,8 @@ build.bat Release test
 2. 为标注编辑器增加重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
 3. 为非模态 Selection / Annotation Overlay 补真实窗口、退出和组合测试；
 4. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
-5. 完成记事本真实长截图闭环，再增加资源管理器和 Edge profile；
-6. 完成跨线程消息所有权封装，再进入 F8/F9。
+5. 完成 Notepad / Explorer / Chrome / Edge / Brave 真实长截图闭环记录；
+6. 在现有 `ResultStore`、`ResultActionService`、`UiMessageChannel` 和类型化 Action 之上实现 F9 的作用域、租约、Pipe 与 UI 调度。
 
 ---
 

@@ -1,9 +1,9 @@
 # 轻映 QingYing — 当前架构说明（方案 B）
 
 > 状态：以当前代码为准
-> 提交基线：`master` / `adeb7c60`（本文同时反映当前待提交的 Overlay 非模态化调整）
-> 同步日期：2026-08-31
-> 形态：**一个 EXE + 11 个 static lib**
+> 提交基线：`master` / `40d22e21`（104 条提交）
+> 同步日期：2026-09-07
+> 形态：**一个 EXE + 12 个 static lib + 3 个受控 longshot plugin DLL**
 
 关联文档：
 
@@ -18,7 +18,7 @@
 
 ### 目标
 
-- Windows 绿色单文件，C++17 + Win32，不使用 Qt / Electron；
+- Windows 绿色交付包，C++17 + Win32，不使用 Qt / Electron；当前包由 EXE 和受控的长截图插件 DLL 组成；
 - 主路径：热键 → 框选 / 吸附 / 调区 → 标注 → 复制 / 保存；
 - 目标指标：体积 ≤ 20 MB，常驻 ≤ 40 MB，热键到遮罩 ≤ 300 ms；
 - GUI、本地口令与 MCP 复用同一套本地能力，不实现第二套截图引擎；
@@ -26,7 +26,7 @@
 
 ### 非目标
 
-- 不做 WPS / Qt 式插件 DLL 或多进程宿主架构；
+- 不做 WPS / Qt 式任意插件宿主或多进程业务架构；长截图只通过受控 ABI 加载内置 profile DLL；
 - 不让 MCP / 口令直接调用 GDI、DXGI 或模块私有实现；
 - 不把模型装入安装包，F1～F7 不依赖网络；
 - 不支持任意应用长截图或通用桌面自动化。
@@ -73,11 +73,12 @@
 | `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、OverlayRenderer、长截图预览 | SelectionOverlay 已非模态化；Renderer 已拆出 |
 | `qingying_annotate` | static | 标注文档、引擎、渲染器、编辑会话和编辑 Overlay | 代码已接线，窗口冒烟仍单列 |
 | `qingying_pin` | static | 多 Pin、排布、缩放、独立导出、捕获排除 | 代码基本完成 |
-| `qingying_longshot` | static | 记事本选区滚动、拼接和停止条件 | 记事本路径已实现 |
+| `qingying_longshot` | static | 通用长截图运行时、profile 注册表、插件宿主与拼接 | Notepad / Explorer / Chromium profile 已接入；3 个 DLL 已部署，真实窗口验收待做 |
 | `qingying_workflow` | static | 选区、标注、结果动作与交互式长截图编排 | CaptureWorkflow 状态机与 LongShotController 已接入 |
+| `qingying_app_handlers` | static | 生产 Action Handler 与应用层结果动作适配 | 已从 EXE / 测试中独立出来 |
 | `qingying_command` | static | 本地口令 → Action | Stub |
 | `qingying_mcp` | static | MCP Bridge / 后续 Named Pipe | Stub |
-| `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 已收口到约 105 行 |
+| `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 组合根已使用 PIMPL；行为仍待 F9 接入 |
 
 目录：
 
@@ -94,6 +95,7 @@ src/pin/                   钉图
 src/longshot/              长截图
 src/command/               本地口令
 src/mcp/                   MCP
+plugins/longshot/          Notepad / Explorer / Chromium profile DLL
 ```
 
 ---
@@ -111,6 +113,7 @@ action + capture ← longshot
 action + ui ← overlay   （CMake：overlay 已不链接 capture / annotate）
 ui        （ModernToolbar 独立于 action，由 app/targets 组合）
 action + overlay + capture + annotate + export + pin + longshot ← workflow
+longshot runtime ← controlled profile plugin DLLs
 
 app → workflow + 上述服务（Composition Root）
 ```
@@ -122,6 +125,7 @@ app → workflow + 上述服务（Composition Root）
 - 跨模块不 include 对方 `.cpp` 旁的私有头；
 - `window_detector.cpp` 目前编入 `qingying_overlay`，需要被 F6/F8 复用时再拆 `qingying_window`；
 - 编辑源图已由 `CaptureWorkflow` 在 `SelectionOverlay` 返回 Edit 意图后抓取；`qingying_overlay` 不再 include 或链接 capture / annotate。
+- 长截图 profile 只能通过 `LongShotPluginHost` 的受控 ABI 接入，插件不得反向依赖 `app` 或 GUI 实现。
 
 ---
 
@@ -132,10 +136,10 @@ app → workflow + 上述服务（Composition Root）
 | ActionType | 含义 | Handler 状态 | 数据去向 |
 |---|---|---|---|
 | `Status` | 查询进程能力 | 已注册 | 直接返回 `ActionResult` |
-| `CaptureRegion` | 按物理像素矩形截图 | 已注册 | 成功后写 `CaptureSession` |
-| `Copy` | 当前结果写剪贴板 | 已注册 | 从 `CaptureSession` 取图 |
-| `Save` | 当前结果保存 PNG | 已注册 | 要求 `save_path`，从 Session 取图 |
-| `Pin` | 当前结果钉图 | 已注册 | 从 Session 取图交给 `PinManager` |
+| `CaptureRegion` | 按物理像素矩形截图 | 已注册 | 成功后发布到 `ResultStore` |
+| `Copy` | 当前结果写剪贴板 | 已注册 | 通过 `ResultActionService` 从 `ResultStore` 取图 |
+| `Save` | 当前结果保存 PNG | 已注册 | 要求 `save_path`，通过 `ResultActionService` 取图 |
+| `Pin` | 当前结果钉图 | 已注册 | 通过 `ResultActionService` 取图交给 `PinManager` |
 | `CaptureWindow` | 按名称 / 句柄截窗 | 未注册；Capture 方法为桩 | F8/F9 待实现 |
 | `CropCenter` | 中央裁切 | 未注册；Capture 方法为桩 | F8/F9 待实现 |
 | `LongShotRegion` | 长截图动作占位 | 未注册 | 当前 GUI 由 CaptureWorkflow 编排 |
@@ -147,10 +151,10 @@ app → workflow + 上述服务（Composition Root）
 - `Image` 为 BGRA32、行优先；
 - `ActionResult.ok == false` 时必须给稳定 `error_code` 和可读 `message`；
 - `ActionResult.data` 只放轻量 UTF-8 结果，不传像素；
-- `CaptureSession` 当前承载“最近一张有效结果”的 UI 语义；
+- `ResultStore` 当前承载“最近一张有效结果”的 UI 语义；`CaptureSession` 仅作为兼容门面保留；
 - 新截图开始时释放上一张结果；失败后不恢复旧结果，避免常驻进程长期持有大块像素缓冲。
 
-`ActionRequest` 目前是包含所有动作字段的统一结构体。F8/F9 扩展前应迁移为类型安全 payload，见 [架构如何调整](架构如何调整.md)。
+`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和 `ResultSelection`。F9 仍需补齐异步操作上下文、类型化 `ActionResult` 输出和外部结果租约。
 
 ---
 
@@ -166,21 +170,21 @@ Ctrl+Shift+Q
   → 用户自由框选 / 窗口吸附 / 八点调区
   → SelectionToolbar（Copy / Save / LongShot / Edit / Pin）
   → SelectionResult（物理像素 + SelectionAction）
-  → Copy / Save / Pin：dispatch(CaptureRegion) → CaptureSession → 消费结果
+  → Copy / Save / Pin：dispatch(CaptureRegion) → ResultStore → ResultActionService 消费结果
   → Edit：SelectionOverlay 返回 → CaptureWorkflow 捕获选区源图
-  → AnnotationOverlay（非模态）→ rendered Image → 写回 Session 并自动 Copy
+  → AnnotationOverlay（非模态）→ rendered Image → 写回 ResultStore 并自动 Copy
            → composeCapturePreview → 恢复同一选区与结果操作条
            → Save / Pin / 再次 Edit
 ```
 
 说明：
 
-- 桌面背景快照是 UI 表现层输入，因此当前直接调用 `CaptureEngine`，不会写 `CaptureSession`；
-- 普通保存路径当前由 `CaptureWorkflow::saveImage` 直接调用 `ExportService`，尚未完全复用 `SaveHandler`；
-- 操作条“编辑”只上报 `SelectionAction::Edit`；标注完成后 CaptureWorkflow 写回 Session、自动 Copy，并恢复完整 Save / Pin / Edit 结果操作条；
+- 桌面背景快照是 UI 表现层输入，因此当前直接调用 `CaptureEngine`，不会写 `ResultStore`；
+- GUI 保存路径已通过 `ResultActionService` 统一处理；文件选择对话框仍由结果服务持有 owner window，MCP 的无对话框保存走带路径的同步接口；
+- 操作条“编辑”只上报 `SelectionAction::Edit`；标注完成后 CaptureWorkflow 写回 ResultStore、自动 Copy，并恢复完整 Save / Pin / Edit 结果操作条；
 - 恢复结果操作条时选区保持只读，避免移动 / 缩放后让物理矩形与既有标注栅格失配；开始长截图会显式清除该标注结果；
 - 选区条和标注底栏共用白色圆角 `ModernToolbar`，悬停 / 选中使用浅灰状态，图标含 SVG 路径实现；
-- `SelectionOverlay` 和 `AnnotationOverlay` 均在创建后立即返回；完成 / 取消通过回调和 `WM_QINGYING_WORKFLOW_CONTINUE` 续接 CaptureWorkflow，确认时把标注栅格贴回新桌面快照，取消时不覆盖 Session；
+- `SelectionOverlay` 和 `AnnotationOverlay` 均在创建后立即返回；完成 / 取消通过回调和 `WM_QINGYING_WORKFLOW_CONTINUE` 续接 CaptureWorkflow，确认时把标注栅格贴回新桌面快照，取消时不覆盖 ResultStore；
 - Overlay 当前使用 `WS_EX_NOACTIVATE`，以避免遮罩出现后使原窗口的 owned popup 消失。
 
 ---
@@ -203,12 +207,12 @@ Ctrl+Shift+Q
 
 ## 8. F5 Pin 工作流
 
-- `PinHandler` 从 `CaptureSession` 获取当前 `Image`；
+- `PinHandler` 通过 `ResultActionService` 从 `ResultStore` 获取当前 `Image`；
 - `PinManager` 为每张图创建独立 `PinWindow`；
 - 新窗口从虚拟桌面右侧开始自动寻找不重叠位置；
 - Pin 支持拖动、边缘 / 四角等比例缩放、关闭、右键复制和保存；
 - `CaptureGuard` 在普通截图和背景快照前隐藏可见 Pin，结束后恢复并保持置顶；
-- Pin 的独立复制 / 保存针对该窗口自身的 `Image`，不能错误读取最新 Session。
+- Pin 的独立复制 / 保存针对该窗口自身的 `Image`，不能错误读取最新 `ResultStore`。
 
 ---
 
@@ -220,13 +224,13 @@ CaptureWorkflow 预先记录 owner_window
   → 用户点击“长截图”
   → Overlay 保留在屏幕上，选区孔洞切换为捕获透传
   → LongShotController 启动 longshot worker
-  → LongShotProfileRegistry 选择 Notepad / Explorer profile，校验 owner / 内容区 / 滚动目标
+  → LongShotProfileRegistry 选择 Notepad / Explorer / Chromium profile，校验 owner / 内容区 / 滚动目标
   → CaptureEngine 重复截取同一矩形
   → ImageStitcher 去重拼接
   → worker 向 Overlay 投递实时预览
   → 用户可暂停 / 继续 / 停止
   → 完成消息回到托盘 UI 线程
-  → 成功图写入 CaptureSession 并自动 dispatch(Copy)
+  → 成功图写入 ResultStore 并自动 dispatch(Copy)
 ```
 
 当前停止条件：
@@ -238,7 +242,7 @@ CaptureWorkflow 预先记录 owner_window
 - 用户停止或应用退出；
 - 目标窗口、选区或捕获失败。
 
-当前已实现记事本与文件资源管理器 profile；Edge profile 尚未实现，资源管理器仍需真实窗口人工验收。
+当前已有 Notepad、Explorer 和 Chromium profile 的插件代码；Chrome / Edge / Brave 真实窗口仍需人工验收，资源管理器也需完成真实窗口回归。
 
 ---
 
@@ -250,8 +254,8 @@ CaptureWorkflow 预先记录 owner_window
 | Overlay | `SelectionOverlay::show()` 创建后立即返回，由 Application 顶层消息泵驱动 |
 | 标注编辑器 | `AnnotationOverlay::showInPlace()` 创建后立即返回，键盘 / 鼠标消息在窗口过程处理 |
 | 长截图 | `LongShotController` 创建单个 worker；暂停 / 停止使用 atomic 标志 |
-| 跨线程预览 | worker 复制预览图后 `PostMessage` 给 Overlay |
-| 完成回收 | `LongShotController` 将 `LongShotCompletion*` 投递给托盘窗口，UI 线程通过 Controller 接管并 join |
+| 跨线程预览 | worker 复制预览图后写入 `UiMessageChannel`，Windows 消息只携带 token |
+| 完成回收 | `LongShotController` 将拥有 token 的完成消息交给 `UiMessageChannel`，UI 线程取出后接管并 join |
 | 应用退出 | `CaptureWorkflow::shutdown()` 同步中止并销毁两个 Overlay，再由顶层循环处理 `WM_QUIT` |
 | 单实例 | Named Mutex |
 
@@ -302,7 +306,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | F3 标注 | workflow + capture + AnnotationOverlay + overlay | 六类工具与撤销可用，Copy / Save / Pin / 再编辑代码回流已接通；重做 UI 和人工验收待补 |
 | F4 导出 | export + action | 已实现 |
 | F5 钉图 | pin + action | 代码基本完成，人工验收待做 |
-| F6 长截图 | workflow + overlay + longshot + capture | profile registry、记事本 / 资源管理器路径与 LongShotController 已接入；Edge 未实现 |
+| F6 长截图 | workflow + overlay + longshot + capture | profile registry、Notepad / Explorer / Chromium 插件与 LongShotController 已接入；真实浏览器窗口待验收 |
 | F7 托盘热键 | app | 已实现 |
 | F8 口令 | command → action / workflow | Stub |
 | F9 MCP | mcp → action / workflow | Stub |
@@ -311,11 +315,11 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 
 ## 14. 质量基线
 
-- 2026-08-31：`build.bat Release test` 成功；
-- CTest 发现 289 个用例，实际执行 288 个，其中 284 个通过、4 个为当前环境下既有 `BitBlt` 失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
-- Release EXE：219,648 字节；
-- 自动测试覆盖 Action、CaptureWorkflow 路由、区域捕获、Session、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
-- 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、真实记事本长截、资源管理器 / Edge 长截、内存与唤起时延。
+- 2026-09-07：当前 `build` 目录可发现 382 个 CTest 用例，实际执行 378 个通过、4 个 `BitBlt` 环境失败；没有显式 Disabled 用例；
+- 本次 `build.bat Release test` 在 MSBuild `FileTracker` 阶段遇到 `E_ACCESSDENIED`，未进入编译，不能把该次结果当作源码回归；
+- Release EXE：313,856 字节；另有 `plugins/longshot` 下 3 个 profile DLL，共 54,784 字节；
+- 自动测试覆盖 Action、CaptureWorkflow 路由、区域捕获、ResultStore、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
+- 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、内存与唤起时延。
 
 ---
 
@@ -337,4 +341,8 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-08-31 | OverlayRenderer 拆出像素合成与分层窗口呈现 | `8c3166ed` |
 | 2026-08-31 | CaptureWorkflow 收口交互编排，Application 回归组合根 | `778cd336` |
 | 2026-08-31 | LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
-| 2026-08-31 | Selection / Annotation Overlay 非模态化，顶层消息泵续接 Workflow | 当前工作区，待提交 |
+| 2026-09-03 | 结果动作服务、失败契约、消息所有权与 Overlay 载荷释放 | `1e3a7318`、`c7d40d21`、`2f63c92b`、`667563d0`、`65eb2c52` |
+| 2026-09-03 | AnnotationEditorHost 组件拆分 | `57004322` |
+| 2026-09-04 | 类型化 Action、结果选择、中立坐标与编译边界收口 | `ddc00c23`、`7e61cc07`、`6892a0bf` |
+| 2026-09-04 | Notepad / Explorer / Chromium 长截图插件与拼接稳定性 | `ce8fad57`、`4a1ed058` |
+| 2026-09-04 | 截图结果生命周期收口，空闲时释放像素 | `40d22e21` |

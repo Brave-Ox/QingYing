@@ -1,10 +1,10 @@
 # 轻映 QingYing
 
-Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 Agent 的本地截图能力提供者（本地口令 / MCP）。
+Windows 原生轻量截图工具（C++17 + Win32，以 EXE 为主并带受控长截图插件），也规划作为 Agent 的本地截图能力提供者（本地口令 / MCP）。
 
-> 当前提交基线：`master` / `adeb7c60`（69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）
-> 文档同步日期：2026-08-31
-> Release 验证：构建成功，289 个测试已发现，288 个执行；284 个通过，4 个当前环境下既有 `BitBlt` 用例失败，1 个窗口冒烟测试显式禁用
+> 当前提交基线：`master` / `40d22e21`（104 条提交）
+> 文档同步日期：2026-09-07
+> 当前 Release 构建目录的 CTest：382 个用例执行，378 个通过，4 个为当前环境下既有 `BitBlt` 失败；本次重新运行 `build.bat Release test` 在 MSBuild `FileTracker` 阶段因环境权限 `E_ACCESSDENIED` 未进入编译
 
 ## 当前能力
 
@@ -12,9 +12,9 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 - 已实现：多 Pin、自动避让排布、拖动与等比例缩放、独立复制 / 保存、截图时临时隐藏 Pin。
 - 已接入：选区“编辑”进入就地标注，支持矩形、椭圆、箭头、画笔、文字、马赛克、撤销；确认后自动复制，并恢复同一选区的结果操作条，可继续保存、钉图或再次编辑。
 - 已调整：选区条抽为 `SelectionToolbar`，交互阶段由 `OverlayPhase` 显式管理；底层仍复用白色圆角 `ModernToolbar`、GDI+、SVG 路径图标和中文 Tooltip；Selection / Annotation Overlay 已改为非模态窗口。
-- 已接入：记事本与文件资源管理器选区长截图 profile，支持固定选区滚动拼接、实时预览、暂停 / 继续、停止和失败清理。
+- 已接入：记事本、文件资源管理器和 Chromium 浏览器通用长截图 profile，支持固定选区滚动拼接、实时预览、暂停 / 继续、停止和失败清理；Chrome / Edge / Brave 仍需真实窗口验收。
 - 待实现：F8 本地口令、F9 MCP；`CaptureWindow` 与 `CropCenter` 仍为桩。F3 仍需重做按钮和真实窗口 / DPI 人工验收。
-- 待扩展：Edge 长截图适配，以及资源管理器 / 双屏 / 混合 DPI / Pin / 长截图的真实人工验收。
+- 待验收：Chromium 浏览器、资源管理器、双屏 / 混合 DPI、Pin 和长截图的真实人工闭环。
 
 ## 文档
 
@@ -23,16 +23,17 @@ Windows 原生轻量截图工具（C++17 + Win32，单 EXE），也规划作为 
 - [当前架构](./docs/architecture.md) — 已落地的模块、调用链和已知例外
 - [架构如何调整](./docs/架构如何调整.md) — 不推倒重来的分阶段整改方案
 - [系统架构与耦合度分析](./docs/系统架构与耦合度分析.md) — 基于当前 HEAD 的耦合审计
+- [F9 MCP 架构与实施方案](./docs/F9-MCP-架构与实施方案.md) — MCP 工具、结果租约、UI 调度和遮罩可见性方案
 - [F1 / F2 / F3 / Pin / 长截图分工指南](./docs/F1与标注与钉图初版分工指南.md) — 协作边界和集成契约
 
 ## 架构要点
 
-- **一个 EXE + 11 个 static lib**，按 action / capture / export / ui / overlay / annotate / pin / longshot / workflow / command / mcp 切分。
+- **一个 EXE + 12 个 static lib + 3 个长截图插件 DLL**，按 action / capture / export / ui / overlay / annotate / pin / longshot / workflow / app_handlers / command / mcp 切分；插件部署到 `plugins/longshot`。
 - `app/Application` 是组合根，拥有托盘、全局热键和顶层消息循环；`CaptureWorkflow` 编排选区、标注与结果动作，`LongShotController` 管理交互式长截图生命周期。
 - 对外可调用的业务动作以 `ActionDispatcher` 为统一入口；GUI 多步流程统一进入 `CaptureWorkflow`。
-- `Image` 统一为 BGRA32、行优先、物理像素；当前结果经 `CaptureSession` 在 Capture / Copy / Save / Pin 之间流转。
+- `Image` 统一为 BGRA32、行优先、物理像素；`ResultStore` 是当前结果的唯一发布入口，`ResultActionService` 统一 Copy / Save / Pin，`CaptureSession` 只保留为兼容门面。
 - 当前区域捕获使用 GDI `BitBlt`；DXGI 仅保留链接和后续实现位置。
-- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、`CaptureWorkflow`、`LongShotController`、编辑源图上移、`overlay → capture / annotate` 依赖移除、PIMPL RAII 和 Overlay 非模态消息循环。后续见 [架构如何调整](./docs/架构如何调整.md)：重做按钮、人工验收与 F8/F9 契约。
+- 已完成第一批架构收敛：`SelectionToolbar`、`OverlayPhase`、`OverlayRenderer`、`CaptureWorkflow`、`LongShotController`、编辑源图上移、`overlay → capture / annotate` 依赖移除、PIMPL RAII、ResultStore / ResultActionService、类型化 Action、命名坐标协议、长截图插件 ABI 和 Overlay 非模态消息循环。后续重点是 F8/F9 外部契约与真实环境验收。
 
 ## 构建与测试
 
@@ -50,10 +51,10 @@ build.bat notest          :: 不编译测试
 产物：`build/bin/Release/qingying.exe`
 测试：`build/bin/Release/qingying_tests.exe`
 
-2026-08-31 本机 Release 结果：
+2026-09-07 当前 Release 构建目录结果：
 
-- `qingying.exe`：219,648 字节（约 0.21 MiB，仅指当前 EXE 文件）；
-- CTest 发现 289 个用例，其中 288 个执行：284 个通过，4 个当前环境下既有 `BitBlt` 用例失败；`AnnotationOverlayTest.DISABLED_SmokeConfirmReturnsSourceCopy` 显式禁用；
+- `qingying.exe`：313,856 字节（约 0.30 MiB，仅指当前 EXE 文件）；另有 3 个长截图插件 DLL，完整交付包仍需复测；
+- CTest 执行 382 个用例：378 个通过，4 个当前环境下既有 `BitBlt` 用例失败；当前测试发现中没有显式禁用的窗口用例；
 - 常驻内存、热键唤起时延和完整绿色交付包体积仍需专项测量，不能由编译结果代替。
 
 GoogleTest 使用仓库同级目录的 vcpkg（本地依赖，不入库）：
@@ -89,10 +90,10 @@ src/overlay         桌面快照遮罩、框选、调区、窗口吸附、选区
 src/ui              选区条 / 标注底栏共用的 ModernToolbar 与 SVG 路径图标
 src/annotate        标注文档、引擎、渲染器和就地编辑 Overlay
 src/pin             多钉图窗口与捕获排除
-src/longshot        记事本选区滚动拼接
+src/longshot        通用长截图引擎、profile registry、插件 host 与 Chromium / Explorer / Notepad 适配
 src/export          剪贴板与 WIC PNG
 src/command         本地口令桩，F8 待实现
 src/mcp             MCP Bridge 桩，F9 待实现
-tests/              GoogleTest（当前 289 个已发现用例，1 个显式禁用）
+tests/              GoogleTest（当前 382 个用例，4 个环境相关 BitBlt 失败）
 docs/               架构、进度、分工与整改文档
 ```

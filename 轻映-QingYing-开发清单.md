@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发清单与技术要点
 
 > 依据立项文档、仓库架构和当前代码整理。
-> 当前提交基线：`master` / `adeb7c60`（共 69 条提交；本文同时反映当前待提交的 Overlay 非模态化调整）；同步日期：2026-08-31。
+> 当前提交基线：`master` / `40d22e21`（共 104 条提交）；同步日期：2026-09-07。
 > 状态判断同时参考实现、测试和 Git 提交；“代码完成”不等于“真实环境人工验收完成”。
 
 来源：
@@ -16,7 +16,7 @@
 
 ## 1. 一句话目标
 
-用不超过 **20 MB** 的 Windows 绿色单文件，打通“框选 → 标注 → 钉图对照 → 长页拼接”全链路；并通过本地口令与 MCP，为 Agent 提供可控的本地截图能力。
+用不超过 **20 MB** 的 Windows 绿色交付包（当前为 EXE + 受控长截图插件），打通“框选 → 标注 → 钉图对照 → 长页拼接”全链路；并通过本地口令与 MCP，为 Agent 提供可控的本地截图能力。
 
 | 项 | 内容 |
 |---|---|
@@ -33,11 +33,11 @@
 
 | 指标 | 目标 | 当前状态 | 证据 / 下一步 |
 |---|---:|---|---|
-| 发布体积 | ≤ 20 MB | 当前 EXE 达标 | 2026-08-31 Release `qingying.exe` 为 219,648 字节；仍需按最终交付包复测 |
+| 发布体积 | ≤ 20 MB | 当前 EXE 达标，完整包未复测 | 当前 Release `qingying.exe` 为 313,856 字节；另有 3 个长截图插件 DLL，需按最终交付包复测 |
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 已验证 | 2026-08-31 Release：CTest 发现 289 个，288 个执行；284 个通过，4 个当前环境下既有 `BitBlt` 失败，1 个窗口冒烟测试显式禁用 |
+| 自动测试 | 专项全绿 | 当前环境有既有失败 | 2026-09-07 当前 Release 构建目录：CTest 执行 382 个，378 个通过，4 个 `BitBlt` 失败；本次 `build.bat Release test` 因 MSBuild FileTracker 权限错误未进入编译 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -48,11 +48,11 @@
 | ID | 功能 | 当前状态 | 已实现范围 | 剩余验收 / 开发 |
 |---|---|---|---|---|
 | **F1** | 自定义截图区域 | **代码完成** | 自由框选、反向归一化、八点调区、移动、取消、虚拟桌面与物理像素转换 | 双屏和混合 DPI 人工冒烟 |
-| **F2** | 窗口吸附 | **代码完成，待人工验收** | 悬停检测、高亮、点击吸附、自身 / 工具 / 最小化 / 桌面窗口过滤、DWM 边框修正 | 记事本、资源管理器、Edge 与混合 DPI 实测 |
-| **F3** | 截图标注 | **代码动作闭环，待人工验收** | 文档 / 引擎 / 渲染器、六类工具、样式二级栏、撤销；编辑结果回写 Session、自动复制并恢复 Save / Pin / 再编辑操作条 | 重做 UI、真实窗口 / DPI 交互验收 |
+| **F2** | 窗口吸附 | **代码完成，待人工验收** | 悬停检测、高亮、点击吸附、自身 / 工具 / 最小化 / 桌面窗口过滤、DWM 边框修正 | 记事本、资源管理器、Chrome / Edge 与混合 DPI 实测 |
+| **F3** | 截图标注 | **代码动作闭环，待人工验收** | 文档 / 引擎 / 渲染器、六类工具、样式二级栏、撤销；编辑结果回写 ResultStore、自动复制并恢复 Save / Pin / 再编辑操作条 | 重做 UI、真实窗口 / DPI 交互验收 |
 | **F4** | 导出 | **已实现** | CF_DIB 剪贴板、WIC PNG 保存、输入校验 | UI 错误文案和最终人工回归 |
 | **F5** | 钉图 | **代码基本完成，待人工验收** | 置顶、多 Pin、自动避让、拖动、等比缩放、关闭、独立复制 / 保存、捕获时隐藏恢复 | 多 Pin、缩放、隐藏恢复的视觉体验实测 |
-| **F6** | 长截图 | **记事本与资源管理器 profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理 | 记事本与资源管理器真实闭环；Edge profile；三应用验收 |
+| **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
 | **F9** | Agent / MCP | **Stub** | `McpBridge` PIMPL 骨架存在 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
@@ -63,13 +63,13 @@
 |---|---|
 | F1 | `SelectionOverlay` → `SelectionResult` → `CaptureWorkflow` → `ActionDispatcher(CaptureRegion)` → `CaptureEngine` |
 | F2 | `WindowDetector` + `SelectionOverlay` + `SelectionController::setSelection` |
-| F3 | `SelectionOverlay(Edit intent)` → `CaptureWorkflow + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → Session + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
+| F3 | `SelectionOverlay(Edit intent)` → `CaptureWorkflow + CaptureEngine` → `AnnotationOverlay / Engine / Renderer` → `ResultStore` + 自动 Copy → `composeCapturePreview` → 恢复结果操作条 |
 | F4 | `ActionDispatcher(Copy/Save)` + `ExportService`；GUI 文件对话框目前由 `CaptureWorkflow` 管理 |
-| F5 | `ActionDispatcher(Pin)` + `CaptureSession` + `PinManager / PinWindow` |
+| F5 | `ActionDispatcher(Pin)` + `ResultStore / ResultActionService` + `PinManager / PinWindow` |
 | F6 | `CaptureWorkflow` + `SelectionOverlay` + `LongShotController` → `LongShotEngine` + `CaptureEngine` + `ImageStitcher` |
 | F7 | `Application / TrayController / HotkeyManager / SingleInstanceGuard / AutostartSettings` |
 | F8 | `CommandParser` → `ActionRequest`（待实现） |
-| F9 | `McpBridge` → `ActionDispatcher / Workflow`（待实现） |
+| F9 | `McpBridge` → 本机 IPC / 应用调度入口 → `ActionDispatcher / CaptureWorkflow`（待实现） |
 
 ---
 
@@ -90,8 +90,8 @@
 
 ### P0 — 可演示的“截一下”
 
-- [x] CMake / MSVC / C++17 / Release 单 EXE；
-- [x] 11 个 static lib 与 `ActionDispatcher` 骨架（含 `qingying_workflow`）；
+- [x] CMake / MSVC / C++17 / Release EXE 构建；当前长截图适配器以 3 个 DLL 部署到 `plugins/longshot`；
+- [x] 12 个 static lib 与 `ActionDispatcher`（含 `qingying_workflow`、`qingying_app_handlers`）；
 - [x] `SingleInstanceGuard`（Named Mutex）；
 - [x] 系统托盘、退出和开机自启开关；
 - [x] `RegisterHotKey` 全局热键及冲突提示；
@@ -115,7 +115,7 @@
 - [x] 标注对象模型和工具状态；
 - [x] 矩形、椭圆、箭头、画笔、文字、马赛克；
 - [x] 撤销 / 重做内核和离屏栅格化；
-- [x] `AnnotationOverlay` 与编辑完成回流到 Session 并自动复制；窗口采用非模态生命周期，由应用主消息循环驱动；
+- [x] `AnnotationOverlay` 与编辑完成回流到 `ResultStore` 并自动复制；窗口采用非模态生命周期，由应用主消息循环驱动；
 - [x] 标注后自动 Copy，并恢复 Save / Pin / 再编辑操作条；
 - [ ] 重做按钮和真实交互验收；
 
@@ -128,12 +128,14 @@
 - [x] 长截图安全限制：最大 30 帧、最大 30000 像素、到底和无新增停止；
 - [ ] Pin 与记事本长截图真实人工闭环；
 - [x] 资源管理器长截图 profile 代码接入；
-- [ ] Edge 长截图 profile；
+- [x] Chromium 浏览器长截图 profile 代码与 DLL 接入；
+- [ ] Chrome / Edge / Brave 长截图真实窗口验收；
 - [ ] 三应用各至少一次验收。
 
 ### P3 — “口令 + Agent”
 
 - [x] GUI 主路径已有 `ActionDispatcher`；
+- [x] `ActionRequest` 已改为 `std::variant` 类型化 payload，并具备 request / operation id、取消、超时和结果选择；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；
@@ -156,17 +158,17 @@
 | 语言 / GUI | C++17 + Win32 | 已落地；不用 Qt / Electron |
 | Overlay 绘制 | `OverlayRenderer`：GDI DIB + `UpdateLayeredWindow` | Direct2D 尚未使用 |
 | 共用工具栏 | `qingying_ui`：GDI+ 圆角条、SVG 路径图标、中文 Tooltip | 当前选区条和标注底栏已接入 |
-| 区域捕获 | GDI `BitBlt` | DXGI Desktop Duplication 待实现 |
+| 区域捕获 | GDI `BitBlt` | DXGI Desktop Duplication 待实现；当前 4 个 GDI / BitBlt 测试在环境中失败 |
 | 标注 | `qingying_annotate`：Document / Engine / Renderer / EditorSession / Overlay | 动作回流已接线；重做 UI 与人工验收待补 |
 | 窗口 / 中央裁切 | 方法存在但返回 `kNotImplemented` | F8/F9 前实现 |
 | 多屏 / DPI | PMv2 + Virtual Screen + 坐标工具 | 混合 DPI 人工验收待完成 |
 | 剪贴板 | Win32 Clipboard / CF_DIB | 已实现 |
 | PNG | WIC | 已实现 |
 | 热键 / 单实例 | `RegisterHotKey` / Named Mutex | 已实现 |
-| 长截图 | profile 定位控件 + Win32 滚轮消息 + GDI 区域帧 + 像素重叠 | 记事本 / 资源管理器 profile 已接入；Edge 待实现 |
+| 长截图 | profile 定位控件 + Win32 滚轮消息 + GDI 区域帧 + 像素重叠；通用 runtime + DLL plugin | Notepad / Explorer / Chromium profile 已接入；真实窗口验收待做 |
 | IPC / MCP | 仅骨架 | Named Pipe 和协议未实现 |
 | JSON | 未引入 | 等 MCP 参数结构确定后再选型 |
-| 发布 | 单 EXE | 最终包、运行库依赖仍需交付验收 |
+| 发布 | EXE + `plugins/longshot` DLL | 当前仍未形成严格单文件包；最终包、运行库依赖和体积需交付验收 |
 
 ---
 
@@ -191,7 +193,7 @@ GUI 热键
   → Application 转发到 CaptureWorkflow
   → SelectionOverlay
   → 普通动作：dispatch(CaptureRegion)
-  → CaptureSession
+  → ResultStore / ResultActionService
   → dispatch(Copy / Pin)
 
 标注动作
@@ -204,7 +206,7 @@ GUI 热键
   → CaptureWorkflow 请求 LongShotController 启动 worker
   → LongShotEngine
   → 完成消息回 UI 线程
-  → CaptureSession
+  → ResultStore / ResultActionService
   → dispatch(Copy)
 ```
 
@@ -222,15 +224,16 @@ GUI 热键
 
 | Tool | 作用 | 当前状态 |
 |---|---|---|
-| `status()` | 查询托盘是否运行 | Handler 已有；MCP 未接 |
-| `capture_window(query)` | 按窗口名截取，多匹配返回歧义 | Capture 方法为桩 |
-| `crop_center(width, height)` | 裁取画面中央 | Capture 方法为桩 |
-| `longshot_select()` | 打开长截图选框，由用户确认区域 | GUI 记事本路径已有；MCP 工作流未设计 |
-| `save(path, name)` | 按名保存当前结果 | Save Handler 已有；MCP 未接 |
-| `copy()` / `pin()` | 操作当前结果 | Handler 已有；MCP 未接 |
+| `status()` | 查询托盘和 Agent 接口状态 | Handler 已有；MCP 未接 |
+| `capture_window(query)` | 按窗口名截取可见桌面像素，多匹配返回歧义 | Window capture 为桩；需 WindowResolver + Handler |
+| `crop_center(width, height)` | 重新截取主显示器中央区域 | Capture 方法为桩 |
+| `longshot_select()` | 打开长截图选框，由用户确认区域 | GUI 长截图已有；MCP Workflow 入口未设计 |
+| `save(result_id, path, name)` | 按结果 ID 保存 PNG | ResultActionService 已有同步路径；MCP 未接 |
+| `copy(result_id)` / `pin(result_id)` | 操作指定结果 | ResultActionService / Handler 已有；MCP 未接 |
+| `get_operation()` / `cancel_operation()` / `release_result()` | 查询、取消和释放外部操作/结果 | F9 新增契约，尚未实现 |
 | `suggest_name()` | 建议文件名 | 未实现，可选云能力 |
 
-MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接访问 DXGI/GDI 或模拟任意鼠标键盘操作。
+MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接访问 DXGI/GDI 或模拟任意鼠标键盘操作。普通 `crop_center` / `capture_window` 不显示选区遮罩；`longshot_select` 必须由用户在原生 Overlay 中确认区域。完整接口草案见 [F9 MCP 架构与实施方案](./docs/F9-MCP-架构与实施方案.md)。
 
 ---
 
@@ -239,12 +242,12 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] 主路径：热键 → 框选 / 调区 → 标注 → 复制，约 15 秒；
 - [ ] 常驻内存 ≤ 40 MB，热键到 Overlay 首帧 ≤ 300 ms；
 - [ ] 双屏 + 125% / 150% / 200% 与混合 DPI 无明显偏移；
-- [ ] F2：记事本、资源管理器、Edge 的吸附边界与最终截图一致；
+- [ ] F2：记事本、资源管理器、Chrome / Edge 的吸附边界与最终截图一致；
 - [ ] F5：至少 2 枚 Pin 不重叠、可拖拽缩放，且新截图不含 Pin；
-- [ ] F6：记事本 / 资源管理器 / Edge 各至少一次自动拼接；
+- [ ] F6：记事本 / 资源管理器 / Chrome / Edge / Brave 至少覆盖三类真实窗口；
 - [ ] F8：现场演示至少两类本地口令；
 - [ ] F9：至少成功调用两项 Tool，错误时返回稳定错误码；
-- [x] Release 构建；289 个测试已发现，288 个执行，其中 284 个通过、4 个为当前环境下既有 `BitBlt` 失败，1 个 `DISABLED_` 窗口冒烟测试；
+- [ ] Release 全量构建与测试无环境阻断；2026-09-07 当前构建目录 CTest 执行 382 个，其中 378 个通过、4 个为当前环境下既有 `BitBlt` 失败；重新运行构建时遇到 MSBuild FileTracker `E_ACCESSDENIED`；
 - [ ] 最终交付包满足单文件、运行库和体积约束。
 
 ---
@@ -257,9 +260,9 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | 长截图拼接失败 | 高 | 限记事本、重叠匹配、到底 / 无新增 / 上限停止 | 真实长文验证，再扩展两个 profile |
 | Overlay 状态膨胀 | 中 | SelectionController、SelectionToolbar、OverlayPhase、OverlayRenderer 已抽出；Selection / Annotation 已非模态化 | 继续补状态级和真实窗口验收 |
 | 自身 Pin 被截入 | 中 | RAII CaptureGuard 隐藏 / 恢复 | 人工验证视觉闪烁和异常路径 |
-| Dispatcher 与工作流边界不清 | 低 | 单步动作走 Handler，多步交互已进入 `CaptureWorkflow` | F8/F9 前类型化 payload 与 operation id |
+| Dispatcher 与工作流边界不清 | 低 | 单步动作走 Handler，多步交互已进入 `CaptureWorkflow`；Action payload 已类型化 | F9 外部调度、异步 operation 和结果租约 |
 | PIMPL 所有权 | 低 | Capture / LongShot / LongShotController / MCP 已改为 `std::unique_ptr<Impl>`；LongShotController 统一 worker 生命周期 | 继续检查跨线程消息所有权 |
-| MCP ↔ 主进程通信 | 中 | 尚未实现 | 本机 Named Pipe、主线程投递、参数校验 |
+| MCP ↔ 主进程通信 | 中 | `McpBridge` 仍为同步 Stub，未接入 Application | 本机 Named Pipe、主线程投递、参数校验和连接生命周期 |
 | 云端不可用 | 低 | F1～F7 全本地 | F8 本地口令作为默认路径 |
 
 ---
@@ -280,6 +283,11 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 | PIMPL RAII 与 OverlayRenderer 拆分 | `3e8f854e`、`8c3166ed` |
 | CaptureWorkflow 收口交互编排 | `778cd336` |
 | LongShotController 收口 worker、控制 token 与完成回收 | `adeb7c60` |
+| ResultStore / ResultActionService 与结果生命周期收口 | `1e3a7318`、`40d22e21` |
+| 截图失败契约、Overlay 载荷释放与跨线程消息所有权 | `c7d40d21`、`2f63c92b`、`667563d0`、`65eb2c52` |
+| AnnotationEditorHost 组件拆分 | `57004322` |
+| 类型化 Action、结果选择、中立坐标与编译边界 | `ddc00c23`、`7e61cc07`、`6892a0bf` |
+| Notepad / Explorer / Chromium 长截图插件与拼接稳定性 | `ce8fad57`、`4a1ed058` |
 
 提交标题用于定位，最终完成度以当前源码和测试结果为准。
 
@@ -292,6 +300,7 @@ MCP 只允许本机连接；不得远程暴露桌面截图能力，不得直接�
 - [ ] F3 Copy / Save / Pin / 再编辑的完整 15 秒人工 Demo 记录；
 - [ ] F5 / F6 / DPI 人工验收记录；
 - [ ] Skill / MCP 接口说明；
+- [x] F9 Agent / MCP 架构与实施方案（接口、线程边界、结果生命周期、验收清单）；
 - [ ] 最终绿色交付包及体积 / 内存 / 时延报告；
 - [ ] 立项计划书和完整 Demo 脚本。
 
