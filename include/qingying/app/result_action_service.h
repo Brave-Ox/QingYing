@@ -2,6 +2,7 @@
 
 #include "qingying/action/types.hpp"
 #include "qingying/app/result_store.h"
+#include "qingying/app/interaction_gate.h"
 
 #include <Windows.h>
 
@@ -21,7 +22,8 @@ class ResultActionService final {
  public:
   using SaveDialog = std::function<std::optional<std::wstring>(HWND)>;
   ResultActionService(ResultStore& results, ExportService& export_service,
-                      PinManager& pin_manager, SaveDialog save_dialog = {});
+                      PinManager& pin_manager, SaveDialog save_dialog = {},
+                      InteractionGate* gate = nullptr);
 
   void setOwnerWindow(HWND owner_window) noexcept;
   void bindPinWindowActions();
@@ -30,11 +32,17 @@ class ResultActionService final {
   ActionResult save(ResultId result_id, const std::wstring& path);
   ActionResult save(ResultId result_id);
   ActionResult pin(ResultId result_id);
-  ActionResult copy(ResultScopeId scope, const ResultSelection& selection);
+  ActionResult copy(ResultScopeId scope, const ResultSelection& selection,
+                    const InteractionGate::Guard* owner = nullptr);
   ActionResult save(ResultScopeId scope, const ResultSelection& selection,
-                    const std::wstring& path);
-  ActionResult save(ResultScopeId scope, const ResultSelection& selection);
-  ActionResult pin(ResultScopeId scope, const ResultSelection& selection);
+                    const std::wstring& path,
+                    const InteractionGate::Guard* owner = nullptr);
+  ActionResult save(ResultScopeId scope, const ResultSelection& selection,
+                    const InteractionGate::Guard* owner = nullptr);
+  ActionResult pin(ResultScopeId scope, const ResultSelection& selection,
+                   const InteractionGate::Guard* owner = nullptr);
+  // Pin owns this image independently of ResultStore; also guards its modal UI.
+  ActionResult savePinImage(const Image& image);
 
  private:
   ActionResult copyImage(const Image& image);
@@ -43,6 +51,7 @@ class ResultActionService final {
                                    bool show_error_message);
   ActionResult pinImage(const Image& image);
   ActionResult noResult(const char* action) const;
+  ActionResult unavailable() const;
   void showSaveUnavailableMessage() const;
   void showSaveErrorMessage() const;
 
@@ -51,6 +60,8 @@ class ResultActionService final {
   PinManager& pin_manager_;
   HWND owner_window_{nullptr};
   SaveDialog save_dialog_;
+  InteractionGate local_gate_;
+  InteractionGate& gate_;
 };
 
 }  // namespace qingying

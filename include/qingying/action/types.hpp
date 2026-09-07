@@ -161,6 +161,14 @@ struct ResourceUsage {
   std::uint64_t result_bytes{0};
   std::uint32_t agent_pin_count{0};
   std::uint64_t agent_pin_bytes{0};
+  std::uint64_t reserved_result_bytes{0};
+};
+
+struct QueueUsage {
+  std::uint32_t queued{0};
+  std::uint32_t running{0};
+  std::uint32_t ordinary{0};
+  std::uint32_t control{0};
 };
 
 struct StatusInfo {
@@ -175,6 +183,7 @@ struct StatusInfo {
   std::vector<std::string> capabilities;
   std::optional<AutomationLimits> limits;
   std::optional<ResourceUsage> resources;
+  std::optional<QueueUsage> queues;
 };
 
 using ActionOutput =
@@ -308,6 +317,8 @@ class CancellationSource {
   std::shared_ptr<std::atomic_bool> state_;
 };
 
+class IOperationControl;
+
 struct ActionRequest {
   RequestId request_id{kInvalidRequestId};
   OperationId operation_id{kInvalidOperationId};
@@ -317,6 +328,8 @@ struct ActionRequest {
       std::chrono::steady_clock::now()};
   ActionPayload payload{StatusRequest{}};
   ActionContext context{};
+  // Trusted admission control, never populated from external payload fields.
+  std::shared_ptr<IOperationControl> operation_control;
 
   ActionRequest() = default;
 

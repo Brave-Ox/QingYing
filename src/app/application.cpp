@@ -10,6 +10,7 @@
 #include "qingying/app/result_store.h"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
+#include "qingying/automation/automation_endpoint.h"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/longshot/dll_longshot_profile.h"
@@ -22,8 +23,20 @@
 
 #include <memory>
 #include <string>
+#include <cstring>
+#include <stdexcept>
 
 namespace {
+
+constexpr UINT_PTR kAutomationMaintenanceTimer = 0xF907;
+
+qingying::ApplicationEpoch makeApplicationEpoch() {
+  GUID guid{};
+  if (FAILED(CoCreateGuid(&guid))) throw std::runtime_error("application epoch");
+  qingying::ApplicationEpoch epoch{};
+  std::memcpy(&epoch, &guid, sizeof(epoch));
+  return epoch ? epoch : 1;
+}
 
 std::wstring makeLongShotPluginDirectory(HINSTANCE instance) {
   constexpr DWORD kPathCapacity = 32768;
@@ -64,17 +77,33 @@ struct Application::Impl {
         longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
-        result_actions_(result_store_, export_service_, pin_manager_),
+        result_actions_(result_store_, export_service_, pin_manager_, {}, &interaction_gate_),
         longshot_controller_(longshot_, overlay_),
         capture_workflow_(dispatcher_, capture_, longshot_controller_,
                           result_store_, result_actions_, pin_manager_,
-                          overlay_) {}
+                          overlay_, &interaction_gate_),
+        operation_registry_(makeApplicationEpoch()),
+        scheduler_(
+            [this](UINT message, UiMessageToken token) {
+              return tray_.hwnd() && PostMessageW(tray_.hwnd(), message, 0,
+                  static_cast<LPARAM>(token)) != FALSE;
+            },
+            [this](UiMessageToken ticket, const TrustedAutomationContext& context,
+                   const AutomationRequest& request, std::shared_ptr<OperationControl> control) {
+              automation_endpoint_.execute(ticket, context, request, std::move(control));
+            }),
+        automation_endpoint_(dispatcher_, capture_workflow_, result_store_,
+            operation_registry_, scheduler_, interaction_gate_, {}, {}) {}
 
   ~Impl() {
-    // Stop asynchronous capture work before unregistering the hotkey and
-    // destroying the tray-owned UI services.
-    capture_workflow_.shutdown();
-    result_store_.clearAll();
+    shutdown();
+  }
+
+  void shutdown() {
+    if (stopping_) return;
+    stopping_ = true;
+    automation_endpoint_.shutdown();
+    if (tray_.hwnd()) KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
     hotkey_.unregisterAll(tray_.hwnd());
   }
 
@@ -86,6 +115,16 @@ struct Application::Impl {
   void installMessageRouter() {
     tray_.setMessageFilter([this](UINT msg, WPARAM wparam, LPARAM lparam,
                                   LRESULT* result) -> bool {
+      if (msg == WM_QINGYING_AUTOMATION_REQUEST || msg == WM_QINGYING_AUTOMATION_COMPLETE) {
+        scheduler_.dispatch(msg, static_cast<UiMessageToken>(lparam));
+        *result = 0;
+        return true;
+      }
+      if (msg == WM_TIMER && wparam == kAutomationMaintenanceTimer) {
+        automation_endpoint_.tick();
+        *result = 0;
+        return true;
+      }
       if (msg == WM_HOTKEY && wparam == HotkeyIds::kCapture) {
         onCaptureHotkey();
         *result = 0;
@@ -100,8 +139,11 @@ struct Application::Impl {
         // The tray window owns the process lifetime. CaptureWorkflow closes
         // any non-modal overlays and joins its worker before TrayController
         // posts quit.
-        capture_workflow_.shutdown();
-        result_store_.clearAll();
+        shutdown();
+        return false;
+      }
+      if (msg == WM_ENDSESSION && wparam) {
+        shutdown();
         return false;
       }
       if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {
@@ -143,6 +185,10 @@ struct Application::Impl {
     result_actions_.setOwnerWindow(tray_.hwnd());
 
     installMessageRouter();
+    if (!SetTimer(tray_.hwnd(), kAutomationMaintenanceTimer, 250, nullptr)) {
+      shutdown();
+      return 3;
+    }
 
     if (!hotkey_.registerCaptureHotkey(tray_.hwnd())) {
       MessageBoxW(
@@ -158,6 +204,7 @@ struct Application::Impl {
       DispatchMessageW(&msg);
     }
 
+    shutdown();
     return static_cast<int>(msg.wParam);
   }
 
@@ -172,10 +219,15 @@ struct Application::Impl {
   ExportService export_service_;
   ResultStore result_store_;
   PinManager pin_manager_;
+  InteractionGate interaction_gate_;
   ResultActionService result_actions_;
   SelectionOverlay overlay_;
   LongShotController longshot_controller_;
   CaptureWorkflow capture_workflow_;
+  OperationRegistry operation_registry_;
+  UiActionScheduler scheduler_;
+  AutomationEndpoint automation_endpoint_;
+  bool stopping_{false};
 };
 
 Application::Application(HINSTANCE instance)

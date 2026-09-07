@@ -114,14 +114,15 @@ struct CaptureWorkflow::Impl {
        LongShotController& longshot_controller_in,
        ResultStore& results_in, ResultActionService& result_actions_in,
        PinManager& pin_manager_in,
-       SelectionOverlay& selection_overlay_in)
+       SelectionOverlay& selection_overlay_in, InteractionGate* gate_in)
       : dispatcher(dispatcher_in),
         capture(capture_in),
         longshot_controller(longshot_controller_in),
         results(results_in),
         result_actions(result_actions_in),
         pin_manager(pin_manager_in),
-        selection_overlay(selection_overlay_in) {}
+        selection_overlay(selection_overlay_in),
+        gate(gate_in ? *gate_in : local_gate) {}
 
   void setOwnerWindow(HWND window) noexcept {
     owner_window = window;
@@ -250,11 +251,11 @@ void showSelectionOverlay() {
 
   void dispatchResultAction(SelectionAction action, ResultId result_id) {
     if (action == SelectionAction::Save) {
-      (void)result_actions.save(kGuiResultScopeId, ResultSelection::specific(result_id));
+      (void)result_actions.save(kGuiResultScopeId, ResultSelection::specific(result_id), gate_owner());
       return;
     }
     if (action == SelectionAction::Pin) {
-      const ActionResult pin_result = result_actions.pin(kGuiResultScopeId, ResultSelection::specific(result_id));
+      const ActionResult pin_result = result_actions.pin(kGuiResultScopeId, ResultSelection::specific(result_id), gate_owner());
       if (!pin_result.ok) {
         MessageBoxW(owner_window, L"Failed to pin the latest capture.",
                     L"QingYing", MB_OK | MB_ICONERROR);
@@ -262,7 +263,7 @@ void showSelectionOverlay() {
       return;
     }
     if (action == SelectionAction::Copy) {
-      (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(result_id));
+      (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(result_id), gate_owner());
     }
   }
 
@@ -278,8 +279,10 @@ void showSelectionOverlay() {
         annotated_result_ready = false;
         return;
       case CaptureWorkflowRoute::StartLongShot:
+        interaction.setKind(InteractionKind::LongShot);
         longshot_result_ready = false;
         if (!longshot_controller.start(pending_longshot_request)) {
+          interaction.setKind(InteractionKind::Capture);
           pending_overlay_error = L"长截图无法启动，请重新框选后再试。";
           if (!selection_overlay.postLongShotFinished(false)) {
             selection_overlay.hide();
@@ -331,6 +334,7 @@ void showSelectionOverlay() {
     Image completion_image;
     const bool completion_received = longshot_controller.handleCompletion(
         token, completion_result, completion_image);
+    if (completion_received) interaction.setKind(InteractionKind::Capture);
     if (shutting_down.load() || !active || stage != WorkflowStage::Selecting) {
       return;
     }
@@ -354,7 +358,7 @@ void showSelectionOverlay() {
         pending_overlay_error = L"长截图生成了无效结果，请重新框选后再试。";
       } else {
         // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
-        const ActionResult copy_result = result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id));
+        const ActionResult copy_result = result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id), gate_owner());
         if (!copy_result.ok) {
           overlay_success = false;
           longshot_result_ready = false;
@@ -385,6 +389,12 @@ void showSelectionOverlay() {
         !IsWindow(owner_window)) {
       return false;
     }
+
+    // Do not overwrite the existing guard on rejection: active may already be
+    // false while finishWorkflow is still inside a modal error message.
+    auto admitted = gate.acquire(InteractionKind::Capture);
+    if (!admitted) return false;
+    interaction = std::move(admitted);
 
     // A new screenshot starts a new result lifetime. Release the previous
     // full-size image before allocating another capture/selection buffer.
@@ -471,7 +481,7 @@ void showSelectionOverlay() {
     }
 
     // 保持原有体验：完成标注立即复制；结果工具栏随后仍可继续保存或钉图。
-    (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id));
+    (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id), gate_owner());
 
     // 编辑器关闭后重新捕获桌面，并把合成图贴回原选区，恢复统一的
     // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
@@ -513,6 +523,7 @@ void showSelectionOverlay() {
 
     if (shutting_down.load()) {
       pending_overlay_error.clear();
+      interaction.reset();
       return;
     }
 
@@ -524,10 +535,11 @@ void showSelectionOverlay() {
       MessageBoxW(owner_window, error.c_str(), L"轻映 QingYing",
                   MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
     }
+    interaction.reset();
   }
 
   void cancel() {
-    longshot_controller.cancel();
+    stopLongShotWorker();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
     results.clearScope(kGuiResultScopeId);
@@ -546,6 +558,7 @@ void showSelectionOverlay() {
     annotation_result_ready = false;
     annotated_result_ready = false;
     pending_overlay_error.clear();
+    interaction.reset();
   }
 
   void shutdown() {
@@ -574,6 +587,12 @@ void showSelectionOverlay() {
     annotated_result_ready = false;
     pending_overlay_error.clear();
     owner_window = nullptr;
+    interaction.reset();
+  }
+
+  const InteractionGate::Guard* gate_owner() const {
+    // Legacy standalone callers use separate gates; composition injects one.
+    return &gate == &local_gate ? nullptr : &interaction;
   }
 
   ActionDispatcher& dispatcher;
@@ -602,16 +621,19 @@ void showSelectionOverlay() {
   bool selection_result_ready{false};
   bool annotation_result_ready{false};
   std::wstring pending_overlay_error;
+  InteractionGate local_gate;
+  InteractionGate& gate;
+  InteractionGate::Guard interaction;
 };
 
 CaptureWorkflow::CaptureWorkflow(
     ActionDispatcher& dispatcher, CaptureEngine& capture,
     LongShotController& longshot_controller, ResultStore& results,
     ResultActionService& result_actions, PinManager& pin_manager,
-    SelectionOverlay& selection_overlay)
+    SelectionOverlay& selection_overlay, InteractionGate* gate)
     : impl_(std::make_unique<Impl>(dispatcher, capture, longshot_controller,
                                    results, result_actions, pin_manager,
-                                   selection_overlay)) {}
+                                   selection_overlay, gate)) {}
 
 CaptureWorkflow::~CaptureWorkflow() {
   impl_->shutdown();

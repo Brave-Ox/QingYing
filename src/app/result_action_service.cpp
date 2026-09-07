@@ -13,10 +13,12 @@ namespace qingying {
 
 ResultActionService::ResultActionService(ResultStore& results,
                                          ExportService& export_service,
-                                         PinManager& pin_manager, SaveDialog save_dialog)
+                                         PinManager& pin_manager, SaveDialog save_dialog,
+                                         InteractionGate* gate)
     : results_(results),
       export_service_(export_service),
-      pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)) {}
+      pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)),
+      gate_(gate ? *gate : local_gate_) {}
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
@@ -24,9 +26,12 @@ void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
 
 void ResultActionService::bindPinWindowActions() {
   pin_manager_.setActionCallbacks(
-      [this](const Image& image) { return copyImage(image); },
       [this](const Image& image) {
-        return saveImageWithDialog(image, false);
+        auto guard = gate_.acquire(InteractionKind::Copy);
+        return guard ? copyImage(image) : unavailable();
+      },
+      [this](const Image& image) {
+        return savePinImage(image);
       });
 }
 
@@ -43,18 +48,26 @@ ActionResult ResultActionService::pin(ResultId id) {
   return pin(kGuiResultScopeId, ResultSelection::specific(id));
 }
 ActionResult ResultActionService::copy(
-    ResultScopeId scope, const ResultSelection& selection) {
+    ResultScopeId scope, const ResultSelection& selection,
+    const InteractionGate::Guard* owner) {
+  auto guard = gate_.acquire(InteractionKind::Copy, owner);
+  if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
   return lease ? copyImage(*lease.image()) : noResult("copy");
 }
 ActionResult ResultActionService::save(
     ResultScopeId scope, const ResultSelection& selection,
-    const std::wstring& path) {
+    const std::wstring& path, const InteractionGate::Guard* owner) {
+  auto guard = gate_.acquire(InteractionKind::SaveDialog, owner);
+  if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
   return lease ? saveImage(*lease.image(), path) : noResult("save");
 }
 ActionResult ResultActionService::save(
-    ResultScopeId scope, const ResultSelection& selection) {
+    ResultScopeId scope, const ResultSelection& selection,
+    const InteractionGate::Guard* owner) {
+  auto guard = gate_.acquire(InteractionKind::SaveDialog, owner);
+  if (!guard) return unavailable();
   // Keep ownership across the nested message pump and the subsequent export.
   const auto lease = results_.acquire(scope, selection);
   if (!lease) {
@@ -64,9 +77,27 @@ ActionResult ResultActionService::save(
   return saveImageWithDialog(*lease.image(), true);
 }
 ActionResult ResultActionService::pin(
-    ResultScopeId scope, const ResultSelection& selection) {
+    ResultScopeId scope, const ResultSelection& selection,
+    const InteractionGate::Guard* owner) {
+  auto guard = gate_.acquire(InteractionKind::Pin, owner);
+  if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
   return lease ? pinImage(*lease.image()) : noResult("pin");
+}
+
+ActionResult ResultActionService::savePinImage(const Image& image) {
+  auto guard = gate_.acquire(InteractionKind::SaveDialog);
+  if (!guard) return unavailable();
+  // A nested message pump may close the owning Pin window.
+  const Image snapshot = image;
+  return saveImageWithDialog(snapshot, false);
+}
+
+ActionResult ResultActionService::unavailable() const {
+  ActionResult result;
+  result.error_code = gate_.stopping() ? ErrorCode::kShuttingDown : ErrorCode::kBusy;
+  result.message = std::string(errorCodeSymbol(result.error_code));
+  return result;
 }
 
 ActionResult ResultActionService::copyImage(const Image& image) {
@@ -109,6 +140,7 @@ ActionResult ResultActionService::saveImageWithDialog(
   const auto selected_path = save_dialog_ ? save_dialog_(owner_window_)
       : (GetSaveFileNameW(&dialog) ? std::optional<std::wstring>{path}
                                    : std::nullopt);
+  if (gate_.stopping()) return unavailable();
   if (!selected_path) {
     ActionResult result;
     result.ok = true;

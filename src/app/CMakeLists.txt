@@ -74,6 +74,7 @@ target_link_libraries(qingying
     qingying_mcp
     qingying_workflow
     qingying_app_handlers
+    qingying_automation
 )
 
 if(WIN32)

@@ -41,6 +41,16 @@ class UiActionScheduler final {
   // reporting their actual outcomes. Never blocks waiting for workers.
   void shutdown();
   std::size_t pending() const;
+  QueueUsage queueUsage() const;
+  // Receipt captured at admission survives the target request's completion.
+  std::optional<CancellationResult> cancellationReceipt(UiMessageToken ticket) const;
+  // UI binds an admitted idempotent retry to the original operation control.
+  void shareControl(UiMessageToken ticket, std::shared_ptr<OperationControl> control);
+  // UI-only hooks: finalize business metadata before delivery, release its
+  // interaction guard after delivery (also across nested message pumps).
+  void setSettlementHooks(
+      std::function<void(UiMessageToken, AutomationResponse&)> before,
+      std::function<void(UiMessageToken)> after);
 
  private:
   struct Entry {
@@ -52,6 +62,7 @@ class UiActionScheduler final {
     bool running{false};
     UiMessageToken completion_token{0};
     std::optional<AutomationResponse> response;
+    std::optional<CancellationResult> cancellation_receipt;
   };
   bool connected(const TrustedAutomationContext& context) const;
   void checkThread() const;
@@ -60,6 +71,8 @@ class UiActionScheduler final {
   static AutomationResponse failure(const Entry& entry, int code);
   Post post_;
   Execute execute_;
+  std::function<void(UiMessageToken, AutomationResponse&)> before_settlement_;
+  std::function<void(UiMessageToken)> after_settlement_;
   AutomationLimits limits_;
   OperationClock clock_;
   std::thread::id ui_thread_;

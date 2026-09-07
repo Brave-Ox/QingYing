@@ -69,7 +69,8 @@ class OperationRegistry {
   bool advance(const TrustedAutomationContext& context, OperationId id,
                OperationState state, OperationProgress progress = {});
   bool complete(const TrustedAutomationContext& context, OperationId id,
-                ActionResult outcome);
+                ActionResult outcome, ActionResult* settled_outcome = nullptr);
+  ResultId currentResult(const TrustedAutomationContext& context);
   std::optional<ResultHandle> bindResult(const TrustedAutomationContext& context,
                                          ResultId id);
   std::optional<ResultId> resolveResult(const TrustedAutomationContext& context,

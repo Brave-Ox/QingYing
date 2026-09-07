@@ -15,6 +15,7 @@ class LongShotController;
 class PinManager;
 class ResultActionService;
 class ResultStore;
+class InteractionGate;
 
 // Pure routing decision for one completed selection. Keeping this separate
 // from the Win32 views makes the workflow's branch priority testable.
@@ -41,7 +42,8 @@ class CaptureWorkflow {
                   LongShotController& longshot_controller,
                   ResultStore& results, ResultActionService& result_actions,
                   PinManager& pin_manager,
-                  SelectionOverlay& selection_overlay);
+                  SelectionOverlay& selection_overlay,
+                  InteractionGate* gate = nullptr);
   ~CaptureWorkflow();
 
   CaptureWorkflow(const CaptureWorkflow&) = delete;
@@ -63,8 +65,8 @@ class CaptureWorkflow {
   // Application forwards WM_QINGYING_LONGSHOT_COMPLETE here unchanged.
   void handleLongShotCompletion(UiMessageToken token);
 
-  // cancel() requests the current interaction to close. shutdown() additionally
-  // joins the worker and permanently rejects new workflows.
+  // Both close the interaction and join its worker before releasing occupancy.
+  // shutdown() additionally permanently rejects new workflows.
   void cancel();
   void shutdown();
 

@@ -6,6 +6,8 @@ add_executable(qingying_tests
   automation_contract_test.cpp
   operation_registry_test.cpp
   ui_action_scheduler_test.cpp
+  automation_endpoint_test.cpp
+  interaction_gate_test.cpp
   annotation_document_test.cpp
   annotation_editor_session_test.cpp
   annotation_engine_test.cpp

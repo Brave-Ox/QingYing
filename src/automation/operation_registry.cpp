@@ -411,7 +411,8 @@ bool OperationRegistry::advance(const TrustedAutomationContext& context, Operati
   return true;
 }
 
-bool OperationRegistry::complete(const TrustedAutomationContext& context, OperationId id, ActionResult outcome) {
+bool OperationRegistry::complete(const TrustedAutomationContext& context, OperationId id,
+    ActionResult outcome, ActionResult* settled_outcome) {
   checkThread();
   auto* value = record(context, id, false);
   if (!value || isTerminal(value->snapshot.state)) return false;
@@ -445,8 +446,15 @@ bool OperationRegistry::complete(const TrustedAutomationContext& context, Operat
     value->snapshot.result_availability = session(context) ? ResultAvailability::Available : ResultAvailability::Released;
     if (session(context)) (void)bindResult(context, captured->result_id);
   }
+  if (settled_outcome) *settled_outcome = *value->snapshot.outcome;
   trim();
   return true;
+}
+
+ResultId OperationRegistry::currentResult(const TrustedAutomationContext& context) {
+  checkThread();
+  const auto* owner = session(context);
+  return owner ? owner->result_id : kInvalidResultId;
 }
 
 std::optional<ResultHandle> OperationRegistry::bindResult(const TrustedAutomationContext& context, ResultId id) {

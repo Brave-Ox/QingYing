@@ -80,8 +80,17 @@ void UiActionScheduler::submit(TrustedAutomationContext context, AutomationReque
                 for (auto& pair : entries_) {
                   auto& other = pair.second;
                   if (sameConnection(other.context.connection, it->second.context.connection) &&
-                      other.request.request_id == target->request_id)
-                    other.control->requestCancel(AbortReason::ClientCancel);
+                      other.request.request_id == target->request_id) {
+                    const bool requested = other.control->requestCancel(AbortReason::ClientCancel);
+                    const auto status = other.control->status();
+                    it->second.cancellation_receipt = CancellationResult{
+                        *target, kInvalidOperationId,
+                        status.abort_reason != AbortReason::None ? OperationState::Cancelling :
+                            status.committed ? OperationState::Finalizing :
+                            other.running ? OperationState::Running : OperationState::Queued,
+                        requested || status.abort_reason != AbortReason::None};
+                    break;
+                  }
                 }
               }
               return;
@@ -134,7 +143,14 @@ void UiActionScheduler::settle(UiMessageToken ticket) {
     channel_.discard(ticket);
     channel_.discard(entry.completion_token);
   }
-  if (entry.completion) entry.completion(std::move(*entry.response));
+  if (before_settlement_) before_settlement_(ticket, *entry.response);
+  try {
+    if (entry.completion) entry.completion(std::move(*entry.response));
+  } catch (...) {
+    if (after_settlement_) after_settlement_(ticket);
+    throw;
+  }
+  if (after_settlement_) after_settlement_(ticket);
 }
 void UiActionScheduler::dispatch(UINT message, UiMessageToken token) {
   checkThread();
@@ -218,6 +234,37 @@ void UiActionScheduler::shutdown() {
 std::size_t UiActionScheduler::pending() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return entries_.size();
+}
+QueueUsage UiActionScheduler::queueUsage() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  QueueUsage usage;
+  for (const auto& pair : entries_) {
+    pair.second.running ? ++usage.running : ++usage.queued;
+    pair.second.control_lane ? ++usage.control : ++usage.ordinary;
+  }
+  return usage;
+}
+std::optional<CancellationResult> UiActionScheduler::cancellationReceipt(UiMessageToken ticket) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = entries_.find(ticket);
+  return it == entries_.end() ? std::nullopt : it->second.cancellation_receipt;
+}
+void UiActionScheduler::shareControl(UiMessageToken ticket, std::shared_ptr<OperationControl> control) {
+  checkThread();
+  if (!control) throw std::invalid_argument("shared operation control");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = entries_.find(ticket);
+  if (it == entries_.end() || !it->second.running) return;
+  const auto abort = it->second.control->status().abort_reason;
+  if (abort != AbortReason::None) control->requestCancel(abort);
+  it->second.control = std::move(control);
+}
+void UiActionScheduler::setSettlementHooks(
+    std::function<void(UiMessageToken, AutomationResponse&)> before,
+    std::function<void(UiMessageToken)> after) {
+  checkThread();
+  before_settlement_ = std::move(before);
+  after_settlement_ = std::move(after);
 }
 }  // namespace qingying
 

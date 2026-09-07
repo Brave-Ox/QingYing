@@ -9,8 +9,13 @@ target_link_libraries(qingying_automation_contract
 )
 target_compile_features(qingying_automation_contract INTERFACE cxx_std_17)
 
-add_library(qingying_automation STATIC operation_registry.cpp ui_action_scheduler.cpp)
+add_library(qingying_automation STATIC
+  operation_registry.cpp
+  ui_action_scheduler.cpp
+  automation_endpoint.cpp
+)
 target_link_libraries(qingying_automation PUBLIC qingying_automation_contract)
+target_link_libraries(qingying_automation PRIVATE qingying_workflow)
 if(WIN32)
   target_link_libraries(qingying_automation PRIVATE bcrypt)
 endif()

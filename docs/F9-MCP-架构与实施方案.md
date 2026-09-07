@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01～F9-06 契约、Dispatcher、作用域结果与预算、OperationRegistry、有界 UI 调度及自动验收完成；F9-07～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01～F9-07 契约、Dispatcher、作用域结果与预算、OperationRegistry、有界 UI 调度、AutomationEndpoint 与交互占用及自动验收完成；F9-08～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -694,18 +694,24 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-07：接入 AutomationEndpoint、交互占用与本地控制动作
 
-**状态：未开始；前置：F9-03、F9-04、F9-05、F9-06。** 建议提交：`feat(f9-07): add the automation endpoint and interaction arbitration`。
+**状态：已完成（2026-09-07）；前置：F9-03、F9-04、F9-05、F9-06。** 建议提交：`feat(f9-07): add the automation endpoint and interaction arbitration`。
 
 **文件范围：** 新增 `include/qingying/automation/automation_endpoint.h`、`src/automation/automation_endpoint.cpp`、`include/qingying/app/interaction_gate.h`；修改 `src/app/application.cpp`、CaptureWorkflow、ResultActionService 和 `src/app/CMakeLists.txt`。
 
-- [ ] 在组合根注入 Dispatcher、Workflow、ResultStore、Registry、Scheduler；Endpoint 只在 UI 线程协调，外部 scope 由已认证连接创建。
-- [ ] 接通中立 status/get_operation/cancel_operation/release_result，加入结果 TTL sweep；status 返回真实状态、队列水位、结果预算及当前可用能力。
-- [ ] GUI 选区、标注、模态保存、普通捕获和长截共享占用 guard；GUI 活跃时外部 capture/longshot 返回 Busy，长截期间 Copy/Pin 返回 Busy。
-- [ ] 占用直到 worker 回收、Overlay 关闭、Pin 恢复、完成结算后释放；覆盖 Pin 保存对话框重入，不能仅看 Workflow::active()。
-- [ ] 接通同步与异步 submit 的中立分发路径；尚未完成安全/预算改造的外部动作不列为能力。
-- [ ] 建立应用 stopping 和幂等 shutdown 骨架；当前已有 GUI/长截退出也必须接入，给后续 I/O/导出组件留出明确停止与结算顺序。
+- [x] 在组合根注入 Dispatcher、Workflow、ResultStore、Registry、Scheduler；Endpoint 只在 UI 线程协调，外部 scope 由已认证连接创建。
+- [x] 接通中立 status/get_operation/cancel_operation/release_result，加入结果 TTL sweep；status 返回真实状态、队列水位、结果预算及当前可用能力。
+- [x] GUI 选区、标注、模态保存、普通捕获和长截共享占用 guard；GUI 活跃时外部 capture/longshot 返回 Busy，长截期间 Copy/Pin 返回 Busy。
+- [x] 占用直到 worker 回收、Overlay 关闭、Pin 恢复、完成结算后释放；覆盖 Pin 保存对话框重入，不能仅看 Workflow::active()。
+- [x] 接通同步与异步 submit 的中立分发路径；尚未完成安全/预算改造的外部动作不列为能力。
+- [x] 建立应用 stopping 和幂等 shutdown 骨架；当前已有 GUI/长截退出也必须接入，给后续 I/O/导出组件留出明确停止与结算顺序。
 
 **验收：** 新增 `tests/automation_endpoint_test.cpp`、`tests/interaction_gate_test.cpp`；通过 fake transport 验证真实状态、busy、模态重入、只清本 scope、取消后回收前仍忙、两条连接独立。此时无生产 Pipe 监听。
+
+完成记录：应用组合根构造 Registry、Scheduler、Endpoint 和共享 InteractionGate，转发独立 WM_APP 请求/完成 token，并以 250 ms UI 定时器执行结果/操作清扫及失败投递 drain。Endpoint 仅由 UI 线程为可信认证入口分配独立 scope，控制动作按连接校验；status 包含实际 busy、排队/运行水位、保留/预留字节、限额及可用能力。GUI 选区、标注、普通截图、长截图和 ResultActionService 共用守卫，只有显式持有原守卫的工作流内部调用可以嵌套；Pin 模态保存也持有守卫与独立图片快照。取消等待 worker join 和界面清理，自动化执行守卫保留至完成回调返回，重入 shutdown 不提前释放。
+
+同步/异步 Handler 统一通过 Dispatcher.submit，可信 OperationControl 保留准入期限及取消/提交仲裁；Scheduler 在 UI 完成交付前结算 Registry，交付后释放占用，连接内幂等重试共享执行和取消控制。私有 RequestId 取消保留入队时回执，避免目标先完成而丢失受理信息。退出顺序为停止准入与请求取消、GUI/长截 shutdown、额外业务生产者停止/回收、Scheduler 最终结算、连接和结果清理；后续 I/O 与导出组件按此边界接入。
+
+本次新增 24 个测试，Release 应用构建及全量测试 558/558 通过（基于 `c1c59c50` 工作区）。同步/异步执行用遵守提交与回收契约的 fake Handler 验证；生产 ready_actions 为空，外部截图/保存/复制/Pin/长截图仍待后续任务安全接入，仅具备内部状态和操作管理能力，status 明确返回 transport_not_enabled，不启动生产 Pipe、不新增可调用 Tool。源码保持 UTF-8 BOM + CRLF，文档保持 UTF-8 无 BOM + CRLF。
 
 ### F9-08：固定 JSON 依赖并实现私有 wire codec
 
