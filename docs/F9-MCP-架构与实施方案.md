@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01 契约层、F9-02 Dispatcher 提交语义、F9-03 作用域结果与 ResultLease 及自动验收完成；F9-04～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01～F9-04 契约、Dispatcher、作用域结果与 lease、结果到期和预算回收及自动验收完成；F9-05～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层、F9-02 Dispatcher 提交语义、F9-03 作用域结果与 ResultLease 及自动验收完成，F9-04～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01～F9-04 契约、Dispatcher、作用域结果与 lease、结果到期和预算回收及自动验收完成，F9-05～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -608,17 +608,36 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-04：补结果到期、预留预算与实际像素回收
 
-**状态：未开始；前置：F9-03。** 建议提交：`feat(f9-04): enforce result expiry and retained pixel budgets`。
+**状态：验收完成（fake clock、预算与实际所有权回归测试）；前置：F9-03。**
 
 **文件范围：** 修改 ResultStore；新增 `include/qingying/app/result_budget.h`、`src/app/result_budget.cpp`，接入 `src/app/CMakeLists.txt`。
 
-- [ ] 注入 monotonic clock，实现外部结果 60 秒有效期和有界失效记录；GUI 继续按工作流生命周期管理，不套用 Agent 的 TTL。
-- [ ] 实现普通截图像素上限、单结果/外部结果总字节上限，所有乘法与加法检查溢出；提供捕获前可回滚的预算预留。
-- [ ] 统计槽位和活动消费 lease 所持像素，按共享存储计一次；只有最后一个所有者释放后才扣减，跨线程归还计数不得访问已析构的 Store。
-- [ ] 替换、TTL、release、断连后拒绝新的 acquire；已有合法消费可完成，不续期，不淘汰其他连接的图。
-- [ ] 提供 UI 定期 sweep 入口和预算快照，供 F9-07 接入计时/状态；查询 expires_in_ms 使用真实剩余期限。
+- [x] 注入 monotonic clock，实现外部结果 60 秒有效期和有界失效记录；GUI 继续按工作流生命周期管理，不套用 Agent 的 TTL。
+- [x] 实现普通截图像素上限、单结果/外部结果总字节上限，所有乘法与加法检查溢出；提供捕获前可回滚的预算预留。
+- [x] 统计槽位和活动消费 lease 所持像素，按共享存储计一次；只有最后一个所有者释放后才扣减，跨线程归还计数不得访问已析构的 Store。
+- [x] 替换、TTL、release、断连后拒绝新的 acquire；已有合法消费可完成，不续期，不淘汰其他连接的图。
+- [x] 提供 UI 定期 sweep 入口和预算快照，供 F9-07 接入计时/状态；查询 expires_in_ms 使用真实剩余期限。
 
 **验收：** ResultStore/预算测试使用 fake clock，验证边界像素、到期、重复释放、持 lease 断连、替换时新旧图并存、预算预留失败/归还。无需等待真实 60 秒，也不使用进程内存数代替所有权断言。
+
+**实现记录：**
+
+- `ResultBudget::Reservation` 为可移动、不可复制的 RAII 预留；未发布自动回滚，发布校验 Store、scope、尺寸与容量后转为 retained。外部普通图受像素、单图字节和外部总预算限制；长截使用 `ordinary_capture=false` 的预留，仍受字节限制。GUI 统计实际持有量，但不占用外部额度，保留既有 GUI 长截行为。
+- 共享图像和预算凭据由同一存储拥有，按 vector capacity 计费；图像析构后再释放凭据。复制 lease 不重复计费，worker 归还只访问独立共享计数状态，不访问 Store。快照分别提供全部/外部的 reserved 与 retained 字节。
+- `acquire/currentId` 在 TTL 边界立即拒绝过期结果，`sweep` 回收过期槽；`expiresIn` 从固定截止时间计算剩余毫秒，不续期。到期返回 `ResultExpired`；不存在、越权和失效记录已淘汰返回 `ResultNotFound`。`releaseResult` 对保留记录中的重复释放幂等；`clearScope` 同时清除本 scope 的槽和查询历史。
+- 失效记录复用 AutomationLimits 的每连接数量、保留时间，并以 `max_connections × max_tombstones_per_connection` 限制全局数量；元数据不持图。延迟 sweep 不延长已过期结果的失效记录期限。测试另新增 `tests/result_budget_test.cpp` 并登记至 `tests/CMakeLists.txt`。
+
+```text
+完成日期：2026-09-07
+源码基线：de24c8dbae6c27ea3be28e47b4da8d4abd0cbf1e + 本次工作区改动（未自动提交）
+自动测试：
+  cmake --build build --config Release --target qingying_tests --parallel：通过。
+  ctest --test-dir build -C Release -R '^(ResultBudgetTest|ResultRetentionTest|ResultStore.*Test|ResultActionServiceTest|AppActionHandlersTest|CaptureSessionTest|CaptureWorkflow.*Test)\.' --output-on-failure：49/49 通过，新增 21 个用例。
+  .\build.bat Release test：Release EXE/测试目标构建通过，459/459 通过，0 失败。
+  本地日志：build/f9-04-target-tests.log、build/f9-04-release-test.log（构建产物，不入库）。
+真实客户端/桌面验收：本项未新增 Tool，使用 fake clock 与所有权断言验证，不等待真实 60 秒。
+剩余接线：F9-07 调用 UI 定时 sweep/预算状态，F9-12 接通外部捕获前 reserve 与 ResourceLimit 映射；长截逐次分配预算和异步导出仍按后续任务推进。本项不限制整个进程内存或 GDI/编码器的临时缓冲。
+```
 
 ### F9-05：建立 OperationRegistry 与连接内幂等记录
 

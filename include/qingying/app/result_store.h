@@ -2,11 +2,14 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/app/result_budget.h"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <functional>
+#include <vector>
 
 namespace qingying {
 
@@ -41,6 +44,25 @@ class ResultLease {
 // large stale pixel buffer.
 class ResultStore {
  public:
+  // The injected monotonic clock must not throw; store operations run on UI.
+  using Clock = std::function<std::chrono::steady_clock::time_point()>;
+  explicit ResultStore(AutomationLimits limits = {}, Clock clock = {});
+  ResultStore(const ResultStore&) = delete;
+  ResultStore& operator=(const ResultStore&) = delete;
+  ResultBudget::Reservation reserve(ResultScopeId scope, int width, int height,
+                                    bool ordinary_capture = true);
+  ResultId publish(ResultScopeId scope, Image image,
+                   ResultBudget::Reservation reservation,
+                   ScreenPhysicalRect bounds = {});
+  void sweep() noexcept;
+  int resultStatus(ResultScopeId scope, ResultId id) const noexcept;
+  int releaseResult(ResultScopeId scope, ResultId id) noexcept;
+  std::optional<std::chrono::milliseconds> expiresIn(
+      ResultScopeId scope, ResultId id) const noexcept;
+  ResultBudgetSnapshot budgetSnapshot() const noexcept { return budget_.snapshot(); }
+  // Shared accounting remains observable after this store is destroyed.
+  ResultBudget budgetObserver() const { return budget_; }
+  std::size_t tombstoneCount() const noexcept { return tombstones_.size(); }
   ResultId publish(ResultScopeId scope, Image image,
                    ScreenPhysicalRect bounds = {});
   ResultLease acquire(ResultScopeId scope, ResultId id) const noexcept;
@@ -76,9 +98,25 @@ class ResultStore {
   void clear() noexcept;
 
  private:
+  enum class Invalidation { Expired, Released, Replaced };
+  struct Tombstone {
+    ResultScopeId scope;
+    ResultId id;
+    Invalidation reason;
+    std::chrono::steady_clock::time_point until;
+  };
+  bool expired(const ResultLease& lease) const noexcept;
+  void remember(ResultScopeId scope, const ResultLease& lease,
+                Invalidation reason) noexcept;
+  void pruneTombstones() noexcept;
   static bool isValidImage(const Image& image) noexcept;
   ResultId allocateId();
 
+  AutomationLimits limits_;
+  Clock clock_;
+  ResultBudget budget_;
+  std::vector<Tombstone> tombstones_;
+  std::size_t max_tombstones_{0};
   std::unordered_map<ResultScopeId, ResultLease> slots_;
   ResultId next_id_{1};
 };

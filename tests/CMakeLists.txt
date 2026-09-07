@@ -20,6 +20,7 @@ add_executable(qingying_tests
   capture_workflow_test.cpp
   capture_session_test.cpp
   result_action_service_test.cpp
+  result_budget_test.cpp
   result_store_test.cpp
   ui_message_channel_test.cpp
   dib_encoder_test.cpp
