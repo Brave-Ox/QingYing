@@ -115,6 +115,11 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
       setColorPickerEyedropping(data, false);
       return true;
     }
+    if (annotationEditorStyleMenuConsumesEscape(data->chrome().m_style_menu))
+    {
+      closeStyleMenu(data);
+      return true;
+    }
     if (colorPickerIsVisible(data))
     {
       hideColorPicker(data, false);
@@ -276,6 +281,18 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         (void)handleColorPickerEyedropperClick(data, x, y);
         return 0;
       }
+      if (data->chrome().m_style_menu != AnnotationEditorStyleMenu::None)
+      {
+        const POINT point{x, y};
+        const bool menu_hit =
+            PtInRect(&data->chrome().m_style_menu_rect, point) != FALSE;
+        const bool chip_hit = hitTestArrowStyleChip(data, x, y) ||
+                              hitTestLineStyleChip(data, x, y);
+        if (!menu_hit && !chip_hit)
+        {
+          closeStyleMenu(data);
+        }
+      }
       const int hit = hitTestEditorToolbar(data, x, y);
       if (hit >= 0 &&
           data->chrome().m_toolbar_items[static_cast<std::size_t>(hit)].id ==
@@ -386,11 +403,17 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         const int hit = hitTestEditorToolbar(data, x, y);
         const bool chip_hover = hitTestStrokeChip(data, x, y);
+        const bool arrow_style_hover = hitTestArrowStyleChip(data, x, y);
+        const bool line_style_hover = hitTestLineStyleChip(data, x, y);
         if (hit != data->chrome().m_toolbar_hover ||
-            chip_hover != data->chrome().m_stroke_chip_hover)
+            chip_hover != data->chrome().m_stroke_chip_hover ||
+            arrow_style_hover != data->chrome().m_arrow_style_chip_hover ||
+            line_style_hover != data->chrome().m_line_style_chip_hover)
         {
           data->chrome().m_toolbar_hover = hit;
           data->chrome().m_stroke_chip_hover = chip_hover;
+          data->chrome().m_arrow_style_chip_hover = arrow_style_hover;
+          data->chrome().m_line_style_chip_hover = line_style_hover;
           invalidateToolbar(data);
         }
         TRACKMOUSEEVENT track{};
@@ -400,10 +423,15 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         TrackMouseEvent(&track);
         return 0;
       }
-      if (data->chrome().m_toolbar_hover >= 0 || data->chrome().m_stroke_chip_hover)
+      if (data->chrome().m_toolbar_hover >= 0 ||
+          data->chrome().m_stroke_chip_hover ||
+          data->chrome().m_arrow_style_chip_hover ||
+          data->chrome().m_line_style_chip_hover)
       {
         data->chrome().m_toolbar_hover = -1;
         data->chrome().m_stroke_chip_hover = false;
+        data->chrome().m_arrow_style_chip_hover = false;
+        data->chrome().m_line_style_chip_hover = false;
         invalidateToolbar(data);
       }
       if (data->inlineText().m_text_gesture_active)
@@ -424,10 +452,15 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_MOUSELEAVE:
       if (data != nullptr &&
-          (data->chrome().m_toolbar_hover >= 0 || data->chrome().m_stroke_chip_hover))
+          (data->chrome().m_toolbar_hover >= 0 ||
+           data->chrome().m_stroke_chip_hover ||
+           data->chrome().m_arrow_style_chip_hover ||
+           data->chrome().m_line_style_chip_hover))
       {
         data->chrome().m_toolbar_hover = -1;
         data->chrome().m_stroke_chip_hover = false;
+        data->chrome().m_arrow_style_chip_hover = false;
+        data->chrome().m_line_style_chip_hover = false;
         invalidateToolbar(data);
       }
       return 0;
@@ -443,6 +476,10 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       ScreenToClient(hwnd, &pt);
       const int delta =
           static_cast<int>(static_cast<short>(HIWORD(wparam)));
+      if (handleStyleChipWheel(data, pt.x, pt.y, delta))
+      {
+        return 0;
+      }
       if (hitTestStrokeChip(data, pt.x, pt.y) || strokePopupIsVisible(data))
       {
         (void)handleStrokeChipWheel(data, delta);

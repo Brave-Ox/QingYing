@@ -49,13 +49,90 @@ enum class AnnotationLineStyle
   Solid,
   Dashed,
   Dotted,
+  DashDot,
+  DashDotDot,
 };
 
-inline constexpr int AnnotationLineStyleCount = 3;
+inline constexpr int AnnotationLineStyleCount = 5;
 inline constexpr AnnotationLineStyle AnnotationLineStyleOptions[
     AnnotationLineStyleCount] = {AnnotationLineStyle::Solid,
                                  AnnotationLineStyle::Dashed,
-                                 AnnotationLineStyle::Dotted};
+                                 AnnotationLineStyle::Dotted,
+                                 AnnotationLineStyle::DashDot,
+                                 AnnotationLineStyle::DashDotDot};
+
+enum class AnnotationArrowStyle
+{
+  EndOpen,
+  StartOpen,
+  BothOpen,
+  EndFilled,
+  StartFilled,
+  BothFilled,
+  EndBar,
+  StartBar,
+  BothBars,
+};
+
+inline constexpr int AnnotationArrowStyleCount = 9;
+inline constexpr AnnotationArrowStyle AnnotationArrowStyleOptions[
+    AnnotationArrowStyleCount] = {
+    AnnotationArrowStyle::EndOpen,    AnnotationArrowStyle::StartOpen,
+    AnnotationArrowStyle::BothOpen,  AnnotationArrowStyle::EndFilled,
+    AnnotationArrowStyle::StartFilled,
+    AnnotationArrowStyle::BothFilled, AnnotationArrowStyle::EndBar,
+    AnnotationArrowStyle::StartBar,  AnnotationArrowStyle::BothBars};
+
+template <typename Style>
+inline constexpr int annotationStyleOptionIndex(const Style* options,
+                                                int count, Style style)
+{
+  if (options == nullptr || count <= 0)
+  {
+    return -1;
+  }
+  for (int i = 0; i < count; ++i)
+  {
+    if (options[i] == style)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+template <typename Style>
+inline constexpr Style annotationStyleOptionStep(const Style* options,
+                                                 int count, Style style,
+                                                 int steps)
+{
+  if (options == nullptr || count <= 0)
+  {
+    return style;
+  }
+  const int current = annotationStyleOptionIndex(options, count, style);
+  const int base = current >= 0 ? current : 0;
+  int next = (base + steps) % count;
+  if (next < 0)
+  {
+    next += count;
+  }
+  return options[next];
+}
+
+inline constexpr AnnotationLineStyle annotationLineStyleStep(
+    AnnotationLineStyle style, int steps)
+{
+  return annotationStyleOptionStep(AnnotationLineStyleOptions,
+                                   AnnotationLineStyleCount, style, steps);
+}
+
+inline constexpr AnnotationArrowStyle annotationArrowStyleStep(
+    AnnotationArrowStyle style, int steps)
+{
+  return annotationStyleOptionStep(AnnotationArrowStyleOptions,
+                                   AnnotationArrowStyleCount, style, steps);
+}
 inline constexpr std::size_t MinPenPointCount = 2;
 
 inline int clampMosaicBlockSize(int block_size)
@@ -121,6 +198,7 @@ struct AnnotationStyle
   int font_size{DefaultFontSize};
   bool filled{false};
   AnnotationLineStyle line_style{AnnotationLineStyle::Solid};
+  AnnotationArrowStyle arrow_style{AnnotationArrowStyle::EndOpen};
 };
 
 struct Annotation

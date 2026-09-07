@@ -24,6 +24,7 @@ class AnnotationInteractionController
   void setFontSize(int font_size);
   void setFilled(bool filled);
   void setLineStyle(AnnotationLineStyle line_style);
+  void setArrowStyle(AnnotationArrowStyle arrow_style);
   void setMosaicBlockSize(int block_size);
   int mosaicBlockSize() const;
   const AnnotationStyle& style() const;

@@ -117,6 +117,52 @@ TEST(AnnotationInteractionControllerTest, SetFilledAndLineStyleCopyIntoPreview)
   EXPECT_TRUE(controller.style().filled);
 }
 
+TEST(AnnotationInteractionControllerTest, ExpandedLineStylesCopyIntoPreview)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setLineStyle(AnnotationLineStyle::DashDotDot);
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+
+  ASSERT_TRUE(controller.hasPreview());
+  EXPECT_EQ(controller.preview().style.line_style,
+            AnnotationLineStyle::DashDotDot);
+}
+
+TEST(AnnotationInteractionControllerTest, ArrowStyleCopiesIntoPreviewAndCommit)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+  controller.setTool(AnnotationTool::Arrow);
+  controller.setArrowStyle(AnnotationArrowStyle::BothFilled);
+  AnnotationEngine engine;
+
+  ASSERT_TRUE(controller.beginStroke(5.0f, 5.0f));
+  controller.updateStroke(50.0f, 40.0f);
+  ASSERT_TRUE(controller.hasPreview());
+  EXPECT_EQ(controller.preview().style.arrow_style,
+            AnnotationArrowStyle::BothFilled);
+
+  ASSERT_TRUE(controller.endStroke(engine));
+  ASSERT_EQ(engine.document().count(), 1u);
+  EXPECT_EQ(engine.document().items().at(0).style.arrow_style,
+            AnnotationArrowStyle::BothFilled);
+}
+
+TEST(AnnotationInteractionControllerTest, StyleWheelStepsWrapInBothDirections)
+{
+  EXPECT_EQ(annotationLineStyleStep(AnnotationLineStyle::Solid, 1),
+            AnnotationLineStyle::Dashed);
+  EXPECT_EQ(annotationLineStyleStep(AnnotationLineStyle::Solid, -1),
+            AnnotationLineStyle::DashDotDot);
+  EXPECT_EQ(annotationArrowStyleStep(AnnotationArrowStyle::EndOpen, -1),
+            AnnotationArrowStyle::BothBars);
+  EXPECT_EQ(annotationArrowStyleStep(AnnotationArrowStyle::BothBars, 1),
+            AnnotationArrowStyle::EndOpen);
+}
+
 TEST(AnnotationInteractionControllerTest, TinyEllipseIsRejectedOnEnd)
 {
   AnnotationInteractionController controller;

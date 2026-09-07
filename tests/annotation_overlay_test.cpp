@@ -326,9 +326,45 @@ TEST(AnnotationOverlayTest, GeometryPropertyBarShowsShapeFillAndLineStyle)
   EXPECT_TRUE(annotationEditorPropertyBarShowsFill(AnnotationTool::Ellipse));
   EXPECT_TRUE(
       annotationEditorPropertyBarShowsLineStyle(AnnotationTool::Rectangle));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsLineStyle(AnnotationTool::Arrow));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsArrowStyle(AnnotationTool::Arrow));
+  EXPECT_FALSE(
+      annotationEditorPropertyBarShowsArrowStyle(AnnotationTool::Rectangle));
   EXPECT_FALSE(annotationEditorPropertyBarShowsShapeToggle(AnnotationTool::Pen));
   EXPECT_FALSE(annotationEditorPropertyBarShowsFill(AnnotationTool::Arrow));
   EXPECT_FALSE(annotationEditorPropertyBarShowsLineStyle(AnnotationTool::Pen));
+}
+
+TEST(AnnotationOverlayTest, StyleMenuStacksItemsBelowChip)
+{
+  const AnnotationEditorRect chip{100, 40, 204, 68};
+  const AnnotationEditorRect menu =
+      annotationEditorStyleMenuRect(chip, AnnotationLineStyleCount);
+  EXPECT_EQ(menu.left, chip.left);
+  EXPECT_EQ(menu.top, chip.bottom + AnnotationEditorButtonGap);
+  EXPECT_EQ(menu.right - menu.left, AnnotationEditorStyleMenuWidth);
+  EXPECT_EQ(menu.bottom - menu.top,
+            AnnotationEditorStyleMenuPadding * 2 +
+                AnnotationLineStyleCount * AnnotationEditorStyleMenuItemHeight);
+
+  const AnnotationEditorRect third =
+      annotationEditorStyleMenuItemRect(menu, 2);
+  EXPECT_EQ(annotationEditorStyleMenuHitTest(menu, AnnotationLineStyleCount,
+                                              third.left + 1, third.top + 1),
+            2);
+  EXPECT_EQ(annotationEditorStyleMenuHitTest(menu, AnnotationLineStyleCount,
+                                              menu.right + 1, menu.top),
+            -1);
+}
+
+TEST(AnnotationOverlayTest, StyleMenuEscapeClosesBeforeEditor)
+{
+  EXPECT_TRUE(annotationEditorStyleMenuConsumesEscape(
+      AnnotationEditorStyleMenu::Arrow));
+  EXPECT_TRUE(annotationEditorStyleMenuConsumesEscape(
+      AnnotationEditorStyleMenu::Line));
+  EXPECT_FALSE(annotationEditorStyleMenuConsumesEscape(
+      AnnotationEditorStyleMenu::None));
 }
 
 TEST(AnnotationOverlayTest, StrokeToolsShowWidthNotFontOnPropertyBar)
@@ -600,6 +636,9 @@ TEST(AnnotationOverlayTest, HideStrokePopupAlsoHidesOwnedValueEdit)
 
   AnnotationEditorStrokePopupWindowState state{};
   annotationEditorPlaceStrokePopupWindows(state, 120, 240);
+  EXPECT_FALSE(state.popup_visible);
+  EXPECT_FALSE(state.value_visible);
+  annotationEditorCompleteStrokePopupPresentation(state, true);
   EXPECT_TRUE(state.popup_visible);
   EXPECT_TRUE(state.value_visible);
 
@@ -613,16 +652,36 @@ TEST(AnnotationOverlayTest, ShowStrokePopupRepositionsOwnedValueEdit)
 {
   AnnotationEditorStrokePopupWindowState state{};
   annotationEditorPlaceStrokePopupWindows(state, 10, 20);
+  annotationEditorCompleteStrokePopupPresentation(state, true);
   const int old_value_x = state.value_screen_x;
   const AnnotationEditorStrokePopupLayout layout =
       annotationEditorStrokePopupLayout();
 
   annotationEditorPlaceStrokePopupWindows(state, 400, 500);
+  EXPECT_FALSE(state.popup_visible);
+  EXPECT_FALSE(state.value_visible);
+  annotationEditorCompleteStrokePopupPresentation(state, true);
   EXPECT_TRUE(state.popup_visible);
   EXPECT_TRUE(state.value_visible);
   EXPECT_NE(state.value_screen_x, old_value_x);
   EXPECT_EQ(state.value_screen_x, 400 + layout.value.left);
   EXPECT_EQ(state.value_screen_y, 500 + layout.value.top);
+}
+
+TEST(AnnotationOverlayTest, StrokePopupValueWaitsForLayeredPresentation)
+{
+  AnnotationEditorStrokePopupWindowState state{};
+  annotationEditorPlaceStrokePopupWindows(state, 120, 240);
+  EXPECT_FALSE(state.popup_visible);
+  EXPECT_FALSE(state.value_visible);
+
+  annotationEditorCompleteStrokePopupPresentation(state, false);
+  EXPECT_FALSE(state.popup_visible);
+  EXPECT_FALSE(state.value_visible);
+
+  annotationEditorCompleteStrokePopupPresentation(state, true);
+  EXPECT_TRUE(state.popup_visible);
+  EXPECT_TRUE(state.value_visible);
 }
 
 TEST(AnnotationOverlayTest, StrokePopupStaysOpenWhenFocusMovesToValueEdit)

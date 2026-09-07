@@ -32,9 +32,14 @@ struct AnnotationEditorPaintSnapshot
   RECT stroke_chip_rect{};
   RECT shape_rects[kGeometryShapeCount]{};
   RECT fill_rect{};
-  RECT line_style_rects[AnnotationLineStyleCount]{};
+  RECT arrow_style_chip_rect{};
+  RECT line_style_chip_rect{};
+  RECT style_menu_rect{};
+  AnnotationEditorStyleMenu style_menu{AnnotationEditorStyleMenu::None};
   int toolbar_hover{-1};
   bool stroke_chip_hover{false};
+  bool arrow_style_chip_hover{false};
+  bool line_style_chip_hover{false};
   int toolbar_divider_x[AnnotationEditorDividerCount]{};
   RECT main_bar_rect{};
   RECT property_bar_rect{};

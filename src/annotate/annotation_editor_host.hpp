@@ -53,7 +53,8 @@ inline constexpr UINT kSizeMenuBaseId = 400;
 inline constexpr UINT kTipShapeRectId = 200;
 inline constexpr UINT kTipShapeEllipseId = 201;
 inline constexpr UINT kTipFillId = 202;
-inline constexpr UINT kTipLineStyleBaseId = 210;
+inline constexpr UINT kTipArrowStyleId = 209;
+inline constexpr UINT kTipLineStyleId = 210;
 inline constexpr UINT kTipStrokeId = 220;
 inline constexpr UINT kTipCurrentColorId = 229;
 inline constexpr UINT kTipColorBaseId = 230;
@@ -73,8 +74,8 @@ inline constexpr int kComboTooltipSlot = kToolbarIconItemCount;
 inline constexpr int kShapeTooltipSlot = kComboTooltipSlot + 1;
 inline constexpr int kFillTooltipSlot = kShapeTooltipSlot + kGeometryShapeCount;
 inline constexpr int kLineStyleTooltipSlot = kFillTooltipSlot + 1;
-inline constexpr int kStrokeTooltipSlot =
-    kLineStyleTooltipSlot + AnnotationLineStyleCount;
+inline constexpr int kArrowStyleTooltipSlot = kLineStyleTooltipSlot + 1;
+inline constexpr int kStrokeTooltipSlot = kArrowStyleTooltipSlot + 1;
 inline constexpr int kCurrentColorTooltipSlot = kStrokeTooltipSlot + 1;
 inline constexpr int kColorTooltipSlot = kCurrentColorTooltipSlot + 1;
 inline constexpr int kTooltipSlotCount =
@@ -177,10 +178,15 @@ struct AnnotationEditorChromeState
   RECT m_stroke_chip_rect{};
   RECT m_shape_rects[kGeometryShapeCount]{};
   RECT m_fill_rect{};
-  RECT m_line_style_rects[AnnotationLineStyleCount]{};
+  RECT m_arrow_style_chip_rect{};
+  RECT m_line_style_chip_rect{};
+  RECT m_style_menu_rect{};
+  AnnotationEditorStyleMenu m_style_menu{AnnotationEditorStyleMenu::None};
   AnnotationTool m_last_geometry_tool{AnnotationTool::Rectangle};
   int m_toolbar_hover{-1};
   bool m_stroke_chip_hover{false};
+  bool m_arrow_style_chip_hover{false};
+  bool m_line_style_chip_hover{false};
   int m_toolbar_divider_x[AnnotationEditorDividerCount]{};
   HWND m_tooltip{nullptr};
   wchar_t m_tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};

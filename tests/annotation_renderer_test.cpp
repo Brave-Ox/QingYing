@@ -129,6 +129,28 @@ int countColoredOffAxis(const Image& image, int cx, int cy, int radius,
   return found;
 }
 
+int countChangedOffAxis(const Image& image, int cx, int cy, int radius,
+                        int axis_y)
+{
+  int found = 0;
+  for (int y = cy - radius; y <= cy + radius; ++y)
+  {
+    for (int x = cx - radius; x <= cx + radius; ++x)
+    {
+      if (x < 0 || y < 0 || x >= image.width || y >= image.height ||
+          y == axis_y)
+      {
+        continue;
+      }
+      if (pixelAt(image, x, y) != kWhitePx)
+      {
+        ++found;
+      }
+    }
+  }
+  return found;
+}
+
 }  // namespace
 
 TEST(AnnotationRendererTest, EmptySourceReturnsFalse)
@@ -413,13 +435,110 @@ TEST(AnnotationRendererTest, DiagonalArrowLineHasNoGaps)
     bool column_has_pixel = false;
     for (int y = 0; y < kCanvasHeight; ++y)
     {
-      if (pixelAt(out, x, y) == kRedPx)
+      if (pixelAt(out, x, y) != kWhitePx)
       {
         column_has_pixel = true;
         break;
       }
     }
     EXPECT_TRUE(column_has_pixel) << "斜线在 x=" << x << " 处断开";
+  }
+}
+
+TEST(AnnotationRendererTest, DiagonalArrowUsesBlendedEdgePixels)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedArrow();
+  annotation.start = PointF{2.0f, 2.0f};
+  annotation.end = PointF{22.0f, 12.0f};
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  int blended_pixels = 0;
+  for (const std::uint32_t pixel : out.pixels)
+  {
+    if (pixel != kWhitePx && pixel != kRedPx)
+    {
+      ++blended_pixels;
+    }
+  }
+  EXPECT_GT(blended_pixels, 0);
+}
+
+TEST(AnnotationRendererTest, BothFilledArrowDrawsHeadsAtBothEnds)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedArrow();
+  annotation.style.arrow_style = AnnotationArrowStyle::BothFilled;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_GT(countColoredOffAxis(out, 30, kArrowRowY, 7, kArrowRowY, kRedPx),
+            0);
+  EXPECT_GT(countColoredOffAxis(out, 5, kArrowRowY, 7, kArrowRowY, kRedPx),
+            0);
+}
+
+TEST(AnnotationRendererTest, BothBarsDrawsPerpendicularEndCaps)
+{
+  const AnnotationRenderer renderer;
+  AnnotationDocument document;
+  Annotation annotation = makeRedArrow();
+  annotation.style.arrow_style = AnnotationArrowStyle::BothBars;
+  ASSERT_TRUE(document.add(annotation));
+  const Image source = makeCanvas();
+  Image out;
+
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+  EXPECT_NE(pixelAt(out, 5, kArrowRowY - 4), kWhitePx);
+  EXPECT_NE(pixelAt(out, 5, kArrowRowY + 4), kWhitePx);
+  EXPECT_NE(pixelAt(out, 30, kArrowRowY - 4), kWhitePx);
+  EXPECT_NE(pixelAt(out, 30, kArrowRowY + 4), kWhitePx);
+}
+
+TEST(AnnotationRendererTest, ExpandedDashPatternsProduceDistinctRows)
+{
+  const AnnotationRenderer renderer;
+  const AnnotationLineStyle styles[] = {
+      AnnotationLineStyle::Solid, AnnotationLineStyle::Dashed,
+      AnnotationLineStyle::Dotted, AnnotationLineStyle::DashDot,
+      AnnotationLineStyle::DashDotDot};
+  std::uint64_t masks[AnnotationLineStyleCount]{};
+
+  for (int style_index = 0; style_index < AnnotationLineStyleCount;
+       ++style_index)
+  {
+    AnnotationDocument document;
+    Annotation annotation = makeRedArrow();
+    annotation.style.arrow_style = AnnotationArrowStyle::BothBars;
+    annotation.style.line_style = styles[style_index];
+    ASSERT_TRUE(document.add(annotation));
+    Image out;
+    ASSERT_TRUE(renderer.rasterize(makeCanvas(), document, out));
+    for (int x = static_cast<int>(kArrowStartX);
+         x <= static_cast<int>(kArrowEndX); ++x)
+    {
+      if (pixelAt(out, x, kArrowRowY) != kWhitePx)
+      {
+        masks[style_index] |= std::uint64_t{1}
+                              << static_cast<unsigned int>(
+                                     x - static_cast<int>(kArrowStartX));
+      }
+    }
+  }
+
+  for (int left = 0; left < AnnotationLineStyleCount; ++left)
+  {
+    for (int right = left + 1; right < AnnotationLineStyleCount; ++right)
+    {
+      EXPECT_NE(masks[left], masks[right]);
+    }
   }
 }
 
@@ -432,10 +551,10 @@ TEST(AnnotationRendererTest, ArrowHeadIsDrawnAtEndOnly)
   Image out;
 
   ASSERT_TRUE(renderer.rasterize(source, document, out));
-  const int near_end =
-      countColoredOffAxis(out, 30, kArrowRowY, 6, kArrowRowY, kRedPx);
-  const int near_start =
-      countColoredOffAxis(out, 5, kArrowRowY, 6, kArrowRowY, kRedPx);
+  const int near_end = countChangedOffAxis(out, 30, kArrowRowY, 6,
+                                            kArrowRowY);
+  const int near_start = countChangedOffAxis(out, 5, kArrowRowY, 6,
+                                              kArrowRowY);
   EXPECT_GT(near_end, 0);    // 终点有箭头头部
   EXPECT_EQ(near_start, 0);  // 起点只有主干线
 }

@@ -35,6 +35,12 @@ bool hitTestStrokeChip(const AnnotationEditorHost* data, int x, int y);
 int hitTestShapeToggle(const AnnotationEditorHost* data, int x, int y);
 bool hitTestFill(const AnnotationEditorHost* data, int x, int y);
 int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y);
+int hitTestArrowStyle(const AnnotationEditorHost* data, int x, int y);
+bool hitTestLineStyleChip(const AnnotationEditorHost* data, int x, int y);
+bool hitTestArrowStyleChip(const AnnotationEditorHost* data, int x, int y);
+bool handleStyleChipWheel(AnnotationEditorHost* data, int x, int y,
+                          int delta);
+void closeStyleMenu(AnnotationEditorHost* data);
 void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y);
 bool pointerHitsStyleChrome(const AnnotationEditorHost* data);
 bool createButtons(HWND hwnd, AnnotationEditorHost* data);

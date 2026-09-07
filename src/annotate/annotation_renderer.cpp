@@ -18,6 +18,8 @@ constexpr double EllipseOuterPadPx = 0.5;
 // 箭头头部：两条从终点向后张开的短线。
 constexpr double ArrowHeadLengthPx = 8.0;
 constexpr double ArrowHeadHalfAngleRad = Pi / 6.0;  // 30°
+constexpr double ArrowBarHalfLengthPx = 5.0;
+constexpr int CoverageSampleGrid = 4;
 // 起止点几乎重合时不画头部，避免方向向量退化。
 constexpr double MinArrowLengthPx = 1.0;
 
@@ -56,6 +58,20 @@ void setPixel(Image& target, int x, int y, std::uint32_t value)
       blendSrcOver(target.pixels.at(index), unpackColorBgra(value));
 }
 
+void setPixelCoverage(Image& target, int x, int y, std::uint32_t value,
+                      double coverage)
+{
+  const double clamped = (std::min)((std::max)(coverage, 0.0), 1.0);
+  if (clamped <= 0.0)
+  {
+    return;
+  }
+  ColorBgra color = unpackColorBgra(value);
+  color.a = static_cast<std::uint8_t>(
+      std::lround(static_cast<double>(color.a) * clamped));
+  setPixel(target, x, y, packBgra(color));
+}
+
 // 描边画在矩形内缘：距任意一条边不足 thickness 的像素属于边框。
 // 判定使用未裁剪的边界，画布边缘不会被误判成描边。
 bool isOnStroke(int x, int y, int left, int top, int right, int bottom,
@@ -65,29 +81,60 @@ bool isOnStroke(int x, int y, int left, int top, int right, int bottom,
          (y - top) < thickness || (bottom - y) < thickness;
 }
 
-constexpr int kDashOnPx = 6;
-constexpr int kDashOffPx = 4;
-constexpr int kDotOnPx = 2;
-constexpr int kDotOffPx = 3;
+bool strokeDashCovers(double distance, AnnotationLineStyle style);
 
 bool strokeDashCovers(int distance, AnnotationLineStyle style)
+{
+  return strokeDashCovers(static_cast<double>(distance), style);
+}
+
+bool strokeDashCovers(double distance, AnnotationLineStyle style)
 {
   if (style == AnnotationLineStyle::Solid)
   {
     return true;
   }
 
-  const int on =
-      (style == AnnotationLineStyle::Dashed) ? kDashOnPx : kDotOnPx;
-  const int off =
-      (style == AnnotationLineStyle::Dashed) ? kDashOffPx : kDotOffPx;
-  const int period = on + off;
-  int phase = distance % period;
-  if (phase < 0)
+  constexpr double DashedPattern[] = {8.0, 5.0};
+  constexpr double DottedPattern[] = {2.0, 4.0};
+  constexpr double DashDotPattern[] = {8.0, 3.0, 2.0, 3.0};
+  constexpr double DashDotDotPattern[] = {8.0, 3.0, 2.0, 3.0, 2.0, 3.0};
+  const double* pattern = DashedPattern;
+  int count = 2;
+  switch (style)
   {
-    phase += period;
+    case AnnotationLineStyle::Dotted:
+      pattern = DottedPattern;
+      break;
+    case AnnotationLineStyle::DashDot:
+      pattern = DashDotPattern;
+      count = 4;
+      break;
+    case AnnotationLineStyle::DashDotDot:
+      pattern = DashDotDotPattern;
+      count = 6;
+      break;
+    case AnnotationLineStyle::Dashed:
+    case AnnotationLineStyle::Solid:
+    default:
+      break;
   }
-  return phase < on;
+
+  double period = 0.0;
+  for (int i = 0; i < count; ++i)
+  {
+    period += pattern[i];
+  }
+  double phase = std::fmod((std::max)(0.0, distance), period);
+  for (int i = 0; i < count; ++i)
+  {
+    if (phase < pattern[i])
+    {
+      return (i % 2) == 0;
+    }
+    phase -= pattern[i];
+  }
+  return true;
 }
 
 int rectangleStrokeDistance(int x, int y, int left, int top, int right,
@@ -307,34 +354,260 @@ void drawLine(Image& target, int x0, int y0, int x1, int y1, int thickness,
   }
 }
 
+void drawSmoothLine(Image& target, double x0, double y0, double x1, double y1,
+                    double thickness, std::uint32_t color,
+                    AnnotationLineStyle style)
+{
+  const double delta_x = x1 - x0;
+  const double delta_y = y1 - y0;
+  const double length_sq = delta_x * delta_x + delta_y * delta_y;
+  if (length_sq <= 0.0)
+  {
+    setPixelCoverage(target, toPixel(x0), toPixel(y0), color, 1.0);
+    return;
+  }
+
+  const double length = std::sqrt(length_sq);
+  const double radius = thickness / 2.0;
+  const double pad = radius + 1.0;
+  const auto draw_pixel = [&](int x, int y)
+  {
+    const double relative_x = static_cast<double>(x) - x0;
+    const double relative_y = static_cast<double>(y) - y0;
+    const double unclamped =
+        (relative_x * delta_x + relative_y * delta_y) / length_sq;
+    const double t = (std::min)((std::max)(unclamped, 0.0), 1.0);
+    const double nearest_x = x0 + t * delta_x;
+    const double nearest_y = y0 + t * delta_y;
+    const double distance_x = static_cast<double>(x) - nearest_x;
+    const double distance_y = static_cast<double>(y) - nearest_y;
+    const double distance =
+        std::sqrt(distance_x * distance_x + distance_y * distance_y);
+    const double along = t * length;
+    if (strokeDashCovers(along, style))
+    {
+      setPixelCoverage(target, x, y, color, radius + 0.5 - distance);
+    }
+  };
+
+  if (std::abs(delta_x) >= std::abs(delta_y))
+  {
+    const int left = static_cast<int>(std::floor((std::min)(x0, x1) - pad));
+    const int right = static_cast<int>(std::ceil((std::max)(x0, x1) + pad));
+    for (int x = left; x <= right; ++x)
+    {
+      const double axis_t = std::abs(delta_x) > 0.0
+                                ? (static_cast<double>(x) - x0) / delta_x
+                                : 0.0;
+      const double clamped_t =
+          (std::min)((std::max)(axis_t, 0.0), 1.0);
+      const double center_y = y0 + clamped_t * delta_y;
+      const int top = static_cast<int>(std::floor(center_y - pad));
+      const int bottom = static_cast<int>(std::ceil(center_y + pad));
+      for (int y = top; y <= bottom; ++y)
+      {
+        draw_pixel(x, y);
+      }
+    }
+    return;
+  }
+
+  const int top = static_cast<int>(std::floor((std::min)(y0, y1) - pad));
+  const int bottom = static_cast<int>(std::ceil((std::max)(y0, y1) + pad));
+  for (int y = top; y <= bottom; ++y)
+  {
+    const double axis_t = (static_cast<double>(y) - y0) / delta_y;
+    const double clamped_t = (std::min)((std::max)(axis_t, 0.0), 1.0);
+    const double center_x = x0 + clamped_t * delta_x;
+    const int left = static_cast<int>(std::floor(center_x - pad));
+    const int right = static_cast<int>(std::ceil(center_x + pad));
+    for (int x = left; x <= right; ++x)
+    {
+      draw_pixel(x, y);
+    }
+  }
+}
+
+double triangleEdge(double ax, double ay, double bx, double by, double px,
+                    double py)
+{
+  return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
+}
+
+bool pointInTriangle(double px, double py, const PointF& a, const PointF& b,
+                     const PointF& c)
+{
+  const double ab = triangleEdge(a.x, a.y, b.x, b.y, px, py);
+  const double bc = triangleEdge(b.x, b.y, c.x, c.y, px, py);
+  const double ca = triangleEdge(c.x, c.y, a.x, a.y, px, py);
+  const bool has_negative = ab < 0.0 || bc < 0.0 || ca < 0.0;
+  const bool has_positive = ab > 0.0 || bc > 0.0 || ca > 0.0;
+  return !(has_negative && has_positive);
+}
+
+void fillSmoothTriangle(Image& target, const PointF& a, const PointF& b,
+                        const PointF& c, std::uint32_t color)
+{
+  const int left = static_cast<int>(
+      std::floor((std::min)({a.x, b.x, c.x}) - 1.0f));
+  const int top = static_cast<int>(
+      std::floor((std::min)({a.y, b.y, c.y}) - 1.0f));
+  const int right = static_cast<int>(
+      std::ceil((std::max)({a.x, b.x, c.x}) + 1.0f));
+  const int bottom = static_cast<int>(
+      std::ceil((std::max)({a.y, b.y, c.y}) + 1.0f));
+  constexpr double SampleOffset = 0.5 / CoverageSampleGrid;
+  constexpr double SampleStep = 1.0 / CoverageSampleGrid;
+  constexpr double SampleCount =
+      static_cast<double>(CoverageSampleGrid * CoverageSampleGrid);
+
+  for (int y = top; y <= bottom; ++y)
+  {
+    for (int x = left; x <= right; ++x)
+    {
+      int inside = 0;
+      for (int sample_y = 0; sample_y < CoverageSampleGrid; ++sample_y)
+      {
+        for (int sample_x = 0; sample_x < CoverageSampleGrid; ++sample_x)
+        {
+          const double px = static_cast<double>(x) - 0.5 + SampleOffset +
+                            sample_x * SampleStep;
+          const double py = static_cast<double>(y) - 0.5 + SampleOffset +
+                            sample_y * SampleStep;
+          if (pointInTriangle(px, py, a, b, c))
+          {
+            ++inside;
+          }
+        }
+      }
+      setPixelCoverage(target, x, y, color,
+                       static_cast<double>(inside) / SampleCount);
+    }
+  }
+}
+
+enum class ArrowMarkerKind
+{
+  Open,
+  Filled,
+  Bar,
+};
+
+void drawArrowMarker(Image& target, double tail_x, double tail_y, double tip_x,
+                     double tip_y, double thickness, std::uint32_t color,
+                     ArrowMarkerKind kind)
+{
+  const double delta_x = tip_x - tail_x;
+  const double delta_y = tip_y - tail_y;
+  const double length = std::sqrt(delta_x * delta_x + delta_y * delta_y);
+  if (length < MinArrowLengthPx)
+  {
+    return;
+  }
+  const double unit_x = delta_x / length;
+  const double unit_y = delta_y / length;
+  const double normal_x = -unit_y;
+  const double normal_y = unit_x;
+
+  if (kind == ArrowMarkerKind::Bar)
+  {
+    const double half = ArrowBarHalfLengthPx + thickness;
+    drawSmoothLine(target, tip_x - normal_x * half, tip_y - normal_y * half,
+                   tip_x + normal_x * half, tip_y + normal_y * half,
+                   thickness, color, AnnotationLineStyle::Solid);
+    return;
+  }
+
+  const double head_length = ArrowHeadLengthPx + thickness * 1.5;
+  const double half_width = head_length * std::tan(ArrowHeadHalfAngleRad);
+  const PointF base_left{
+      static_cast<float>(tip_x - unit_x * head_length + normal_x * half_width),
+      static_cast<float>(tip_y - unit_y * head_length + normal_y * half_width)};
+  const PointF base_right{
+      static_cast<float>(tip_x - unit_x * head_length - normal_x * half_width),
+      static_cast<float>(tip_y - unit_y * head_length - normal_y * half_width)};
+  if (kind == ArrowMarkerKind::Filled)
+  {
+    fillSmoothTriangle(target,
+                       PointF{static_cast<float>(tip_x),
+                              static_cast<float>(tip_y)},
+                       base_left, base_right, color);
+    return;
+  }
+
+  drawSmoothLine(target, tip_x, tip_y, base_left.x, base_left.y, thickness,
+                 color, AnnotationLineStyle::Solid);
+  drawSmoothLine(target, tip_x, tip_y, base_right.x, base_right.y, thickness,
+                 color, AnnotationLineStyle::Solid);
+}
+
 void drawArrow(Image& target, const Annotation& annotation)
 {
-  const int start_x = toPixel(annotation.start.x);
-  const int start_y = toPixel(annotation.start.y);
-  const int end_x = toPixel(annotation.end.x);
-  const int end_y = toPixel(annotation.end.y);
-  const int thickness = strokeThickness(annotation.style.stroke_width);
+  const double start_x = annotation.start.x;
+  const double start_y = annotation.start.y;
+  const double end_x = annotation.end.x;
+  const double end_y = annotation.end.y;
+  const double thickness =
+      static_cast<double>(strokeThickness(annotation.style.stroke_width));
   const std::uint32_t color = packBgra(annotation.style.color);
 
-  drawLine(target, start_x, start_y, end_x, end_y, thickness, color);
+  drawSmoothLine(target, start_x, start_y, end_x, end_y, thickness, color,
+                 annotation.style.line_style);
 
-  const double delta_x = static_cast<double>(end_x - start_x);
-  const double delta_y = static_cast<double>(end_y - start_y);
+  const double delta_x = end_x - start_x;
+  const double delta_y = end_y - start_y;
   const double length = std::sqrt(delta_x * delta_x + delta_y * delta_y);
   if (length < MinArrowLengthPx)
   {
     return;
   }
 
-  // 从终点朝「来向」张开两条翼线。
-  const double backward = std::atan2(delta_y, delta_x) + Pi;
-  const double wing_signs[] = {-1.0, 1.0};
-  for (const double sign : wing_signs)
+  switch (annotation.style.arrow_style)
   {
-    const double angle = backward + sign * ArrowHeadHalfAngleRad;
-    const int wing_x = end_x + toPixel(std::cos(angle) * ArrowHeadLengthPx);
-    const int wing_y = end_y + toPixel(std::sin(angle) * ArrowHeadLengthPx);
-    drawLine(target, end_x, end_y, wing_x, wing_y, thickness, color);
+    case AnnotationArrowStyle::EndOpen:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Open);
+      break;
+    case AnnotationArrowStyle::StartOpen:
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Open);
+      break;
+    case AnnotationArrowStyle::BothOpen:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Open);
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Open);
+      break;
+    case AnnotationArrowStyle::EndFilled:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Filled);
+      break;
+    case AnnotationArrowStyle::StartFilled:
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Filled);
+      break;
+    case AnnotationArrowStyle::BothFilled:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Filled);
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Filled);
+      break;
+    case AnnotationArrowStyle::EndBar:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Bar);
+      break;
+    case AnnotationArrowStyle::StartBar:
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Bar);
+      break;
+    case AnnotationArrowStyle::BothBars:
+      drawArrowMarker(target, start_x, start_y, end_x, end_y, thickness, color,
+                      ArrowMarkerKind::Bar);
+      drawArrowMarker(target, end_x, end_y, start_x, start_y, thickness, color,
+                      ArrowMarkerKind::Bar);
+      break;
+    default:
+      break;
   }
 }
 

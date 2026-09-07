@@ -320,35 +320,34 @@ void applyStrokeFromPopupSlider(AnnotationEditorHost* data, int client_x)
   syncStrokePopupEdit(data);
 }
 
-void paintStrokePopup(HWND hwnd, const StrokePopupPaintSnapshot& snapshot)
+bool paintStrokePopup(HWND hwnd, const StrokePopupPaintSnapshot& snapshot)
 {
   if (hwnd == nullptr)
   {
-    return;
+    return false;
   }
 
   RECT client{};
   GetClientRect(hwnd, &client);
   const int width = client.right - client.left;
   const int height = client.bottom - client.top;
-  const PaintGuard paint(hwnd);
   if (width <= 0 || height <= 0)
   {
-    return;
+    return false;
   }
 
   void* bits = nullptr;
   const HBITMAP dib = createTopDownArgbDib(width, height, &bits);
   if (dib == nullptr || bits == nullptr)
   {
-    return;
+    return false;
   }
 
   const HDC mem_dc = CreateCompatibleDC(nullptr);
   if (mem_dc == nullptr)
   {
     DeleteObject(dib);
-    return;
+    return false;
   }
 
   const HGDIOBJ old_bitmap = SelectObject(mem_dc, dib);
@@ -427,10 +426,12 @@ void paintStrokePopup(HWND hwnd, const StrokePopupPaintSnapshot& snapshot)
   }
 
   promoteRgbToOpaqueAlpha(bits, width, height);
-  (void)presentLayeredArgbWindow(hwnd, mem_dc, width, height);
+  const bool presented =
+      presentLayeredArgbWindow(hwnd, mem_dc, width, height);
   SelectObject(mem_dc, old_bitmap);
   DeleteDC(mem_dc);
   DeleteObject(dib);
+  return presented;
 }
 
 LRESULT CALLBACK strokePopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -449,14 +450,17 @@ LRESULT CALLBACK strokePopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return TRUE;
     }
     case WM_PAINT:
+    {
+      const PaintGuard paint(hwnd);
       if (data != nullptr)
       {
-        paintStrokePopup(
+        (void)paintStrokePopup(
             hwnd,
             StrokePopupPaintSnapshot{data->chrome().m_combo_font.asFont(),
                                      currentStrokeWidthPx(data)});
       }
       return 0;
+    }
     case WM_ERASEBKGND:
       return 1;
     case WM_CTLCOLOREDIT:
@@ -634,11 +638,18 @@ void showStrokePopup(AnnotationEditorHost* data)
   }
 
   syncStrokePopupEdit(data);
-  if (ShowWindow(data->strokePopup().m_stroke_popup, SW_SHOW) == 0)
-  {
-    // 先前已显示时返回 0。
-  }
   positionStrokePopupValueEdit(data);
+  const StrokePopupPaintSnapshot snapshot{
+      data->chrome().m_combo_font.asFont(), currentStrokeWidthPx(data)};
+  if (!paintStrokePopup(data->strokePopup().m_stroke_popup, snapshot))
+  {
+    hideStrokePopup(data);
+    return;
+  }
+  if (ShowWindow(data->strokePopup().m_stroke_popup, SW_SHOWNOACTIVATE) == 0)
+  {
+    // 先前已显示时返回 0；背景已由 UpdateLayeredWindow 显式呈现。
+  }
   if (data->strokePopup().m_stroke_popup_edit != nullptr)
   {
     if (ShowWindow(data->strokePopup().m_stroke_popup_edit, SW_SHOW) == 0)

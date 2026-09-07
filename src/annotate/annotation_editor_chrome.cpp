@@ -100,18 +100,16 @@ void bindPropertyBarTooltips(AnnotationEditorHost* data)
                      data->chrome().m_tooltip_text[kFillTooltipSlot],
                      kToolbarTooltipMaxChars);
 
-  const ToolbarIconKind line_icons[AnnotationLineStyleCount] = {
-      ToolbarIconKind::LineSolid, ToolbarIconKind::LineDashed,
-      ToolbarIconKind::LineDotted};
-  for (int i = 0; i < AnnotationLineStyleCount; ++i)
-  {
-    bindToolbarTooltip(
-        tooltip, overlay, kTipLineStyleBaseId + static_cast<UINT>(i),
-        data->chrome().m_line_style_rects[static_cast<std::size_t>(i)],
-        toolbarIconLabel(line_icons[static_cast<std::size_t>(i)]),
-        data->chrome().m_tooltip_text[kLineStyleTooltipSlot + i],
-        kToolbarTooltipMaxChars);
-  }
+  bindToolbarTooltip(tooltip, overlay, kTipLineStyleId,
+                     data->chrome().m_line_style_chip_rect,
+                     L"\x7EBF\x6761\x6837\x5F0F",
+                     data->chrome().m_tooltip_text[kLineStyleTooltipSlot],
+                     kToolbarTooltipMaxChars);
+  bindToolbarTooltip(tooltip, overlay, kTipArrowStyleId,
+                     data->chrome().m_arrow_style_chip_rect,
+                     L"\x7BAD\x5934\x6837\x5F0F",
+                     data->chrome().m_tooltip_text[kArrowStyleTooltipSlot],
+                     kToolbarTooltipMaxChars);
 
   bindToolbarTooltip(tooltip, overlay, kTipStrokeId, data->chrome().m_stroke_chip_rect,
                      toolbarIconLabel(ToolbarIconKind::StrokeWidth),
@@ -285,10 +283,9 @@ void resetPropertyBarRects(AnnotationEditorHost* data)
     data->chrome().m_shape_rects[static_cast<std::size_t>(i)] = {};
   }
   data->chrome().m_fill_rect = {};
-  for (int i = 0; i < AnnotationLineStyleCount; ++i)
-  {
-    data->chrome().m_line_style_rects[static_cast<std::size_t>(i)] = {};
-  }
+  data->chrome().m_arrow_style_chip_rect = {};
+  data->chrome().m_line_style_chip_rect = {};
+  data->chrome().m_style_menu_rect = {};
   data->chrome().m_stroke_chip_rect = {};
   data->chrome().m_size_combo_rect = {};
   data->chrome().m_current_color_rect = {};
@@ -476,18 +473,21 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
     data->chrome().m_fill_rect = takeToolbarButtonRect(x, y);
     skipToolbarDivider(x);
   }
+  if (annotationEditorPropertyBarShowsArrowStyle(tool))
+  {
+    data->chrome().m_arrow_style_chip_rect =
+        takeToolbarSizedRect(x, y, AnnotationEditorStyleChipWidth);
+    skipToolbarDivider(x);
+  }
   if (annotationEditorPropertyBarShowsLineStyle(tool))
   {
-    for (int i = 0; i < AnnotationLineStyleCount; ++i)
-    {
-      data->chrome().m_line_style_rects[static_cast<std::size_t>(i)] =
-          takeToolbarButtonRect(x, y);
-    }
+    data->chrome().m_line_style_chip_rect =
+        takeToolbarSizedRect(x, y, AnnotationEditorStyleChipWidth);
     skipToolbarDivider(x);
   }
 
   if (annotationEditorPropertyBarShowsStroke(tool) &&
-      annotationEditorIsGeometryTool(tool))
+      (annotationEditorIsGeometryTool(tool) || tool == AnnotationTool::Arrow))
   {
     data->chrome().m_stroke_chip_rect =
         takeToolbarSizedRect(x, y, AnnotationEditorStrokeChipWidth);
@@ -511,7 +511,7 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
   }
 
   if (annotationEditorPropertyBarShowsStroke(tool) &&
-      !annotationEditorIsGeometryTool(tool))
+      !annotationEditorIsGeometryTool(tool) && tool != AnnotationTool::Arrow)
   {
     combo_x = x;
     data->chrome().m_stroke_chip_rect =
@@ -543,6 +543,32 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
       content_right + AnnotationEditorBarPadding,
       bar_top + annotationEditorToolbarHeight()};
 
+  const RECT style_chip =
+      data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow
+          ? data->chrome().m_arrow_style_chip_rect
+          : data->chrome().m_line_style_chip_rect;
+  const int style_count =
+      data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow
+          ? AnnotationArrowStyleCount
+          : AnnotationLineStyleCount;
+  if (data->chrome().m_style_menu != AnnotationEditorStyleMenu::None &&
+      style_chip.right > style_chip.left)
+  {
+    const AnnotationEditorRect chip_rect{style_chip.left, style_chip.top,
+                                          style_chip.right, style_chip.bottom};
+    AnnotationEditorRect menu =
+        annotationEditorStyleMenuRect(chip_rect, style_count);
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    if (menu.bottom > client.bottom)
+    {
+      const int height = menu.bottom - menu.top;
+      menu.bottom = style_chip.top - AnnotationEditorButtonGap;
+      menu.top = menu.bottom - height;
+    }
+    data->chrome().m_style_menu_rect = toWinRect(menu);
+  }
+
   bindPropertyBarTooltips(data);
 }
 
@@ -554,6 +580,14 @@ void resizeEditorChrome(AnnotationEditorHost* data)
   }
 
   const AnnotationTool tool = data->core().m_controller.tool();
+  if ((data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow &&
+       !annotationEditorPropertyBarShowsArrowStyle(tool)) ||
+      (data->chrome().m_style_menu == AnnotationEditorStyleMenu::Line &&
+       !annotationEditorPropertyBarShowsLineStyle(tool)))
+  {
+    data->chrome().m_style_menu = AnnotationEditorStyleMenu::None;
+    data->chrome().m_style_menu_rect = {};
+  }
   fillSizeCombo(data);
   if (annotationEditorStrokePopupClosesOnTool(tool))
   {
@@ -789,21 +823,88 @@ bool hitTestFill(const AnnotationEditorHost* data, int x, int y)
 int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
-      !annotationEditorPropertyBarShowsLineStyle(data->core().m_controller.tool()))
+      data->chrome().m_style_menu != AnnotationEditorStyleMenu::Line)
   {
     return -1;
   }
+  const RECT& rect = data->chrome().m_style_menu_rect;
+  return annotationEditorStyleMenuHitTest(
+      AnnotationEditorRect{rect.left, rect.top, rect.right, rect.bottom},
+      AnnotationLineStyleCount, x, y);
+}
 
-  const POINT pt{x, y};
-  for (int i = 0; i < AnnotationLineStyleCount; ++i)
+int hitTestArrowStyle(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr ||
+      data->chrome().m_style_menu != AnnotationEditorStyleMenu::Arrow)
   {
-    if (PtInRect(&data->chrome().m_line_style_rects[static_cast<std::size_t>(i)], pt) !=
-        FALSE)
-    {
-      return i;
-    }
+    return -1;
   }
-  return -1;
+  const RECT& rect = data->chrome().m_style_menu_rect;
+  return annotationEditorStyleMenuHitTest(
+      AnnotationEditorRect{rect.left, rect.top, rect.right, rect.bottom},
+      AnnotationArrowStyleCount, x, y);
+}
+
+bool hitTestLineStyleChip(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr ||
+      !annotationEditorPropertyBarShowsLineStyle(data->core().m_controller.tool()))
+  {
+    return false;
+  }
+  return PtInRect(&data->chrome().m_line_style_chip_rect, POINT{x, y}) != FALSE;
+}
+
+bool hitTestArrowStyleChip(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr || !annotationEditorPropertyBarShowsArrowStyle(
+                             data->core().m_controller.tool()))
+  {
+    return false;
+  }
+  return PtInRect(&data->chrome().m_arrow_style_chip_rect, POINT{x, y}) != FALSE;
+}
+
+void closeStyleMenu(AnnotationEditorHost* data)
+{
+  if (data == nullptr ||
+      data->chrome().m_style_menu == AnnotationEditorStyleMenu::None)
+  {
+    return;
+  }
+  data->chrome().m_style_menu = AnnotationEditorStyleMenu::None;
+  data->chrome().m_style_menu_rect = {};
+  invalidateToolbar(data);
+}
+
+bool handleStyleChipWheel(AnnotationEditorHost* data, int x, int y, int delta)
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+  const int steps = annotationEditorWheelDeltaToSteps(delta);
+  if (hitTestArrowStyleChip(data, x, y))
+  {
+    data->core().m_controller.setArrowStyle(annotationArrowStyleStep(
+        data->core().m_controller.style().arrow_style, steps));
+  }
+  else if (hitTestLineStyleChip(data, x, y))
+  {
+    data->core().m_controller.setLineStyle(annotationLineStyleStep(
+        data->core().m_controller.style().line_style, steps));
+  }
+  else
+  {
+    return false;
+  }
+  if (data->core().m_controller.isDrawing())
+  {
+    invalidateImageArea(data);
+  }
+  invalidateToolbar(data);
+  return true;
 }
 
 void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
@@ -811,6 +912,46 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
   if (data == nullptr)
   {
     return;
+  }
+
+  const int arrow_index = hitTestArrowStyle(data, x, y);
+  if (arrow_index >= 0)
+  {
+    data->core().m_controller.setArrowStyle(
+        AnnotationArrowStyleOptions[static_cast<std::size_t>(arrow_index)]);
+    closeStyleMenu(data);
+    invalidateImageArea(data);
+    return;
+  }
+  const int line_index = hitTestLineStyle(data, x, y);
+  if (line_index >= 0)
+  {
+    data->core().m_controller.setLineStyle(
+        AnnotationLineStyleOptions[static_cast<std::size_t>(line_index)]);
+    closeStyleMenu(data);
+    invalidateImageArea(data);
+    return;
+  }
+  if (data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow &&
+      hitTestArrowStyleChip(data, x, y))
+  {
+    closeStyleMenu(data);
+    return;
+  }
+  if (data->chrome().m_style_menu == AnnotationEditorStyleMenu::Line &&
+      hitTestLineStyleChip(data, x, y))
+  {
+    closeStyleMenu(data);
+    return;
+  }
+  if (data->chrome().m_style_menu != AnnotationEditorStyleMenu::None)
+  {
+    const POINT point{x, y};
+    if (PtInRect(&data->chrome().m_style_menu_rect, point) != FALSE)
+    {
+      return;
+    }
+    closeStyleMenu(data);
   }
 
   const int shape_index = hitTestShapeToggle(data, x, y);
@@ -834,15 +975,24 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
     return;
   }
 
-  const int line_index = hitTestLineStyle(data, x, y);
-  if (line_index >= 0)
+  if (hitTestArrowStyleChip(data, x, y))
   {
-    data->core().m_controller.setLineStyle(
-        AnnotationLineStyleOptions[static_cast<std::size_t>(line_index)]);
-    if (data->core().m_controller.isDrawing())
-    {
-      invalidateImageArea(data);
-    }
+    data->chrome().m_style_menu =
+        data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow
+            ? AnnotationEditorStyleMenu::None
+            : AnnotationEditorStyleMenu::Arrow;
+    layoutPropertyBar(data->window().m_overlay, data);
+    invalidateToolbar(data);
+    return;
+  }
+
+  if (hitTestLineStyleChip(data, x, y))
+  {
+    data->chrome().m_style_menu =
+        data->chrome().m_style_menu == AnnotationEditorStyleMenu::Line
+            ? AnnotationEditorStyleMenu::None
+            : AnnotationEditorStyleMenu::Line;
+    layoutPropertyBar(data->window().m_overlay, data);
     invalidateToolbar(data);
     return;
   }
@@ -920,7 +1070,173 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
          hitTestStrokeChip(data, pt.x, pt.y) ||
          hitTestShapeToggle(data, pt.x, pt.y) >= 0 ||
          hitTestFill(data, pt.x, pt.y) ||
-         hitTestLineStyle(data, pt.x, pt.y) >= 0;
+         hitTestLineStyleChip(data, pt.x, pt.y) ||
+         hitTestArrowStyleChip(data, pt.x, pt.y) ||
+         hitTestLineStyle(data, pt.x, pt.y) >= 0 ||
+         hitTestArrowStyle(data, pt.x, pt.y) >= 0;
+}
+
+void drawLineStyleSample(HDC hdc, const RECT& rect, AnnotationLineStyle style,
+                         COLORREF color)
+{
+  const int left = rect.left + 10;
+  const int right = rect.right - 22;
+  const int y = (rect.top + rect.bottom) / 2;
+  const GdiObject pen(CreatePen(PS_SOLID, 2, color));
+  if (!pen || right <= left)
+  {
+    return;
+  }
+  const SelectGuard selected_pen(hdc, pen.get());
+  struct LineStyleSamplePattern
+  {
+    int lengths[6]{};
+    int count{0};
+  };
+  constexpr LineStyleSamplePattern Patterns[AnnotationLineStyleCount] = {
+      {{100, 0, 0, 0, 0, 0}, 1}, {{10, 6, 0, 0, 0, 0}, 2},
+      {{2, 5, 0, 0, 0, 0}, 2},   {{11, 5, 2, 5, 0, 0}, 4},
+      {{10, 4, 2, 4, 2, 4}, 6}};
+  const int index = annotationStyleOptionIndex(
+      AnnotationLineStyleOptions, AnnotationLineStyleCount, style);
+  const int safe_index = index >= 0 ? index : 0;
+  const LineStyleSamplePattern& pattern = Patterns[safe_index];
+  int x = left;
+  bool drawing = true;
+  int part = 0;
+  while (x < right)
+  {
+    const int length = pattern.lengths[part];
+    const int next = (std::min)(right, x + length);
+    if (drawing)
+    {
+      MoveToEx(hdc, x, y, nullptr);
+      LineTo(hdc, next, y);
+    }
+    drawing = !drawing;
+    x = next;
+    part = (part + 1) % pattern.count;
+  }
+}
+
+void drawArrowStyleSample(HDC hdc, const RECT& rect,
+                          AnnotationArrowStyle style, COLORREF color)
+{
+  const int left = rect.left + 10;
+  const int right = rect.right - 22;
+  const int y = (rect.top + rect.bottom) / 2;
+  const GdiObject pen(CreatePen(PS_SOLID, 2, color));
+  const GdiObject brush(CreateSolidBrush(color));
+  if (!pen || !brush || right <= left)
+  {
+    return;
+  }
+  const SelectGuard selected_pen(hdc, pen.get());
+  const SelectGuard selected_brush(hdc, brush.get());
+  MoveToEx(hdc, left, y, nullptr);
+  LineTo(hdc, right, y);
+
+  const bool start = style == AnnotationArrowStyle::StartOpen ||
+                     style == AnnotationArrowStyle::BothOpen ||
+                     style == AnnotationArrowStyle::StartFilled ||
+                     style == AnnotationArrowStyle::BothFilled ||
+                     style == AnnotationArrowStyle::StartBar ||
+                     style == AnnotationArrowStyle::BothBars;
+  const bool end = style == AnnotationArrowStyle::EndOpen ||
+                   style == AnnotationArrowStyle::BothOpen ||
+                   style == AnnotationArrowStyle::EndFilled ||
+                   style == AnnotationArrowStyle::BothFilled ||
+                   style == AnnotationArrowStyle::EndBar ||
+                   style == AnnotationArrowStyle::BothBars;
+  const bool filled = style == AnnotationArrowStyle::EndFilled ||
+                      style == AnnotationArrowStyle::StartFilled ||
+                      style == AnnotationArrowStyle::BothFilled;
+  const bool bar = style == AnnotationArrowStyle::EndBar ||
+                   style == AnnotationArrowStyle::StartBar ||
+                   style == AnnotationArrowStyle::BothBars;
+  const auto draw_marker = [&](int tip, int direction)
+  {
+    if (bar)
+    {
+      MoveToEx(hdc, tip, y - 5, nullptr);
+      LineTo(hdc, tip, y + 6);
+      return;
+    }
+    const int base = tip - direction * 8;
+    if (filled)
+    {
+      POINT triangle[3] = {{tip, y}, {base, y - 5}, {base, y + 5}};
+      Polygon(hdc, triangle, 3);
+      return;
+    }
+    MoveToEx(hdc, tip, y, nullptr);
+    LineTo(hdc, base, y - 5);
+    MoveToEx(hdc, tip, y, nullptr);
+    LineTo(hdc, base, y + 5);
+  };
+  if (start)
+  {
+    draw_marker(left, -1);
+  }
+  if (end)
+  {
+    draw_marker(right, 1);
+  }
+}
+
+void drawStyleChevron(HDC hdc, const RECT& rect, COLORREF color)
+{
+  const GdiObject pen(CreatePen(PS_SOLID, 1, color));
+  if (!pen)
+  {
+    return;
+  }
+  const SelectGuard selected_pen(hdc, pen.get());
+  const int x = rect.right - 12;
+  const int y = (rect.top + rect.bottom) / 2;
+  MoveToEx(hdc, x - 3, y - 1, nullptr);
+  LineTo(hdc, x, y + 2);
+  LineTo(hdc, x + 4, y - 2);
+}
+
+void paintStyleMenu(HDC hdc, const AnnotationEditorPaintSnapshot& snapshot)
+{
+  if (snapshot.style_menu == AnnotationEditorStyleMenu::None)
+  {
+    return;
+  }
+  drawToolbarBar(hdc, snapshot.style_menu_rect);
+  const ModernToolbarColors colors = DefaultModernToolbarColors;
+  const int count = snapshot.style_menu == AnnotationEditorStyleMenu::Arrow
+                        ? AnnotationArrowStyleCount
+                        : AnnotationLineStyleCount;
+  const AnnotationEditorRect menu{snapshot.style_menu_rect.left,
+                                   snapshot.style_menu_rect.top,
+                                   snapshot.style_menu_rect.right,
+                                   snapshot.style_menu_rect.bottom};
+  for (int i = 0; i < count; ++i)
+  {
+    const RECT item = toWinRect(annotationEditorStyleMenuItemRect(menu, i));
+    const bool selected =
+        snapshot.style_menu == AnnotationEditorStyleMenu::Arrow
+            ? snapshot.style.arrow_style == AnnotationArrowStyleOptions[i]
+            : snapshot.style.line_style == AnnotationLineStyleOptions[i];
+    if (selected)
+    {
+      fillRoundRect(hdc, item, colors.selected_fill, colors.selected_fill,
+                    DefaultModernToolbarMetrics.hover_radius);
+    }
+    if (snapshot.style_menu == AnnotationEditorStyleMenu::Arrow)
+    {
+      drawArrowStyleSample(hdc, item, AnnotationArrowStyleOptions[i],
+                           colors.icon);
+    }
+    else
+    {
+      drawLineStyleSample(hdc, item, AnnotationLineStyleOptions[i],
+                          colors.icon);
+    }
+  }
 }
 
 void paintPropertyBar(HDC hdc,
@@ -960,18 +1276,27 @@ void paintPropertyBar(HDC hdc,
   }
   if (annotationEditorPropertyBarShowsLineStyle(tool))
   {
-    const ToolbarIconKind line_icons[AnnotationLineStyleCount] = {
-        ToolbarIconKind::LineSolid, ToolbarIconKind::LineDashed,
-        ToolbarIconKind::LineDotted};
-    for (int i = 0; i < AnnotationLineStyleCount; ++i)
+    const RECT& chip = snapshot.line_style_chip_rect;
+    if (snapshot.line_style_chip_hover ||
+        snapshot.style_menu == AnnotationEditorStyleMenu::Line)
     {
-      const bool selected =
-          style.line_style ==
-          AnnotationLineStyleOptions[static_cast<std::size_t>(i)];
-      drawToolbarItem(hdc, snapshot.line_style_rects[static_cast<std::size_t>(i)],
-                      line_icons[static_cast<std::size_t>(i)], false, selected,
-                      true, false);
+      fillRoundRect(hdc, chip, colors.selected_fill, colors.selected_fill,
+                    DefaultModernToolbarMetrics.hover_radius);
     }
+    drawLineStyleSample(hdc, chip, style.line_style, colors.icon);
+    drawStyleChevron(hdc, chip, colors.icon);
+  }
+  if (annotationEditorPropertyBarShowsArrowStyle(tool))
+  {
+    const RECT& chip = snapshot.arrow_style_chip_rect;
+    if (snapshot.arrow_style_chip_hover ||
+        snapshot.style_menu == AnnotationEditorStyleMenu::Arrow)
+    {
+      fillRoundRect(hdc, chip, colors.selected_fill, colors.selected_fill,
+                    DefaultModernToolbarMetrics.hover_radius);
+    }
+    drawArrowStyleSample(hdc, chip, style.arrow_style, colors.icon);
+    drawStyleChevron(hdc, chip, colors.icon);
   }
 
   if (annotationEditorPropertyBarShowsColor(tool))
@@ -1081,6 +1406,8 @@ void paintPropertyBar(HDC hdc,
   {
     SelectObject(hdc, old_font);
   }
+
+  paintStyleMenu(hdc, snapshot);
 }
 
 void paintEditorToolbar(HDC hdc,
@@ -1221,7 +1548,12 @@ bool hitTestChromeBar(const AnnotationEditorHost* data, int x, int y)
   {
     return true;
   }
-  return PtInRect(&data->chrome().m_property_bar_rect, pt) != FALSE;
+  if (PtInRect(&data->chrome().m_property_bar_rect, pt) != FALSE)
+  {
+    return true;
+  }
+  return data->chrome().m_style_menu != AnnotationEditorStyleMenu::None &&
+         PtInRect(&data->chrome().m_style_menu_rect, pt) != FALSE;
 }
 
 void bindEditorTooltips(AnnotationEditorHost* data)
@@ -1306,6 +1638,7 @@ void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int /*x*/, int /*y*/
   data->chrome().m_chrome_drag_start_y = cursor.y;
   data->chrome().m_chrome_drag_origin_x = data->chrome().m_chrome_offset_x;
   data->chrome().m_chrome_drag_origin_y = data->chrome().m_chrome_offset_y;
+  closeStyleMenu(data);
   hideStrokePopup(data);
   hideColorPicker(data, false);
   SetCapture(hwnd);
@@ -1395,6 +1728,7 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
 
   hideStrokePopup(data);
   hideColorPicker(data, false);
+  closeStyleMenu(data);
   if (id != kButtonTextId)
   {
     commitInlineText(data);

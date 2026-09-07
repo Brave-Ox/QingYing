@@ -25,6 +25,11 @@ inline constexpr int AnnotationEditorStrokeChipIconWidth = 22;
 inline constexpr int AnnotationEditorStrokeChipValueWidth = 28;
 inline constexpr int AnnotationEditorStrokeChipWidth =
     AnnotationEditorStrokeChipIconWidth + AnnotationEditorStrokeChipValueWidth;
+inline constexpr int AnnotationEditorStyleChipWidth = 104;
+inline constexpr int AnnotationEditorStyleMenuWidth =
+    AnnotationEditorStyleChipWidth;
+inline constexpr int AnnotationEditorStyleMenuPadding = 4;
+inline constexpr int AnnotationEditorStyleMenuItemHeight = 28;
 inline constexpr int AnnotationEditorStrokePopupWidth = 280;
 inline constexpr int AnnotationEditorStrokePopupHeight = 72;
 inline constexpr int AnnotationEditorStrokePopupCornerRadius =
@@ -143,8 +148,7 @@ inline int annotationEditorPropertyBarWidth()
   const int stroke_width = AnnotationEditorStrokeChipWidth;
   const int shape_width = annotationEditorButtonsWidth(2);
   const int fill_width = AnnotationEditorButtonWidth;
-  const int line_style_width =
-      annotationEditorButtonsWidth(AnnotationLineStyleCount);
+  const int line_style_width = AnnotationEditorStyleChipWidth;
   const int geometry_extras = shape_width + fill_width + line_style_width +
                               AnnotationEditorDividerGap * 3;
   const int after_colors =
@@ -154,7 +158,11 @@ inline int annotationEditorPropertyBarWidth()
   const int geometry_width = AnnotationEditorBarPadding * 2 + geometry_extras +
                              stroke_width + AnnotationEditorDividerGap +
                              colors_width;
-  return (std::max)(simple_width, geometry_width);
+  const int arrow_width = AnnotationEditorBarPadding * 2 +
+                          AnnotationEditorStyleChipWidth * 2 +
+                          AnnotationEditorDividerGap * 2 + stroke_width +
+                          colors_width;
+  return (std::max)((std::max)(simple_width, geometry_width), arrow_width);
 }
 
 // 放下主栏与二级栏所需的最小客户区宽度。
@@ -205,7 +213,12 @@ inline bool annotationEditorPropertyBarShowsFill(AnnotationTool tool)
 
 inline bool annotationEditorPropertyBarShowsLineStyle(AnnotationTool tool)
 {
-  return annotationEditorIsGeometryTool(tool);
+  return annotationEditorIsGeometryTool(tool) || tool == AnnotationTool::Arrow;
+}
+
+inline bool annotationEditorPropertyBarShowsArrowStyle(AnnotationTool tool)
+{
+  return tool == AnnotationTool::Arrow;
 }
 
 inline bool annotationEditorPropertyBarShowsFont(AnnotationTool tool)
@@ -586,6 +599,63 @@ struct AnnotationEditorRect
   int bottom{0};
 };
 
+enum class AnnotationEditorStyleMenu
+{
+  None,
+  Arrow,
+  Line,
+};
+
+inline AnnotationEditorRect annotationEditorStyleMenuRect(
+    const AnnotationEditorRect& chip, int item_count)
+{
+  const int count = (std::max)(0, item_count);
+  return AnnotationEditorRect{
+      chip.left, chip.bottom + AnnotationEditorButtonGap,
+      chip.left + AnnotationEditorStyleMenuWidth,
+      chip.bottom + AnnotationEditorButtonGap +
+          AnnotationEditorStyleMenuPadding * 2 +
+          count * AnnotationEditorStyleMenuItemHeight};
+}
+
+inline AnnotationEditorRect annotationEditorStyleMenuItemRect(
+    const AnnotationEditorRect& menu, int index)
+{
+  const int top = menu.top + AnnotationEditorStyleMenuPadding +
+                  index * AnnotationEditorStyleMenuItemHeight;
+  return AnnotationEditorRect{menu.left + AnnotationEditorStyleMenuPadding, top,
+                              menu.right - AnnotationEditorStyleMenuPadding,
+                              top + AnnotationEditorStyleMenuItemHeight};
+}
+
+inline bool annotationEditorPointInRect(const AnnotationEditorRect& rect, int x,
+                                        int y)
+{
+  return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+inline int annotationEditorStyleMenuHitTest(const AnnotationEditorRect& menu,
+                                            int item_count, int x, int y)
+{
+  if (!annotationEditorPointInRect(menu, x, y) || item_count <= 0)
+  {
+    return -1;
+  }
+  const int relative_y = y - menu.top - AnnotationEditorStyleMenuPadding;
+  if (relative_y < 0)
+  {
+    return -1;
+  }
+  const int index = relative_y / AnnotationEditorStyleMenuItemHeight;
+  return index < item_count ? index : -1;
+}
+
+inline bool annotationEditorStyleMenuConsumesEscape(
+    AnnotationEditorStyleMenu menu)
+{
+  return menu != AnnotationEditorStyleMenu::None;
+}
+
 struct AnnotationEditorStrokePopupLayout
 {
   AnnotationEditorRect label{};
@@ -670,13 +740,21 @@ inline void annotationEditorPlaceStrokePopupWindows(
     AnnotationEditorStrokePopupWindowState& state, int popup_screen_x,
     int popup_screen_y)
 {
-  state.popup_visible = true;
-  state.value_visible = AnnotationEditorStrokePopupValueIsOwnedPopup;
+  state.popup_visible = false;
+  state.value_visible = false;
   state.popup_screen_x = popup_screen_x;
   state.popup_screen_y = popup_screen_y;
   annotationEditorStrokePopupValueScreenOrigin(
       popup_screen_x, popup_screen_y, state.value_screen_x,
       state.value_screen_y);
+}
+
+inline void annotationEditorCompleteStrokePopupPresentation(
+    AnnotationEditorStrokePopupWindowState& state, bool presented)
+{
+  state.popup_visible = presented;
+  state.value_visible =
+      presented && AnnotationEditorStrokePopupValueIsOwnedPopup;
 }
 
 inline constexpr int AnnotationEditorStrokePopupValueTextMaxChars = 8;

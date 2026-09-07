@@ -53,11 +53,14 @@ AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
   std::copy(std::begin(chrome.m_shape_rects), std::end(chrome.m_shape_rects),
             std::begin(snapshot.shape_rects));
   snapshot.fill_rect = chrome.m_fill_rect;
-  std::copy(std::begin(chrome.m_line_style_rects),
-            std::end(chrome.m_line_style_rects),
-            std::begin(snapshot.line_style_rects));
+  snapshot.arrow_style_chip_rect = chrome.m_arrow_style_chip_rect;
+  snapshot.line_style_chip_rect = chrome.m_line_style_chip_rect;
+  snapshot.style_menu_rect = chrome.m_style_menu_rect;
+  snapshot.style_menu = chrome.m_style_menu;
   snapshot.toolbar_hover = chrome.m_toolbar_hover;
   snapshot.stroke_chip_hover = chrome.m_stroke_chip_hover;
+  snapshot.arrow_style_chip_hover = chrome.m_arrow_style_chip_hover;
+  snapshot.line_style_chip_hover = chrome.m_line_style_chip_hover;
   std::copy(std::begin(chrome.m_toolbar_divider_x),
             std::end(chrome.m_toolbar_divider_x),
             std::begin(snapshot.toolbar_divider_x));

@@ -97,6 +97,13 @@ void AnnotationInteractionController::setLineStyle(AnnotationLineStyle line_styl
   refreshPreviewStyle();
 }
 
+void AnnotationInteractionController::setArrowStyle(
+    AnnotationArrowStyle arrow_style)
+{
+  m_style.arrow_style = arrow_style;
+  refreshPreviewStyle();
+}
+
 void AnnotationInteractionController::setMosaicBlockSize(int block_size)
 {
   m_mosaic_block_size = clampMosaicBlockSize(block_size);
