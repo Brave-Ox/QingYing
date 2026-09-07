@@ -21,6 +21,7 @@ target_include_directories(qingying_annotate
 
 target_link_libraries(qingying_annotate
   PUBLIC qingying_action qingying_ui
+  PRIVATE qingying_capture
 )
 
 if(WIN32)

@@ -20,6 +20,8 @@ namespace qingying {
 inline constexpr wchar_t kOverlayClassName[] = L"QingYingAnnotationOverlay";
 inline constexpr wchar_t kStrokePopupClassName[] = L"QingYingStrokePopup";
 inline constexpr wchar_t kColorPickerClassName[] = L"QingYingColorPicker";
+inline constexpr wchar_t kColorPickerEyedropperSurfaceClassName[] =
+    L"QingYingColorPickerEyedropperSurface";
 inline constexpr wchar_t kInlineEditHostClassName[] = L"QingYingInlineEditHost";
 inline constexpr wchar_t kEditorHwndPropName[] = L"QingYingAnnotationHwnd";
 
@@ -215,6 +217,10 @@ struct AnnotationEditorColorPickerState
   bool m_color_picker_dragging{false};
   bool m_color_picker_moved{false};
   bool m_color_picker_eyedropping{false};
+  HWND m_color_picker_eyedropper_surface{nullptr};
+  Image m_color_picker_eyedropper_snapshot;
+  int m_color_picker_eyedropper_snapshot_x{0};
+  int m_color_picker_eyedropper_snapshot_y{0};
   bool m_color_sv_dragging{false};
   bool m_color_hue_dragging{false};
   bool m_color_alpha_dragging{false};

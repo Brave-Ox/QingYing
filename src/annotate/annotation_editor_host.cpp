@@ -112,11 +112,7 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
   {
     if (data->colorPicker().m_color_picker_eyedropping)
     {
-      data->colorPicker().m_color_picker_eyedropping = false;
-      if (data->colorPicker().m_color_picker != nullptr)
-      {
-        InvalidateRect(data->colorPicker().m_color_picker, nullptr, FALSE);
-      }
+      setColorPickerEyedropping(data, false);
       return true;
     }
     if (colorPickerIsVisible(data))
@@ -229,7 +225,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     {
       if (data != nullptr && data->colorPicker().m_color_picker_eyedropping)
       {
-        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32515)));  // IDC_CROSS
+        setColorPickerEyedropperCursor();
         return TRUE;
       }
       if (data != nullptr && data->chrome().m_toolbar_hover >= 0 &&
@@ -374,6 +370,12 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+      if (data->colorPicker().m_color_picker_eyedropping)
+      {
+        setColorPickerEyedropperCursor();
+        (void)handleColorPickerEyedropperMove(data, x, y);
+        return 0;
+      }
       if (data->chrome().m_chrome_dragging)
       {
         updateChromeDrag(data, x, y);

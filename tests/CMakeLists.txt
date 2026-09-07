@@ -13,6 +13,7 @@ add_executable(qingying_tests
   annotation_renderer_test.cpp
   color_convert_test.cpp
   color_picker_state_test.cpp
+  color_picker_surface_test.cpp
   longshot_request_adapter_test.cpp
   mcp_bridge_test.cpp
   longshot_controller_test.cpp
@@ -99,6 +100,7 @@ endif()
 target_include_directories(qingying_tests
   PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/longshot
     ${CMAKE_SOURCE_DIR}/src/window
 )

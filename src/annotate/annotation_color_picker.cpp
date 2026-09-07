@@ -2,14 +2,15 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdio>
 #include <cstring>
+#include <utility>
 
 #include <commctrl.h>
 
 #include "annotate/annotation_editor_chrome.h"
 #include "annotate/annotation_editor_color_picker.h"
 #include "annotate/annotation_editor_stroke_popup.h"
+#include "qingying/capture/capture_engine.hpp"
 
 namespace qingying {
 
@@ -29,6 +30,9 @@ inline constexpr COLORREF kColorPickerTitleBg = RGB(248, 249, 251);
 inline constexpr COLORREF kColorPickerBorderColor = RGB(226, 229, 234);
 inline constexpr COLORREF kColorPickerTitleColor = RGB(55, 59, 66);
 inline constexpr COLORREF kColorPickerCloseColor = RGB(72, 76, 84);
+inline constexpr COLORREF kColorPickerEyedropperActiveFill = RGB(66, 133, 245);
+inline constexpr COLORREF kColorPickerEyedropperActiveBorder = RGB(46, 111, 220);
+inline constexpr COLORREF kColorPickerEyedropperActiveIcon = RGB(255, 255, 255);
 inline constexpr ColorBgra kCheckerDarkBgra{206, 202, 200, 255};
 inline constexpr COLORREF kCursorRingColor = RGB(255, 255, 255);
 inline constexpr COLORREF kCursorInnerColor = RGB(40, 44, 52);
@@ -112,12 +116,23 @@ void applyColorPickerDraft(AnnotationEditorHost* data);
 void invalidateColorPicker(AnnotationEditorHost* data);
 void updateColorPickerFromPoint(AnnotationEditorHost* data, int x, int y,
                                  AnnotationEditorColorPickerHit hit);
+bool pointInColorPickerWindow(const AnnotationEditorHost* data, int x, int y);
+bool pointInColorPickerScreenPoint(const AnnotationEditorHost* data,
+                                   POINT screen_point);
+bool sampleColorPickerEyedropperAtScreenPoint(AnnotationEditorHost* data,
+                                              POINT screen_point);
+bool sampleColorPickerEyedropperAtClientPoint(AnnotationEditorHost* data, int x,
+                                               int y);
 bool registerColorPickerClass(HINSTANCE instance);
+bool registerColorPickerEyedropperSurfaceClass(HINSTANCE instance);
 void paintColorPicker(HWND hwnd, const ColorPickerPaintSnapshot& snapshot);
 void subclassPickerEdit(HWND edit, AnnotationEditorHost* data);
 void unsubclassPickerEdit(HWND edit);
 LRESULT CALLBACK colorPickerWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                      LPARAM lparam);
+LRESULT CALLBACK colorPickerEyedropperSurfaceWndProc(HWND hwnd, UINT msg,
+                                                      WPARAM wparam,
+                                                      LPARAM lparam);
 LRESULT CALLBACK colorPickerEditSubclassProc(HWND hwnd, UINT msg,
                                                WPARAM wparam, LPARAM lparam,
                                                UINT_PTR subclass_id,
@@ -173,6 +188,186 @@ void invalidateColorPicker(AnnotationEditorHost* data)
     return;
   }
   InvalidateRect(data->colorPicker().m_color_picker, nullptr, FALSE);
+}
+
+void setColorPickerEyedropping(AnnotationEditorHost* data, bool enabled)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  AnnotationEditorColorPickerState& picker = data->colorPicker();
+  if (enabled && picker.m_color_picker_eyedropping)
+  {
+    return;
+  }
+  if (enabled)
+  {
+    int screen_left = 0;
+    int screen_top = 0;
+    int screen_right = 0;
+    int screen_bottom = 0;
+    virtualScreenBounds(screen_left, screen_top, screen_right, screen_bottom);
+    CaptureEngine capture;
+    Image snapshot;
+    const ActionResult result = capture.captureRegion(
+        screen_left, screen_top, screen_right - screen_left,
+        screen_bottom - screen_top, snapshot);
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    if (!result.ok || !registerColorPickerEyedropperSurfaceClass(instance))
+    {
+      enabled = false;
+    }
+    else
+    {
+      const HWND surface = CreateWindowExW(
+          WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+          kColorPickerEyedropperSurfaceClassName, L"", WS_POPUP, screen_left,
+          screen_top, screen_right - screen_left, screen_bottom - screen_top,
+          data->window().m_overlay, nullptr, instance, data);
+      if (surface == nullptr ||
+          SetLayeredWindowAttributes(surface, 0, 1, LWA_ALPHA) == FALSE)
+      {
+        if (surface != nullptr)
+        {
+          (void)DestroyWindow(surface);
+        }
+        enabled = false;
+      }
+      else
+      {
+        picker.m_color_picker_eyedropper_snapshot = std::move(snapshot);
+        picker.m_color_picker_eyedropper_snapshot_x = screen_left;
+        picker.m_color_picker_eyedropper_snapshot_y = screen_top;
+        picker.m_color_picker_eyedropper_surface = surface;
+        picker.m_color_picker_eyedropping = true;
+        if (SetWindowPos(surface, HWND_TOPMOST, screen_left, screen_top,
+                         screen_right - screen_left,
+                         screen_bottom - screen_top,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW) == FALSE)
+        {
+          picker.m_color_picker_eyedropping = false;
+          picker.m_color_picker_eyedropper_surface = nullptr;
+          picker.m_color_picker_eyedropper_snapshot = Image{};
+          (void)DestroyWindow(surface);
+          enabled = false;
+        }
+        else if (picker.m_color_picker != nullptr)
+        {
+          (void)SetWindowPos(picker.m_color_picker, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                 SWP_SHOWWINDOW);
+        }
+      }
+    }
+  }
+  else
+  {
+    picker.m_color_picker_eyedropping = false;
+    const HWND surface = picker.m_color_picker_eyedropper_surface;
+    picker.m_color_picker_eyedropper_surface = nullptr;
+    if (surface != nullptr && IsWindow(surface) != FALSE)
+    {
+      (void)DestroyWindow(surface);
+    }
+    picker.m_color_picker_eyedropper_snapshot = Image{};
+  }
+
+  picker.m_color_picker_eyedropping = enabled;
+  if (enabled)
+  {
+    setColorPickerEyedropperCursor();
+  }
+  invalidateColorPicker(data);
+}
+
+void setColorPickerEyedropperCursor()
+{
+  const HCURSOR cursor =
+      LoadCursorW(nullptr, MAKEINTRESOURCEW(32515));  // IDC_CROSS
+  if (cursor != nullptr)
+  {
+    (void)SetCursor(cursor);
+  }
+}
+
+bool pointInColorPickerWindow(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr || data->window().m_overlay == nullptr ||
+      data->colorPicker().m_color_picker == nullptr)
+  {
+    return false;
+  }
+
+  POINT screen_point{x, y};
+  if (ClientToScreen(data->window().m_overlay, &screen_point) == FALSE)
+  {
+    return false;
+  }
+  return pointInColorPickerScreenPoint(data, screen_point);
+}
+
+bool pointInColorPickerScreenPoint(const AnnotationEditorHost* data,
+                                   POINT screen_point)
+{
+  if (data == nullptr || data->colorPicker().m_color_picker == nullptr)
+  {
+    return false;
+  }
+  RECT picker_rect{};
+  if (GetWindowRect(data->colorPicker().m_color_picker, &picker_rect) == FALSE)
+  {
+    return false;
+  }
+  return PtInRect(&picker_rect, screen_point) != FALSE;
+}
+
+bool sampleColorPickerEyedropperAtScreenPoint(AnnotationEditorHost* data,
+                                              POINT screen_point)
+{
+  if (data == nullptr || pointInColorPickerScreenPoint(data, screen_point))
+  {
+    return false;
+  }
+
+  const ColorBgra previous = data->colorPicker().m_color_picker_state.draft();
+  ColorBgra sampled{};
+  const AnnotationEditorColorPickerState& picker = data->colorPicker();
+  if (!sampleImageBgraAtScreenPoint(
+          picker.m_color_picker_eyedropper_snapshot,
+          picker.m_color_picker_eyedropper_snapshot_x,
+          picker.m_color_picker_eyedropper_snapshot_y, screen_point.x,
+          screen_point.y, sampled))
+  {
+    return false;
+  }
+  data->colorPicker().m_color_picker_state.sampleOpaqueRgb(sampled);
+
+  const ColorBgra& current = data->colorPicker().m_color_picker_state.draft();
+  if (previous.r == current.r && previous.g == current.g &&
+      previous.b == current.b && previous.a == current.a)
+  {
+    return true;
+  }
+  syncColorPickerEdits(data);
+  invalidateColorPicker(data);
+  return true;
+}
+
+bool sampleColorPickerEyedropperAtClientPoint(AnnotationEditorHost* data, int x,
+                                               int y)
+{
+  if (data == nullptr || data->window().m_overlay == nullptr)
+  {
+    return false;
+  }
+  POINT screen_point{x, y};
+  if (ClientToScreen(data->window().m_overlay, &screen_point) == FALSE)
+  {
+    return false;
+  }
+  return sampleColorPickerEyedropperAtScreenPoint(data, screen_point);
 }
 
 void blitArgbRect(HDC hdc, const RECT& dest, const void* bits, int width,
@@ -339,12 +534,15 @@ void paintAlphaBar(HDC hdc, const RECT& alpha_rect, const ColorBgra& draft)
 
 void paintEyedropper(HDC hdc, const RECT& cell, bool active)
 {
-  fillRoundRect(hdc, cell,
-                active ? DefaultModernToolbarColors.selected_fill
-                       : DefaultModernToolbarColors.hover_fill,
-                kColorPickerBorderColor, kSwatchCornerRadius);
+  const COLORREF fill = active ? kColorPickerEyedropperActiveFill
+                               : DefaultModernToolbarColors.hover_fill;
+  const COLORREF border = active ? kColorPickerEyedropperActiveBorder
+                                 : kColorPickerBorderColor;
+  const COLORREF icon = active ? kColorPickerEyedropperActiveIcon
+                               : kColorPickerTitleColor;
+  fillRoundRect(hdc, cell, fill, border, kSwatchCornerRadius);
   drawToolbarIcon(hdc, cell, ToolbarIconKind::Eyedropper,
-                  kColorPickerTitleColor);
+                  icon);
 }
 
 void paintColorPicker(HWND hwnd, const ColorPickerPaintSnapshot& snapshot)
@@ -722,8 +920,7 @@ LRESULT CALLBACK colorPickerEditSubclassProc(HWND hwnd, UINT msg,
     {
       if (data->colorPicker().m_color_picker_eyedropping)
       {
-        data->colorPicker().m_color_picker_eyedropping = false;
-        invalidateColorPicker(data);
+        setColorPickerEyedropping(data, false);
         return 0;
       }
       hideColorPicker(data, false);
@@ -752,6 +949,63 @@ void unsubclassPickerEdit(HWND edit)
   }
   (void)RemoveWindowSubclass(edit, colorPickerEditSubclassProc,
                               kColorPickerEditSubclassId);
+}
+
+LRESULT CALLBACK colorPickerEyedropperSurfaceWndProc(HWND hwnd, UINT msg,
+                                                      WPARAM wparam,
+                                                      LPARAM lparam)
+{
+  AnnotationEditorHost* data = reinterpret_cast<AnnotationEditorHost*>(
+      GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  if (msg == WM_NCCREATE)
+  {
+    const CREATESTRUCTW* create =
+        reinterpret_cast<const CREATESTRUCTW*>(lparam);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    return TRUE;
+  }
+  if (msg == WM_SETCURSOR)
+  {
+    setColorPickerEyedropperCursor();
+    return TRUE;
+  }
+  if (msg == WM_MOUSEACTIVATE)
+  {
+    return MA_NOACTIVATE;
+  }
+  if (data != nullptr && data->colorPicker().m_color_picker_eyedropping)
+  {
+    if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN)
+    {
+      POINT screen_point{};
+      if (GetCursorPos(&screen_point) != FALSE)
+      {
+        (void)sampleColorPickerEyedropperAtScreenPoint(data, screen_point);
+      }
+      if (msg == WM_LBUTTONDOWN)
+      {
+        setColorPickerEyedropping(data, false);
+      }
+      return 0;
+    }
+    if (msg == WM_RBUTTONDOWN)
+    {
+      setColorPickerEyedropping(data, false);
+      return 0;
+    }
+  }
+  if (msg == WM_NCDESTROY)
+  {
+    if (data != nullptr &&
+        data->colorPicker().m_color_picker_eyedropper_surface == hwnd)
+    {
+      data->colorPicker().m_color_picker_eyedropper_surface = nullptr;
+    }
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+  }
+  (void)wparam;
+  return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 LRESULT CALLBACK colorPickerWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -783,6 +1037,13 @@ LRESULT CALLBACK colorPickerWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       return 0;
     case WM_ERASEBKGND:
       return 1;
+    case WM_SETCURSOR:
+      if (data != nullptr && data->colorPicker().m_color_picker_eyedropping)
+      {
+        setColorPickerEyedropperCursor();
+        return TRUE;
+      }
+      break;
     case WM_COMMAND:
       if (data != nullptr)
       {
@@ -801,8 +1062,7 @@ LRESULT CALLBACK colorPickerWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         {
           if (data->colorPicker().m_color_picker_eyedropping)
           {
-            data->colorPicker().m_color_picker_eyedropping = false;
-            invalidateColorPicker(data);
+            setColorPickerEyedropping(data, false);
             return 0;
           }
           hideColorPicker(data, false);
@@ -829,11 +1089,11 @@ LRESULT CALLBACK colorPickerWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (hit == AnnotationEditorColorPickerHit::Eyedropper)
       {
-        data->colorPicker().m_color_picker_eyedropping = !data->colorPicker().m_color_picker_eyedropping;
-        invalidateColorPicker(data);
+        setColorPickerEyedropping(
+            data, !data->colorPicker().m_color_picker_eyedropping);
         return 0;
       }
-      data->colorPicker().m_color_picker_eyedropping = false;
+      setColorPickerEyedropping(data, false);
       if (hit == AnnotationEditorColorPickerHit::Title)
       {
         POINT cursor{};
@@ -949,7 +1209,7 @@ void hideColorPicker(AnnotationEditorHost* data, bool apply)
   data->colorPicker().m_color_sv_dragging = false;
   data->colorPicker().m_color_hue_dragging = false;
   data->colorPicker().m_color_alpha_dragging = false;
-  data->colorPicker().m_color_picker_eyedropping = false;
+  setColorPickerEyedropping(data, false);
   if (apply)
   {
     applyColorPickerDraft(data);
@@ -978,7 +1238,7 @@ void destroyColorPicker(AnnotationEditorHost* data)
   data->colorPicker().m_color_sv_dragging = false;
   data->colorPicker().m_color_hue_dragging = false;
   data->colorPicker().m_color_alpha_dragging = false;
-  data->colorPicker().m_color_picker_eyedropping = false;
+  setColorPickerEyedropping(data, false);
   unsubclassPickerEdit(data->colorPicker().m_color_hex_edit);
   unsubclassPickerEdit(data->colorPicker().m_color_alpha_edit);
   for (int i = 0; i < kColorPickerChannelCount; ++i)
@@ -1010,7 +1270,7 @@ void showColorPicker(AnnotationEditorHost* data)
 
   hideStrokePopup(data);
   data->colorPicker().m_color_picker_state.open(data->core().m_controller.style().color);
-  data->colorPicker().m_color_picker_eyedropping = false;
+  setColorPickerEyedropping(data, false);
 
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   if (!registerColorPickerClass(instance))
@@ -1166,21 +1426,34 @@ bool handleColorPickerEyedropperClick(AnnotationEditorHost* data, int x, int y)
   {
     return false;
   }
-  if (!pointInImageArea(data, x, y))
+  if (!sampleColorPickerEyedropperAtClientPoint(data, x, y))
   {
     return true;
   }
-  const int image_x = x - data->window().m_image_origin_x;
-  const int image_y = y - data->window().m_image_origin_y;
-  ColorBgra sampled{};
-  if (!sampleImageBgra(data->core().m_session.source(), image_x, image_y, sampled))
+  setColorPickerEyedropping(data, false);
+  return true;
+}
+
+bool registerColorPickerEyedropperSurfaceClass(HINSTANCE instance)
+{
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(WNDCLASSEXW);
+  wc.lpfnWndProc = colorPickerEyedropperSurfaceWndProc;
+  wc.hInstance = instance;
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32515));  // IDC_CROSS
+  wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+  wc.lpszClassName = kColorPickerEyedropperSurfaceClassName;
+  return RegisterClassExW(&wc) != 0 ||
+         GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+bool handleColorPickerEyedropperMove(AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr || !data->colorPicker().m_color_picker_eyedropping)
   {
-    return true;
+    return false;
   }
-  data->colorPicker().m_color_picker_state.sampleOpaqueRgb(sampled);
-  data->colorPicker().m_color_picker_eyedropping = false;
-  syncColorPickerEdits(data);
-  invalidateColorPicker(data);
+  (void)sampleColorPickerEyedropperAtClientPoint(data, x, y);
   return true;
 }
 
