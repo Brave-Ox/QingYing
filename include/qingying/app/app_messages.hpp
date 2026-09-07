@@ -29,6 +29,13 @@ constexpr UINT WM_QINGYING_SELECTION_LONGSHOT_PREVIEW = WM_APP + 6;
 constexpr UINT WM_QINGYING_SELECTION_LONGSHOT_FINISHED = WM_APP + 7;
 constexpr UINT WM_QINGYING_SELECTION_OVERLAY_ABORT = WM_APP + 8;
 constexpr UINT WM_QINGYING_ANNOTATION_CANCEL = WM_APP + 9;
+constexpr UINT WM_QINGYING_AUTOMATION_REQUEST = WM_APP + 10;
+constexpr UINT WM_QINGYING_AUTOMATION_COMPLETE = WM_APP + 11;
+
+struct AutomationRequestMessage {};
+struct AutomationCompletionMessage {
+  UiMessageToken ticket{kInvalidUiMessageToken};
+};
 
 struct LongShotCompletionMessage {
   ActionResult result;

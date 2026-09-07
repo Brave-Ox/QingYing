@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01～F9-05 契约、Dispatcher、作用域结果与预算、OperationRegistry 及自动验收完成；F9-06～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01～F9-06 契约、Dispatcher、作用域结果与预算、OperationRegistry、有界 UI 调度及自动验收完成；F9-07～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01～F9-05 契约、Dispatcher、作用域结果与预算、OperationRegistry 及自动验收完成，F9-06～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01～F9-06 契约、Dispatcher、作用域结果与预算、OperationRegistry、有界 UI 调度及自动验收完成，F9-07～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -677,18 +677,20 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-06：实现有界 UiActionScheduler 与线程消息接线
 
-**状态：未开始；前置：F9-02、F9-05。** 建议提交：`feat(f9-06): schedule bounded automation requests on the UI thread`。
+**状态：已完成（2026-09-07）；前置：F9-02、F9-05。**
 
 **文件范围：** 新增 `include/qingying/automation/ui_action_scheduler.h`、`src/automation/ui_action_scheduler.cpp`；复用 `include/qingying/app/ui_message_channel.h`，扩展 `include/qingying/app/app_messages.hpp`。
 
-- [ ] 实现普通请求每连接 8 个、全局 32 个的容量预留、token 投递和失败退还；status/get/cancel/release 使用独立且有界的控制容量。
-- [ ] 将 accepting 状态、generation 失效、容量预留和入队置于同一同步边界；UI 出队再次检查连接、scope、期限，回调在锁外交付。
-- [ ] 请求入队前建立“可信连接 + RequestId → 取消控制”的关联，UI 建立 operation 后沿用同一控制对象；覆盖已收请求但尚无 OperationId 时的取消，完成/断连后回收关联，限制记录容量。
-- [ ] 使用独立消息编号和明确 payload 类型；PostMessage 失败立即 discard，重复/陈旧 token 不触发执行。
-- [ ] 增加业务完成事件回 UI 的通道；UI 不等待 I/O 或 future，worker 不访问 Store/Clipboard/Workflow。
-- [ ] 提供关闭准入、撤销待执行请求、结算 completion 和 drain 接口；预留取消/完成投递，不能让普通队列满导致退出失效。
+- [x] 实现普通请求每连接 8 个、全局 32 个的容量预留、token 投递和失败退还；status/get/cancel/release 使用独立且有界的控制容量。
+- [x] 将 accepting 状态、generation 失效、容量预留和入队置于同一同步边界；UI 出队再次检查连接、scope、期限，回调在锁外交付。
+- [x] 请求入队前建立“可信连接 + RequestId → 取消控制”的关联，UI 建立 operation 后沿用同一控制对象；覆盖已收请求但尚无 OperationId 时的取消，完成/断连后回收关联，限制记录容量。
+- [x] 使用独立消息编号和明确 payload 类型；PostMessage 失败立即 discard，重复/陈旧 token 不触发执行。
+- [x] 增加业务完成事件回 UI 的通道；UI 不等待 I/O 或 future，worker 不访问 Store/Clipboard/Workflow。
+- [x] 提供关闭准入、撤销待执行请求、结算 completion 和 drain 接口；预留取消/完成投递，不能让普通队列满导致退出失效。
 
 **验收：** 新增 `tests/ui_action_scheduler_test.cpp`，用 fake UI executor 验证 UI 线程归属、队列满仍可取消、PostMessage 失败、解码与断连竞争、过期不执行、重复完成和关闭后无无人认领的请求。
+
+完成记录：新增 UiActionScheduler 及独立请求/完成消息类型，复用 UiMessageChannel；通过注入 Post 和 UI Execute 接线。普通容量默认每连接 8、全局 32，控制容量每连接 4、全局 16，容量保留到回调交付以限制运行中关联和完成槽。私有 RequestCancellation 在成功入队时取消原请求；回调锁外交付。UI 定期 drain 回收断连待执行请求和投递失败的完成事件；退出时先 stopAccepting、停止并回收业务生产者及报告实际结果，再 shutdown 结算剩余回调，调度器不等待 worker。新增 11 个测试，Release 构建成功，调度器/Registry/Control/契约/消息通道专项 72/72 通过。应用 WndProc、定时 drain 和 Endpoint 的组合根注入由 F9-07 完成，当前不启动生产 Pipe 或新增 Tool。
 
 ### F9-07：接入 AutomationEndpoint、交互占用与本地控制动作
 
