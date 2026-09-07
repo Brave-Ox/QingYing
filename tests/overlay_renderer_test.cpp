@@ -11,6 +11,9 @@ namespace {
 constexpr std::uint32_t kWhite = 0xFFFFFFFFu;
 constexpr std::uint32_t kMask = 0x59000000u;
 constexpr std::uint32_t kHover = 0xFF00B4FFu;
+constexpr std::uint32_t kHoverGlow = 0x70204C70u;
+constexpr std::uint32_t kHoverBackground = 0xFF3864A0u;
+constexpr std::uint32_t kHoverRevealedBackground = 0xFF37639Fu;
 
 Image makeSolidImage(int width, int height, std::uint32_t color) {
   Image image;
@@ -128,6 +131,63 @@ TEST(OverlayRendererTest, RendersHoverOutlineWhenRequested) {
   ASSERT_TRUE(OverlayRenderer::renderPixels(20, 20, state, pixels));
   EXPECT_EQ(pixelAt(pixels, 20, 5, 6), kHover);
   EXPECT_EQ(pixelAt(pixels, 20, 12, 12), kMask);
+}
+
+TEST(OverlayRendererTest, RendersGlowOutsideHoverBoundary) {
+  OverlayClientRect selection{};
+  OverlayClientRect hover{};
+  hover.x = 5;
+  hover.y = 6;
+  hover.width = 6;
+  hover.height = 5;
+  Image background;
+  Image preview;
+  const OverlayRenderState state(selection, hover, background, preview,
+                                 OverlayPhase::Sniffing, false, 0, true,
+                                 false);
+
+  std::vector<std::uint32_t> pixels;
+  ASSERT_TRUE(OverlayRenderer::renderPixels(20, 20, state, pixels));
+  EXPECT_EQ(pixelAt(pixels, 20, 4, 6), kHoverGlow);
+  EXPECT_EQ(pixelAt(pixels, 20, 5, 6), kHover);
+}
+
+TEST(OverlayRendererTest, RevealsOriginalBackgroundInsideHoverRegion) {
+  OverlayClientRect selection{};
+  OverlayClientRect hover{};
+  hover.x = 20;
+  hover.y = 20;
+  hover.width = 40;
+  hover.height = 30;
+  const Image background = makeSolidImage(100, 100, kHoverBackground);
+  Image preview;
+  const OverlayRenderState state(selection, hover, background, preview,
+                                 OverlayPhase::Sniffing, false, 0, true,
+                                 false);
+
+  std::vector<std::uint32_t> pixels;
+  ASSERT_TRUE(OverlayRenderer::renderPixels(100, 100, state, pixels));
+  EXPECT_EQ(pixelAt(pixels, 100, 30, 30), kHoverRevealedBackground);
+  EXPECT_EQ(pixelAt(pixels, 100, 20, 20), kHover);
+}
+
+TEST(OverlayRendererTest, DoesNotRenderHoverDuringCapturePassthrough) {
+  OverlayClientRect selection{};
+  selection.x = 20;
+  selection.y = 20;
+  selection.width = 40;
+  selection.height = 30;
+  const OverlayClientRect hover = selection;
+  const Image background = makeSolidImage(100, 100, kWhite);
+  Image preview;
+  const OverlayRenderState state(selection, hover, background, preview,
+                                 OverlayPhase::LongShotRunning, false, 0,
+                                 true, true);
+
+  std::vector<std::uint32_t> pixels;
+  ASSERT_TRUE(OverlayRenderer::renderPixels(100, 100, state, pixels));
+  EXPECT_EQ(pixelAt(pixels, 100, 30, 30), 0x00000000u);
+  EXPECT_EQ(pixelAt(pixels, 100, 20, 54), kMask);
 }
 
 TEST(OverlayRendererTest, PassthroughClearsSelectionWithoutBackgroundCompose) {

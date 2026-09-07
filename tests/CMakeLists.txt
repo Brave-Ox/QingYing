@@ -1,4 +1,4 @@
-﻿# 轻映单元测试（通过 vcpkg 引入 GoogleTest）
+# 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
   action_dispatcher_test.cpp
@@ -43,6 +43,8 @@ add_executable(qingying_tests
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
   window_detector_test.cpp
+  smart_region_detector_test.cpp
+  visual_region_locator_test.cpp
   tray_notify_icon_test.cpp
   tray_context_menu_test.cpp
 )
@@ -94,6 +96,7 @@ target_include_directories(qingying_tests
   PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/longshot
+    ${CMAKE_SOURCE_DIR}/src/window
 )
 
 target_link_libraries(qingying_tests

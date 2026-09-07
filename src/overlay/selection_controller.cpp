@@ -39,6 +39,13 @@ void SelectionController::update(int current_x, int current_y) {
   clampToBounds();
 }
 
+bool SelectionController::hasMovedFromStart(int current_x,
+                                            int current_y) const noexcept
+{
+  return m_mode == Mode::Creating &&
+         (current_x != m_start_x || current_y != m_start_y);
+}
+
 void SelectionController::confirm() {
   // 宽度或高度 <= 0（纯点击未拖动 / 退化选区）视为取消。
   m_mode = Mode::None;

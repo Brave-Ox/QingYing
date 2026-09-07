@@ -39,6 +39,21 @@ TEST(SelectionOverlayTest, DestructorClosesVisibleOverlayWithoutCallback) {
   EXPECT_EQ(callback_count, 0);
 }
 
+TEST(SelectionOverlayTest, HoverInfrastructureDoesNotChangeSilentHide)
+{
+  SelectionOverlay overlay;
+  int callback_count = 0;
+  ASSERT_TRUE(overlay.show(
+      Image{}, [&callback_count](const SelectionIntent&) {
+        ++callback_count;
+      }));
+
+  overlay.hide();
+
+  EXPECT_FALSE(overlay.isVisible());
+  EXPECT_EQ(callback_count, 0);
+}
+
 TEST(SelectionOverlayTest, QueuedLongShotMessagesCanBeAbortedSafely) {
   SelectionOverlay overlay;
   ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));

@@ -28,6 +28,9 @@ class SelectionController {
   // 拖动中更新终点（鼠标移动）；矩形始终归一化，且被钳制在有效范围内。
   void update(int current_x, int current_y);
 
+  // 返回本次创建选区相对按下点是否发生了实际位移。
+  bool hasMovedFromStart(int current_x, int current_y) const noexcept;
+
   // 确认选区（鼠标松开）；宽度或高度 <= 0（纯点击未拖动）视为取消。
   void confirm();
 

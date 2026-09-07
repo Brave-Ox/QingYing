@@ -13,7 +13,18 @@ namespace {
 
 constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
 constexpr std::uint32_t kHoverPixel = 0xFF00B4FFu;   // 窗口吸附悬停高亮：亮蓝
-constexpr int kHoverThickness = 3;
+constexpr std::uint32_t kHoverGlowPixel = 0x70204C70u;
+// 悬停区域：几乎透明，合成后露出冻结背景的原始颜色。
+constexpr std::uint32_t kHoverRevealPixel = 0x01000000u;
+constexpr std::uint32_t kHoverLabelPanelPixel = 0xE01A202Au;
+constexpr std::uint32_t kHoverLabelTextPixel = 0xFFFFFFFFu;
+constexpr int kHoverThickness = 2;
+constexpr int kHoverLabelGap = 4;
+constexpr int kHoverLabelPadding = 4;
+constexpr int kHoverLabelGlyphWidth = 3;
+constexpr int kHoverLabelGlyphHeight = 5;
+constexpr int kHoverLabelGlyphScale = 2;
+constexpr int kHoverLabelGlyphGap = 2;
 
 // CreateCompatibleDC RAII：DeleteDC。
 struct CompatibleDcDeleter {
@@ -71,6 +82,160 @@ void drawHoverOutline(std::vector<std::uint32_t>& pixels, int width, int height,
       setOverlayPixel(pixels, width, height, right - t, j, color);
     }
   }
+}
+
+void drawHoverGlow(std::vector<std::uint32_t>& pixels, int width, int height,
+                   const OverlayClientRect& rect)
+{
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+  const OverlayClientRect glow_rect{rect.x - 1, rect.y - 1, rect.width + 2,
+                                    rect.height + 2};
+  drawHoverOutline(pixels, width, height, glow_rect, kHoverGlowPixel, 1);
+}
+
+void revealHoverBackground(std::vector<std::uint32_t>& pixels, int width,
+                           int height, const OverlayClientRect& rect)
+{
+  const int left = (std::max)(0, rect.x);
+  const int top = (std::max)(0, rect.y);
+  const int right = (std::min)(width, rect.x + rect.width);
+  const int bottom = (std::min)(height, rect.y + rect.height);
+  for (int y = top; y < bottom; ++y) {
+    for (int x = left; x < right; ++x) {
+      setOverlayPixel(pixels, width, height, x, y, kHoverRevealPixel);
+    }
+  }
+}
+
+int decimalDigits(int value)
+{
+  int digits = 1;
+  while (value >= 10) {
+    value /= 10;
+    ++digits;
+  }
+  return digits;
+}
+
+bool digitPixel(int digit, int column, int row)
+{
+  constexpr std::uint8_t kDigits[10][kHoverLabelGlyphHeight] = {
+      {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+      {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+      {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+      {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+      {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+      {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+      {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+      {0b111, 0b001, 0b010, 0b010, 0b010},  // 7
+      {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+      {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+  };
+  return digit >= 0 && digit <= 9 && column >= 0 &&
+         column < kHoverLabelGlyphWidth && row >= 0 &&
+         row < kHoverLabelGlyphHeight &&
+         (kDigits[digit][row] & (1u << (kHoverLabelGlyphWidth - column - 1))) !=
+             0;
+}
+
+void drawGlyphPixel(std::vector<std::uint32_t>& pixels, int width, int height,
+                    int x, int y)
+{
+  for (int offset_y = 0; offset_y < kHoverLabelGlyphScale; ++offset_y) {
+    for (int offset_x = 0; offset_x < kHoverLabelGlyphScale; ++offset_x) {
+      setOverlayPixel(pixels, width, height, x + offset_x, y + offset_y,
+                      kHoverLabelTextPixel);
+    }
+  }
+}
+
+void drawDigit(std::vector<std::uint32_t>& pixels, int width, int height,
+               int x, int y, int digit)
+{
+  for (int row = 0; row < kHoverLabelGlyphHeight; ++row) {
+    for (int column = 0; column < kHoverLabelGlyphWidth; ++column) {
+      if (digitPixel(digit, column, row)) {
+        drawGlyphPixel(pixels, width, height,
+                       x + column * kHoverLabelGlyphScale,
+                       y + row * kHoverLabelGlyphScale);
+      }
+    }
+  }
+}
+
+void drawDimension(std::vector<std::uint32_t>& pixels, int width, int height,
+                   int x, int y, int value)
+{
+  int divisor = 1;
+  while (value / divisor >= 10) {
+    divisor *= 10;
+  }
+  while (divisor > 0) {
+    drawDigit(pixels, width, height, x, y, value / divisor);
+    x += kHoverLabelGlyphWidth * kHoverLabelGlyphScale + kHoverLabelGlyphGap;
+    value %= divisor;
+    divisor /= 10;
+  }
+}
+
+void drawMultiplySymbol(std::vector<std::uint32_t>& pixels, int width,
+                        int height, int x, int y)
+{
+  for (int index = 0; index < kHoverLabelGlyphWidth; ++index) {
+    drawGlyphPixel(pixels, width, height,
+                   x + index * kHoverLabelGlyphScale,
+                   y + index * kHoverLabelGlyphScale);
+    drawGlyphPixel(pixels, width, height,
+                   x + (kHoverLabelGlyphWidth - index - 1) *
+                           kHoverLabelGlyphScale,
+                   y + index * kHoverLabelGlyphScale);
+  }
+}
+
+void drawHoverLabel(std::vector<std::uint32_t>& pixels, int width, int height,
+                    const OverlayClientRect& rect)
+{
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+  const int glyph_advance =
+      kHoverLabelGlyphWidth * kHoverLabelGlyphScale + kHoverLabelGlyphGap;
+  const int text_glyph_count = decimalDigits(rect.width) + 1 +
+                               decimalDigits(rect.height);
+  const int panel_width = kHoverLabelPadding * 2 +
+                          text_glyph_count * glyph_advance -
+                          kHoverLabelGlyphGap;
+  const int panel_height =
+      kHoverLabelPadding * 2 + kHoverLabelGlyphHeight * kHoverLabelGlyphScale;
+  const int below_y = rect.y + rect.height + kHoverLabelGap;
+  const int above_y = rect.y - kHoverLabelGap - panel_height;
+  int panel_y = 0;
+  if (below_y + panel_height <= height) {
+    panel_y = below_y;
+  } else if (above_y >= 0) {
+    panel_y = above_y;
+  } else {
+    return;
+  }
+  const int panel_x =
+      (std::max)(0, (std::min)(rect.x, width - panel_width));
+
+  for (int y = 0; y < panel_height; ++y) {
+    for (int x = 0; x < panel_width; ++x) {
+      setOverlayPixel(pixels, width, height, panel_x + x, panel_y + y,
+                      kHoverLabelPanelPixel);
+    }
+  }
+
+  int text_x = panel_x + kHoverLabelPadding;
+  const int text_y = panel_y + kHoverLabelPadding;
+  drawDimension(pixels, width, height, text_x, text_y, rect.width);
+  text_x += decimalDigits(rect.width) * glyph_advance;
+  drawMultiplySymbol(pixels, width, height, text_x, text_y);
+  text_x += glyph_advance;
+  drawDimension(pixels, width, height, text_x, text_y, rect.height);
 }
 
 constexpr int kMaxPreviewWidth = 440;
@@ -243,9 +408,13 @@ bool OverlayRenderer::renderPixels(
                          state.selection.y, state.selection.width,
                          state.selection.height, kHandlePixel,
                          state.handle_radius);
-  } else if (state.show_hover) {
+  } else if (state.show_hover && !state.capture_passthrough &&
+             state.phase == OverlayPhase::Sniffing) {
+    revealHoverBackground(pixels, width, height, state.hover_rect);
+    drawHoverGlow(pixels, width, height, state.hover_rect);
     drawHoverOutline(pixels, width, height, state.hover_rect, kHoverPixel,
                      kHoverThickness);
+    drawHoverLabel(pixels, width, height, state.hover_rect);
   }
 
   // Draw before the capture passthrough clear so an impossible placement

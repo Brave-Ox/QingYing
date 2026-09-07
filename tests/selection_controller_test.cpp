@@ -62,6 +62,18 @@ TEST(SelectionControllerTest, ClickWithoutDragIsCancelled) {
   EXPECT_TRUE(sel.empty());
 }
 
+TEST(SelectionControllerTest, ReportsMovementOnlyAfterPointerLeavesStart)
+{
+  SelectionController controller;
+  controller.begin(10, 20);
+
+  EXPECT_FALSE(controller.hasMovedFromStart(10, 20));
+  EXPECT_TRUE(controller.hasMovedFromStart(11, 20));
+  EXPECT_TRUE(controller.hasMovedFromStart(10, 21));
+  controller.confirm();
+  EXPECT_FALSE(controller.hasMovedFromStart(11, 20));
+}
+
 TEST(SelectionControllerTest, CancelMarksSelectionCancelled) {
   SelectionController controller;
   controller.begin(10, 20);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <strsafe.h>
 #include <utility>
 
 #include "qingying/app/app_messages.hpp"
@@ -15,7 +16,7 @@
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"
 #include "qingying/overlay/selection_toolbar.hpp"
-#include "qingying/window/window_detector.hpp"
+#include "qingying/window/smart_region_detector.hpp"
 
 namespace qingying {
 
@@ -24,6 +25,9 @@ namespace {
 // 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
 constexpr int kEscapeHotkeyId = 2;
+constexpr UINT_PTR kHoverStabilizeTimerId = 3;
+constexpr UINT_PTR kHoverUpdateTimerId = 4;
+constexpr UINT kMinimumTimerDelayMs = 1;
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
@@ -48,9 +52,17 @@ struct OverlayWindowData {
   int dpi{96};
   int handle_radius{handles::kHandleHitRadius};
   SelectionHandle active_handle{SelectionHandle::None};
-  WindowDetector window_detector;  // 窗口吸附检测
-  bool has_hover{false};           // 是否悬停在可吸附窗口上
-  OverlayClientRect hover_rect;     // 悬停窗口矩形（客户区坐标）
+  SmartRegionDetector smart_region_detector;
+  SmartRegionDiagnosticTrace smart_region_diagnostics;
+  SmartRegionHoverStabilizer hover_stabilizer;
+  SmartRegionHoverRenderGate hover_render_gate;
+  SmartRegionUpdateGate hover_update_gate;
+  SmartRegionCandidate hover_candidate;
+  bool has_hover{false};
+  bool has_pending_hover_update{false};
+  int pending_hover_x{0};
+  int pending_hover_y{0};
+  OverlayClientRect hover_rect;
   Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
   SelectionAction longshot_pending_action{SelectionAction::None};
@@ -69,6 +81,80 @@ void handleToolbarCommand(OverlayWindowData* data,
                           SelectionToolbarCommand command);
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
+
+bool smartRegionDiagnosticsRequested() noexcept
+{
+  wchar_t value[2]{};
+  const DWORD length = GetEnvironmentVariableW(
+      L"QINGYING_SMART_REGION_DIAGNOSTICS", value,
+      static_cast<DWORD>(std::size(value)));
+  return length == 1 && value[0] == L'1';
+}
+
+void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
+{
+  if (!diagnostics.enabled() || !diagnostics.hasLatestEvent()) {
+    return;
+  }
+  const SmartRegionDiagnosticEvent& event = diagnostics.latestEvent();
+  wchar_t message[2048]{};
+  if (FAILED(StringCchPrintfW(
+          message, std::size(message),
+          L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) total=%llu ms "
+          L"window=%llu uia=%llu known=%llu visual=%llu select=%llu "
+          L"render=%llu settle=%llu edges=0x%02X candidates=%llu\n",
+          smartRegionDiagnosticSourceName(event.source), event.rect.left,
+          event.rect.top, event.rect.right, event.rect.bottom,
+          static_cast<unsigned long long>(event.elapsed_ms),
+          static_cast<unsigned long long>(event.window_detection_ms),
+          static_cast<unsigned long long>(event.uia_lookup_ms),
+          static_cast<unsigned long long>(event.known_content_lookup_ms),
+          static_cast<unsigned long long>(event.visual_lookup_ms),
+          static_cast<unsigned long long>(event.selection_ms),
+          static_cast<unsigned long long>(event.overlay_render_ms),
+          static_cast<unsigned long long>(event.stabilization_delay_ms),
+          static_cast<unsigned int>(event.visual_edge_mask),
+          static_cast<unsigned long long>(event.candidate_count)))) {
+    return;
+  }
+  for (std::size_t index = 0; index < event.candidate_count; ++index) {
+    const SmartRegionCandidateDiagnostic& candidate = event.candidates[index];
+    wchar_t candidate_message[256]{};
+    if (FAILED(StringCchPrintfW(
+            candidate_message, std::size(candidate_message),
+            L"  candidate[%llu] source=%s semantic=%u rect=(%d,%d,%d,%d) "
+            L"score=%d selected=%d reason=%s\n",
+            static_cast<unsigned long long>(index),
+            smartRegionDiagnosticSourceName(candidate.candidate.source),
+            static_cast<unsigned int>(candidate.candidate.semantic),
+            candidate.candidate.rect.left, candidate.candidate.rect.top,
+            candidate.candidate.rect.right, candidate.candidate.rect.bottom,
+            candidate.score, candidate.selected ? 1 : 0,
+            smartRegionCandidateRejectionName(candidate.rejection))) ||
+        FAILED(StringCchCatW(message, std::size(message), candidate_message))) {
+      break;
+    }
+  }
+  OutputDebugStringW(message);
+}
+
+void clearHover(OverlayWindowData* data) noexcept
+{
+  if (data == nullptr) {
+    return;
+  }
+  if (data->overlay != nullptr) {
+    // 销毁窗口或结束交互时无需依赖计时器返回值；状态已由下面字段清空。
+    static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
+    static_cast<void>(KillTimer(data->overlay, kHoverUpdateTimerId));
+  }
+  data->hover_stabilizer.clear();
+  data->hover_update_gate.reset();
+  data->hover_candidate = SmartRegionCandidate{};
+  data->hover_rect = OverlayClientRect{};
+  data->has_hover = false;
+  data->has_pending_hover_update = false;
+}
 
 void destroyToolbar(OverlayWindowData* data) {
   if (data == nullptr) {
@@ -138,6 +224,7 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     }
     data->action = SelectionAction::LongShot;
     data->longshot_pending_action = SelectionAction::None;
+    clearHover(data);
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
     data->capture_passthrough = true;
@@ -190,6 +277,7 @@ void handleToolbarCommand(OverlayWindowData* data,
     case SelectionToolbarCommand::Cancel:
       data->controller.cancel();
       data->action = SelectionAction::None;
+      clearHover(data);
       PostMessageW(data->overlay, WM_CLOSE, 0, 0);
       break;
   }
@@ -262,26 +350,107 @@ SelectionIntent toScreenSelection(const OverlayClientRect& client,
   return out;
 }
 
-// 窗口吸附悬停检测：把鼠标客户区坐标转成屏幕坐标交给 WindowDetector，
-// 找到候选窗口后再转回客户区坐标，保存为悬停矩形。
-void updateHover(OverlayWindowData* data, int client_x, int client_y) {
+OverlayClientRect screenRectToOverlayClient(
+    const WindowRect& screen_rect, const coord::VirtualScreenRect& screen)
+{
+  return {coord::screenToClientX(screen_rect.left, screen),
+          coord::screenToClientY(screen_rect.top, screen),
+          screen_rect.width(), screen_rect.height()};
+}
+
+// 智能吸附悬停检测：优先选择受支持应用的精确内容区，其他应用回退客户区。
+void updateHover(OverlayWindowData* data, int client_x, int client_y)
+{
   if (data == nullptr) {
     return;
   }
   const int screen_x = coord::clientToScreenX(client_x, data->screen);
   const int screen_y = coord::clientToScreenY(client_y, data->screen);
+  const WindowRect image_screen_rect{data->screen.x, data->screen.y,
+                                     data->screen.right(),
+                                     data->screen.bottom()};
+  const SmartRegionVisualContext visual_context{&data->background,
+                                                image_screen_rect};
 
-  HWND window = nullptr;
-  WindowRect rect;
-  if (data->window_detector.detectAt(screen_x, screen_y, window, rect)) {
-    data->hover_rect.x = coord::screenToClientX(rect.left, data->screen);
-    data->hover_rect.y = coord::screenToClientY(rect.top, data->screen);
-    data->hover_rect.width = rect.width();
-    data->hover_rect.height = rect.height();
-    data->has_hover = true;
-  } else {
-    data->has_hover = false;
+  SmartRegionCandidate candidate;
+  if (!data->smart_region_detector.detectAt(
+          screen_x, screen_y, candidate, &data->smart_region_diagnostics,
+          &visual_context)) {
+    clearHover(data);
+    return;
   }
+
+  const bool had_pending_candidate =
+      data->hover_stabilizer.hasPendingCandidate();
+  static_cast<void>(
+      data->hover_stabilizer.update(candidate, GetTickCount64()));
+  static_cast<void>(data->smart_region_diagnostics.recordStabilizationDelay(
+      (had_pending_candidate || data->hover_stabilizer.hasPendingCandidate())
+          ? SmartRegionHoverStabilizer::CandidateSwitchDelayMs
+          : 0));
+  if (!data->hover_stabilizer.hasStableCandidate()) {
+    clearHover(data);
+    return;
+  }
+  data->hover_candidate = data->hover_stabilizer.stableCandidate();
+  data->hover_rect =
+      screenRectToOverlayClient(data->hover_candidate.rect, data->screen);
+  data->has_hover = !data->hover_rect.empty();
+  if (data->hover_stabilizer.hasPendingCandidate()) {
+    const UINT_PTR timer_id = SetTimer(
+        data->overlay, kHoverStabilizeTimerId,
+        static_cast<UINT>(SmartRegionHoverStabilizer::CandidateSwitchDelayMs),
+        nullptr);
+    if (timer_id == 0) {
+      // 定时器创建失败时保留当前稳定候选；下一次鼠标移动会再次尝试切换。
+      return;
+    }
+    return;
+  }
+  // 候选已稳定，不保留后台定时器，避免空闲覆盖层周期性重绘。
+  static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
+}
+
+void processHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
+                        int client_y)
+{
+  if (data == nullptr) {
+    return;
+  }
+  updateHover(data, client_x, client_y);
+  if (data->hover_render_gate.update(data->hover_candidate, data->has_hover)) {
+    static_cast<void>(updateOverlay(hwnd, data));
+  }
+  emitSmartRegionDiagnostic(data->smart_region_diagnostics);
+  data->hover_update_gate.markProcessed(GetTickCount64());
+}
+
+// 鼠标移动频率可能远高于 UIA 查询和整屏绘制的处理速度。保留最后一个坐标，
+// 用短定时器合并中间事件，首帧仍立即展示智能吸附框。
+void requestHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
+                        int client_y)
+{
+  if (data == nullptr) {
+    return;
+  }
+
+  const std::uint64_t now_ms = GetTickCount64();
+  if (data->hover_update_gate.shouldProcess(now_ms)) {
+    static_cast<void>(KillTimer(hwnd, kHoverUpdateTimerId));
+    data->has_pending_hover_update = false;
+    processHoverUpdate(hwnd, data, client_x, client_y);
+    return;
+  }
+
+  data->pending_hover_x = client_x;
+  data->pending_hover_y = client_y;
+  data->has_pending_hover_update = true;
+  const std::uint64_t delay_ms =
+      data->hover_update_gate.remainingDelayMs(now_ms);
+  const UINT timer_delay_ms = static_cast<UINT>(
+      delay_ms == 0 ? kMinimumTimerDelayMs : delay_ms);
+  static_cast<void>(SetTimer(hwnd, kHoverUpdateTimerId, timer_delay_ms,
+                             nullptr));
 }
 
 bool showToolbar(HWND overlay, OverlayWindowData* data,
@@ -319,7 +488,18 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
           !data->selection_locked,
       data->handle_radius, data->drag == DragKind::None && data->has_hover,
       data->capture_passthrough);
-  return OverlayRenderer::render(hwnd, data->screen, render_state);
+  const bool diagnostics_enabled = data->smart_region_diagnostics.enabled() &&
+                                   data->smart_region_diagnostics.hasLatestEvent();
+  const std::uint64_t render_begin_ms =
+      diagnostics_enabled ? GetTickCount64() : 0;
+  const bool rendered =
+      OverlayRenderer::render(hwnd, data->screen, render_state);
+  if (diagnostics_enabled) {
+    static_cast<void>(
+        data->smart_region_diagnostics.recordOverlayRenderElapsed(
+            GetTickCount64() - render_begin_ms));
+  }
+  return rendered;
 }
 
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -455,7 +635,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
 
       // 已有有效选区：清除悬停，命中测试决定「调整 / 移动 / 重新框选」。
-      data->has_hover = false;
+      clearHover(data);
       const SelectionHandle handle = data->controller.hitTest(x, y);
       if (handle == SelectionHandle::None) {
         destroyToolbar(data);
@@ -491,17 +671,24 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       updateOverlayCursor(data, x, y);
 
       if (data->drag == DragKind::None) {
-        // 空闲悬停：无按键且未确认选区 → 窗口吸附高亮。
+        // 空闲悬停：无按键且未确认选区 → 智能吸附高亮。
         if ((wparam & MK_LBUTTON) == 0 &&
             data->phase == OverlayPhase::Sniffing) {
-          updateHover(data, x, y);
-          updateOverlay(hwnd, data);
+          requestHoverUpdate(hwnd, data, x, y);
         }
         return 0;
       }
 
       if ((wparam & MK_LBUTTON) == 0) {
         return 0;
+      }
+      // 同坐标的 WM_MOUSEMOVE 不代表用户已开始手动框选；保留稳定候选，
+      // 使纯点击仍能接受智能吸附区域。只有实际位移才退出智能候选模式。
+      const bool create_selection_moved =
+          data->drag == DragKind::Create &&
+          data->controller.hasMovedFromStart(x, y);
+      if (data->drag != DragKind::Create || create_selection_moved) {
+        clearHover(data);
       }
       switch (data->drag) {
         case DragKind::Create:
@@ -519,6 +706,41 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       updateOverlay(hwnd, data);
       return 0;
     }
+    case WM_TIMER: {
+      if (data == nullptr) {
+        return 0;
+      }
+      if (wparam == kHoverUpdateTimerId) {
+        static_cast<void>(KillTimer(hwnd, kHoverUpdateTimerId));
+        if (data->phase != OverlayPhase::Sniffing ||
+            data->drag != DragKind::None ||
+            !data->has_pending_hover_update) {
+          data->has_pending_hover_update = false;
+          return 0;
+        }
+        const int x = data->pending_hover_x;
+        const int y = data->pending_hover_y;
+        data->has_pending_hover_update = false;
+        requestHoverUpdate(hwnd, data, x, y);
+        return 0;
+      }
+      if (wparam != kHoverStabilizeTimerId ||
+          data->phase != OverlayPhase::Sniffing ||
+          data->drag != DragKind::None) {
+        return 0;
+      }
+      POINT screen_point{};
+      if (!GetCursorPos(&screen_point)) {
+        clearHover(data);
+        updateOverlay(hwnd, data);
+        return 0;
+      }
+      requestHoverUpdate(
+          hwnd, data,
+          coord::screenToClientX(screen_point.x, data->screen),
+          coord::screenToClientY(screen_point.y, data->screen));
+      return 0;
+    }
     case WM_LBUTTONUP: {
       if (data == nullptr || data->drag == DragKind::None) {
         return 0;
@@ -531,7 +753,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->controller.update(x, y);
           data->controller.confirm();
           if (data->controller.selection().empty() && data->has_hover) {
-            // 纯点击未拖拽 → 吸附悬停窗口。
+            // 纯点击未拖拽 → 吸附稳定的智能候选区域。
             data->controller.setSelection(
                 data->hover_rect.x, data->hover_rect.y, data->hover_rect.width,
                 data->hover_rect.height);
@@ -548,6 +770,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         default:
           break;
       }
+      clearHover(data);
       data->drag = DragKind::None;
       data->active_handle = SelectionHandle::None;
 
@@ -582,6 +805,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
+        clearHover(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -596,6 +820,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
+        clearHover(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -608,6 +833,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         data->controller.cancel();
         data->action = SelectionAction::None;
+        clearHover(data);
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -721,6 +947,7 @@ bool SelectionOverlay::show(const Image& background,
   auto data = std::make_unique<OverlayWindowData>();
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
+  data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
   data->background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
