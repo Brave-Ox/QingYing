@@ -414,7 +414,7 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
   data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)] = {
       kButtonConfirmId,
       ToolbarIconKind::Confirm,
-      true,
+      false,
       {confirm_x, y, confirm_x + AnnotationEditorButtonWidth,
        y + AnnotationEditorButtonHeight}};
   ++item_index;

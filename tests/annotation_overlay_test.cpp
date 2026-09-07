@@ -7,6 +7,9 @@
 #include "qingying/annotate/annotation_document.hpp"
 #include "qingying/annotate/annotation_editor_layout.hpp"
 
+#include "annotate/annotation_editor_chrome.h"
+#include "annotate/annotation_editor_host.hpp"
+
 namespace qingying {
 namespace {
 
@@ -148,6 +151,26 @@ TEST(AnnotationOverlayTest, MainToolbarMergesRectangleAndEllipse)
   EXPECT_EQ(AnnotationEditorToolButtonCount, 6);
   EXPECT_EQ(AnnotationEditorToolbarControlCount,
             AnnotationEditorMoveButtonCount + AnnotationEditorButtonCount);
+}
+
+TEST(AnnotationOverlayTest, ConfirmButtonHasNoPersistentHighlight)
+{
+  AnnotationEditorHost host;
+  ASSERT_TRUE(host.core().m_session.begin(makeStripedCanvas()));
+
+  layoutEditorChrome(GetDesktopWindow(), &host);
+
+  bool found_confirm = false;
+  for (const EditorToolbarItem& item : host.chrome().m_toolbar_items)
+  {
+    if (item.id != kButtonConfirmId)
+    {
+      continue;
+    }
+    found_confirm = true;
+    EXPECT_FALSE(item.accent);
+  }
+  EXPECT_TRUE(found_confirm);
 }
 
 TEST(AnnotationOverlayTest, CompactMainBarIsNarrowerThanWideImage)
