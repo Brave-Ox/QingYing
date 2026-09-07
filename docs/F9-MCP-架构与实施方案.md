@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01～F9-07 契约、Dispatcher、作用域结果与预算、OperationRegistry、有界 UI 调度、AutomationEndpoint 与交互占用及自动验收完成；F9-08～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01～F9-08 契约、应用入口、交互占用、有界调度、固定 JSON 依赖与私有 wire codec 及自动验收完成；F9-09～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -134,7 +134,7 @@ stdio 使用逐行 UTF-8 JSON-RPC，单条消息不带未转义的内部换行�
 
 ### 4.3 JSON 依赖
 
-建议首期使用 `nlohmann_json`，仅链接到协议/IPC 实现，固定版本与校验值，通过本地依赖或 vendor 管理，正常构建不临时联网拉最新版。使用非抛异常解析入口或统一异常边界；分配异常同样需要兜底。库支持 CMake target 集成。[官方 CMake 集成](https://json.nlohmann.me/integration/cmake/)
+F9-08 已固定 `nlohmann_json 3.11.3`，上游头文件和 MIT 许可证随 `vendor/nlohmann_json` 入库；`cmake/JsonDependency.cmake` 在配置时校验两个文件的 SHA-256，缺失或不符明确失败，不联网下载、不回退到系统版本。来源、校验值及离线准备方式见 [依赖说明](../vendor/nlohmann_json/README.md)。IPC PRIVATE 链接 `nlohmann_json::nlohmann_json`，后续 MCP 实现复用该 PRIVATE 依赖，公开头不暴露 JSON 类型。使用 SAX 预检和统一异常边界，分配异常返回 ResourceLimit。[官方 CMake 集成](https://json.nlohmann.me/integration/cmake/)
 
 这是为小规模控制消息选择的实现便利性，并非已经证明其体积最优。验收 Release 增量包体与编译耗时后再决定是否替换；不让 JSON 类型渗入核心以便保留替换空间。不要手写完整 JSON parser。
 
@@ -694,7 +694,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-07：接入 AutomationEndpoint、交互占用与本地控制动作
 
-**状态：已完成（2026-09-07）；前置：F9-03、F9-04、F9-05、F9-06。** 建议提交：`feat(f9-07): add the automation endpoint and interaction arbitration`。
+**状态：已完成（2026-09-07）；前置：F9-03、F9-04、F9-05、F9-06。**
 
 **文件范围：** 新增 `include/qingying/automation/automation_endpoint.h`、`src/automation/automation_endpoint.cpp`、`include/qingying/app/interaction_gate.h`；修改 `src/app/application.cpp`、CaptureWorkflow、ResultActionService 和 `src/app/CMakeLists.txt`。
 
@@ -715,17 +715,21 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-08：固定 JSON 依赖并实现私有 wire codec
 
-**状态：未开始；前置：F9-01。** 建议提交：`feat(f9-08): add bounded automation wire encoding`。
+**状态：已完成（2026-09-07）；前置：F9-01。**
 
 **文件范围：** 修改顶层和 `src/CMakeLists.txt`；新增 `src/ipc/CMakeLists.txt`、`src/ipc/automation_wire_codec.h`、`src/ipc/automation_wire_codec.cpp`，建立 `qingying_ipc` target；为后续 MCP target 提供 PRIVATE JSON 依赖。
 
-- [ ] 按第 4.3 节固定 nlohmann_json 版本、来源、校验值和离线依赖准备方式；正常构建不临时拉取最新依赖，公开头不暴露 JSON 类型。
-- [ ] 实现私有 hello/version/epoch/capability 和白名单消息 codec；帧采用 4 字节小端长度 + UTF-8 JSON，与 stdio 的逐行消息分开实现。
-- [ ] 私有 cancel_operation DTO 以互斥字段选择 operation_id 或内部 RequestId；后者用于协议取消尚未应答的请求，服务端按可信连接解析，不扩大公共 Tool 参数或允许跨连接取消。
-- [ ] 在分配前限制 64 KiB 帧、16 层嵌套以及查询/文件名长度；明确重复字段拒绝，非法 UTF-8、枚举、整数范围和未知消息均稳定失败。
-- [ ] 外部不透明句柄与 RPC id 无损往返，禁止把 uint64 先转 double；payload 不接受可信身份/scope 字段，也不传图片。
+- [x] 按第 4.3 节固定 nlohmann_json 版本、来源、校验值和离线依赖准备方式；正常构建不临时拉取最新依赖，公开头不暴露 JSON 类型。
+- [x] 实现私有 hello/version/epoch/capability 和白名单消息 codec；帧采用 4 字节小端长度 + UTF-8 JSON，与 stdio 的逐行消息分开实现。
+- [x] 私有 cancel_operation DTO 以互斥字段选择 operation_id 或内部 RequestId；后者用于协议取消尚未应答的请求，服务端按可信连接解析，不扩大公共 Tool 参数或允许跨连接取消。
+- [x] 在分配前限制 64 KiB 帧、16 层嵌套以及查询/文件名长度；明确重复字段拒绝，非法 UTF-8、枚举、整数范围和未知消息均稳定失败。
+- [x] 外部不透明句柄与 RPC id 无损往返，禁止把 uint64 先转 double；payload 不接受可信身份/scope 字段，也不传图片。
 
 **验收：** 新增 `tests/automation_wire_codec_test.cpp`，覆盖半包/多帧、长度越界、坏 UTF-8、重复字段、超深 JSON、版本不兼容、数值精度和畸形输入错误。此提交仅 codec，不启用服务。
+
+完成记录：新增 qingying_ipc STATIC target 与中立 WireHello/WireRequest/WireResponse/WireEvent，覆盖所有现有 ActionOutput、操作控制结果和进度/完成通知。FrameDecoder 在前缀验证后才预留 body，逐帧回调、不累计输出队列，Consumer 拒绝、异常、坏帧和 EOF 残帧均有确定状态；SAX 预检深度、重复键和字符串长度，整数/枚举/字段白名单和互斥取消目标均严格校验。响应中的不透明句柄保持字符串，RPC id 保留 int64/uint64/string，单调时间改为相对毫秒，连接身份不从 JSON 创建。字段及边界详见 [私有 wire v1](./F9-IPC-wire-v1.md)。
+
+新增 29 个专项测试通过；基于 `2453db93` 工作区执行 `.\build.bat Release test`，Release 应用构建成功，全量 587/587 通过，CTest 13.78 秒、本次增量构建与测试合计约 21.35 秒。依赖配置单独验证原始文件可离线配置、修改字节触发 SHA-256 失败、文件缺失触发明确错误。托盘 EXE 构建前后均为 467,968 字节；当前尚未链接生产传输路径，不能据此推断后续完整协议接入的包体增量或 JSON 冷编译成本。项目源码使用 UTF-8 BOM + CRLF，文档使用 UTF-8 无 BOM + CRLF；上游 json.hpp/许可证按 .gitattributes 保留原始字节以固定哈希。当前只构建 codec，不启用生产 Pipe，不新增可调用 Tool。
 
 ### F9-09：实现本机 Named Pipe 传输、身份校验与 I/O 退出
 

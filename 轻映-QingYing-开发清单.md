@@ -55,7 +55,7 @@
 | **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
-| **F9** | Agent / MCP | **内部入口、交互占用与操作管理完成，协议接入仍 Stub** | F9-01～F9-07 已完成，含 OperationRegistry、有界 UI 调度、AutomationEndpoint、GUI 共享占用及退出结算；`McpBridge` 仍为骨架 | Named Pipe、协议、Tool 映射、鉴权及外部动作安全接入 |
+| **F9** | Agent / MCP | **内部入口与私有编解码完成，传输接入仍 Stub** | F9-01～F9-08 已完成，含应用入口、GUI 共享占用、固定 JSON 依赖、有界私有 wire codec；`McpBridge` 仍为骨架 | Named Pipe、MCP 协议、Tool 映射、鉴权及外部动作安全接入 |
 
 ### F1～F9 与技术模块
 
@@ -143,6 +143,7 @@
 - [x] F9-06：有界 UiActionScheduler、独立控制与完成消息、入队前 RequestId 取消关联及 UI drain/关闭结算；新增 11 个测试，2026-09-07 Release 构建与专项测试 72/72 通过；应用入口注入留给 F9-07；
 - [x] F9-05：OperationRegistry 管理连接隔离的操作状态、终态保留、随机句柄与幂等记录；OperationControl 仲裁取消和提交，等待执行者确认终态；新增 28 个测试，2026-09-07 目标测试 58/58、完整 Release 487/487 通过，生产调度接线留给后续任务（详见 F9 方案完成记录）；
 - [x] F9-07：组合根注入 AutomationEndpoint，接通中立控制动作、UI 定时清扫、GUI/长截/Pin 模态保存共享占用和幂等退出；同步/异步完成回 UI 结算，取消与断连不提前释放占用；2026-09-07 新增 24 个测试，完整 Release 558/558 通过；生产 Pipe 和外部动作尚未开放（详见 F9 方案完成记录）；
+- [x] F9-08：固定 nlohmann_json 3.11.3 与 SHA-256，支持离线配置；新增 qingying_ipc 和私有 wire v1 编解码，严格检查帧长、深度、重复字段、Unicode、数值和取消目标，保持句柄/RPC id 精度；2026-09-07 新增 29 个测试，完整 Release 587/587 通过；仅 codec，不启用生产监听（详见 F9 方案及 wire v1 说明）；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；

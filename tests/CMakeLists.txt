@@ -7,6 +7,7 @@ add_executable(qingying_tests
   operation_registry_test.cpp
   ui_action_scheduler_test.cpp
   automation_endpoint_test.cpp
+  automation_wire_codec_test.cpp
   interaction_gate_test.cpp
   annotation_document_test.cpp
   annotation_editor_session_test.cpp
@@ -106,6 +107,7 @@ target_include_directories(qingying_tests
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/longshot
     ${CMAKE_SOURCE_DIR}/src/window
+    ${CMAKE_SOURCE_DIR}/src/ipc
 )
 
 target_link_libraries(qingying_tests
@@ -113,6 +115,7 @@ target_link_libraries(qingying_tests
     qingying_action
     qingying_automation_contract
     qingying_automation
+    qingying_ipc
     qingying_mcp
     qingying_annotate
     qingying_capture

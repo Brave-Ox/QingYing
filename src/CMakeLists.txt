@@ -2,6 +2,7 @@
 
 add_subdirectory(action)
 add_subdirectory(automation)
+add_subdirectory(ipc)
 add_subdirectory(ui)
 add_subdirectory(capture)
 add_subdirectory(export)

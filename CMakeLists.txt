@@ -3,6 +3,7 @@ project(qingying LANGUAGES CXX)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompilerOptions.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/OutputDirectories.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/JsonDependency.cmake")
 
 add_subdirectory(src)
 

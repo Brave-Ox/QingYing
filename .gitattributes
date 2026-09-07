@@ -3,3 +3,7 @@
 *.bat text eol=crlf
 *.pdf binary
 *.ico binary
+
+# Preserve upstream bytes so the pinned dependency hashes survive checkout.
+/vendor/nlohmann_json/include/nlohmann/json.hpp -text
+/vendor/nlohmann_json/LICENSE.MIT -text
