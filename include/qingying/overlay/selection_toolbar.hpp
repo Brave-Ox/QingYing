@@ -21,6 +21,11 @@ enum class SelectionToolbarCommand {
   Cancel,
 };
 
+inline constexpr WPARAM SelectionToolbarCopyShortcutVirtualKey = 0x43u;
+inline constexpr WPARAM SelectionToolbarLongShotShortcutVirtualKey = 0x4Cu;
+inline constexpr int SelectionToolbarCopyHotkeyId = 5;
+inline constexpr int SelectionToolbarLongShotHotkeyId = 6;
+
 enum class SelectionToolbarIcon {
   Copy,
   Save,
@@ -44,6 +49,13 @@ using SelectionToolbarItems =
 
 // 纯状态映射：Win32 工具栏只消费该描述，不自行推导业务状态。
 SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept;
+
+bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
+                                     WPARAM key,
+                                     SelectionToolbarCommand& command) noexcept;
+
+bool selectionToolbarHotkeyCommand(OverlayPhase phase, int hotkey_id,
+                                   SelectionToolbarCommand& command) noexcept;
 
 struct SelectionToolbarPlacement {
   int selection_x{0};

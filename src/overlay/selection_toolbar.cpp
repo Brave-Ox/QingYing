@@ -40,6 +40,52 @@ SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept {
             stop_enabled}}};
 }
 
+bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
+                                     WPARAM key,
+                                     SelectionToolbarCommand& command) noexcept
+{
+  SelectionToolbarCommand requested = SelectionToolbarCommand::Cancel;
+  if (control_down && key == SelectionToolbarCopyShortcutVirtualKey)
+  {
+    requested = SelectionToolbarCommand::Copy;
+  }
+  else if (!control_down && key == SelectionToolbarLongShotShortcutVirtualKey)
+  {
+    requested = SelectionToolbarCommand::ToggleLongShot;
+  }
+  else
+  {
+    return false;
+  }
+
+  const SelectionToolbarItems items = buildSelectionToolbarItems(phase);
+  for (const SelectionToolbarItemModel& item : items)
+  {
+    if (item.command == requested && item.enabled)
+    {
+      command = requested;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool selectionToolbarHotkeyCommand(OverlayPhase phase, int hotkey_id,
+                                   SelectionToolbarCommand& command) noexcept
+{
+  if (hotkey_id == SelectionToolbarCopyHotkeyId)
+  {
+    return selectionToolbarShortcutCommand(
+        phase, true, SelectionToolbarCopyShortcutVirtualKey, command);
+  }
+  if (hotkey_id == SelectionToolbarLongShotHotkeyId)
+  {
+    return selectionToolbarShortcutCommand(
+        phase, false, SelectionToolbarLongShotShortcutVirtualKey, command);
+  }
+  return false;
+}
+
 namespace {
 
 constexpr int kToolbarDividerPadExtraPx = 6;

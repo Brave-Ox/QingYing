@@ -22,8 +22,8 @@ namespace qingying {
 
 namespace {
 
-// 截图期间临时注册的全局 Esc 热键 id：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
-// 键盘消息不会发给遮罩，取消操作改由该热键投递 WM_HOTKEY 实现。
+// 截图期间临时注册热键：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
+// 键盘消息不会发给遮罩，因此通过 WM_HOTKEY 接收截图操作。
 constexpr int kEscapeHotkeyId = 2;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
@@ -810,11 +810,23 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
-    case WM_HOTKEY: {
-      // 截图期间临时注册的全局 Esc 热键：遮罩不激活（WS_EX_NOACTIVATE），
-      // 键盘消息不会发给遮罩，取消改由这里处理。
-      if (data != nullptr && wparam == kEscapeHotkeyId) {
-        if (overlayPhaseIsLongShot(data->phase)) {
+    case WM_HOTKEY:
+    {
+      if (data == nullptr)
+      {
+        return 0;
+      }
+      SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+      if (selectionToolbarHotkeyCommand(data->phase, static_cast<int>(wparam),
+                                        command))
+      {
+        handleToolbarCommand(data, command);
+        return 0;
+      }
+      if (wparam == kEscapeHotkeyId)
+      {
+        if (overlayPhaseIsLongShot(data->phase))
+        {
           requestLongShotStop(data);
           return 0;
         }
@@ -825,9 +837,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return 0;
     }
-    case WM_KEYDOWN: {
-      if (data != nullptr && wparam == VK_ESCAPE) {
-        if (overlayPhaseIsLongShot(data->phase)) {
+    case WM_KEYDOWN:
+    {
+      if (data != nullptr && wparam == VK_ESCAPE)
+      {
+        if (overlayPhaseIsLongShot(data->phase))
+        {
           requestLongShotStop(data);
           return 0;
         }
@@ -868,6 +883,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->message_channel->drain();
         }
         UnregisterHotKey(hwnd, kEscapeHotkeyId);
+        UnregisterHotKey(hwnd, SelectionToolbarCopyHotkeyId);
+        UnregisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId);
         if (callback && result.action != SelectionAction::LongShot) {
           callback(result);
         }
@@ -988,8 +1005,13 @@ bool SelectionOverlay::show(const Image& background,
 
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
-  // 键盘取消改由临时全局 Esc 热键提供，窗口销毁时注销。
+  // 键盘操作改由截图期间的临时热键提供，窗口销毁时统一注销。
   (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
+  (void)RegisterHotKey(hwnd, SelectionToolbarCopyHotkeyId,
+                       MOD_CONTROL | MOD_NOREPEAT,
+                       SelectionToolbarCopyShortcutVirtualKey);
+  (void)RegisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId, MOD_NOREPEAT,
+                       SelectionToolbarLongShotShortcutVirtualKey);
 
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_READY, 0, 0);

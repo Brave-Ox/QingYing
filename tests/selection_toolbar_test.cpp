@@ -73,4 +73,52 @@ TEST(SelectionToolbarTest, FinishingPhaseDisablesEveryCommand) {
   }
 }
 
+TEST(SelectionToolbarTest, ShortcutsMatchEnabledToolbarCommands)
+{
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
+                                              SelectionToolbarCopyShortcutVirtualKey,
+                                              command));
+  EXPECT_EQ(command, SelectionToolbarCommand::Copy);
+
+  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
+                                              SelectionToolbarLongShotShortcutVirtualKey,
+                                              command));
+  EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
+
+  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
+                                               SelectionToolbarCopyShortcutVirtualKey,
+                                               command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
+                                               SelectionToolbarLongShotShortcutVirtualKey,
+                                               command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
+                                               true,
+                                               SelectionToolbarCopyShortcutVirtualKey,
+                                               command));
+
+  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
+                                              false,
+                                              SelectionToolbarLongShotShortcutVirtualKey,
+                                              command));
+  EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
+}
+
+TEST(SelectionToolbarTest, HotkeysRouteWithoutKeyboardFocus)
+{
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_TRUE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, SelectionToolbarCopyHotkeyId, command));
+  EXPECT_EQ(command, SelectionToolbarCommand::Copy);
+
+  EXPECT_TRUE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, SelectionToolbarLongShotHotkeyId, command));
+  EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
+
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(OverlayPhase::Selected, -1,
+                                             command));
+}
+
 }  // namespace qingying
