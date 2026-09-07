@@ -13,10 +13,10 @@ namespace qingying {
 
 ResultActionService::ResultActionService(ResultStore& results,
                                          ExportService& export_service,
-                                         PinManager& pin_manager)
+                                         PinManager& pin_manager, SaveDialog save_dialog)
     : results_(results),
       export_service_(export_service),
-      pin_manager_(pin_manager) {}
+      pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)) {}
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
@@ -30,32 +30,43 @@ void ResultActionService::bindPinWindowActions() {
       });
 }
 
-ActionResult ResultActionService::copy(ResultId result_id) {
-  const Image* image = results_.getImage(result_id);
-  return image == nullptr ? noResult("copy") : copyImage(*image);
+ActionResult ResultActionService::copy(ResultId id) {
+  return copy(kGuiResultScopeId, ResultSelection::specific(id));
 }
-
-ActionResult ResultActionService::save(ResultId result_id,
-                                       const std::wstring& path) {
-  const Image* image = results_.getImage(result_id);
-  if (image == nullptr) {
-    return noResult("save");
-  }
-  return saveImage(*image, path);
+ActionResult ResultActionService::save(ResultId id, const std::wstring& path) {
+  return save(kGuiResultScopeId, ResultSelection::specific(id), path);
 }
-
-ActionResult ResultActionService::save(ResultId result_id) {
-  const Image* image = results_.getImage(result_id);
-  if (image == nullptr) {
+ActionResult ResultActionService::save(ResultId id) {
+  return save(kGuiResultScopeId, ResultSelection::specific(id));
+}
+ActionResult ResultActionService::pin(ResultId id) {
+  return pin(kGuiResultScopeId, ResultSelection::specific(id));
+}
+ActionResult ResultActionService::copy(
+    ResultScopeId scope, const ResultSelection& selection) {
+  const auto lease = results_.acquire(scope, selection);
+  return lease ? copyImage(*lease.image()) : noResult("copy");
+}
+ActionResult ResultActionService::save(
+    ResultScopeId scope, const ResultSelection& selection,
+    const std::wstring& path) {
+  const auto lease = results_.acquire(scope, selection);
+  return lease ? saveImage(*lease.image(), path) : noResult("save");
+}
+ActionResult ResultActionService::save(
+    ResultScopeId scope, const ResultSelection& selection) {
+  // Keep ownership across the nested message pump and the subsequent export.
+  const auto lease = results_.acquire(scope, selection);
+  if (!lease) {
     showSaveUnavailableMessage();
     return noResult("save");
   }
-  return saveImageWithDialog(*image, true);
+  return saveImageWithDialog(*lease.image(), true);
 }
-
-ActionResult ResultActionService::pin(ResultId result_id) {
-  const Image* image = results_.getImage(result_id);
-  return image == nullptr ? noResult("pin") : pinImage(*image);
+ActionResult ResultActionService::pin(
+    ResultScopeId scope, const ResultSelection& selection) {
+  const auto lease = results_.acquire(scope, selection);
+  return lease ? pinImage(*lease.image()) : noResult("pin");
 }
 
 ActionResult ResultActionService::copyImage(const Image& image) {
@@ -95,7 +106,10 @@ ActionResult ResultActionService::saveImageWithDialog(
   dialog.lpstrDefExt = L"png";
   dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
 
-  if (!GetSaveFileNameW(&dialog)) {
+  const auto selected_path = save_dialog_ ? save_dialog_(owner_window_)
+      : (GetSaveFileNameW(&dialog) ? std::optional<std::wstring>{path}
+                                   : std::nullopt);
+  if (!selected_path) {
     ActionResult result;
     result.ok = true;
     result.error_code = ErrorCode::kOk;
@@ -103,7 +117,7 @@ ActionResult ResultActionService::saveImageWithDialog(
     return result;
   }
 
-  ActionResult result = saveImage(image, path);
+  ActionResult result = saveImage(image, *selected_path);
   if (!result.ok && show_error_message) {
     showSaveErrorMessage();
   }

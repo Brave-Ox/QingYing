@@ -95,3 +95,53 @@ TEST(ResultStoreTest, ReleaseDropsTheSelectedResult) {
 }
 
 }  // namespace qingying
+
+namespace qingying {
+TEST(ResultStoreTest, ScopesRejectForeignIdsAndClearIndependently) {
+  ResultStore store;
+  const auto gui = store.publish(Image{1, 1, {11}});
+  const auto a = store.publish(2, Image{1, 1, {22}});
+  const auto b = store.publish(3, Image{1, 1, {33}});
+  EXPECT_FALSE(store.acquire(2, b));
+  EXPECT_FALSE(store.acquire(3, gui));
+  EXPECT_FALSE(store.acquire(kGuiResultScopeId, a));
+  EXPECT_FALSE(store.get(a));
+  store.release(2, b);
+  EXPECT_TRUE(store.acquire(3, b));
+  store.clear();
+  EXPECT_FALSE(store.acquire(kGuiResultScopeId, gui));
+  EXPECT_EQ(store.acquire(2, ResultSelection::current()).image()->pixels[0], 22u);
+  store.clearScope(2);
+  EXPECT_FALSE(store.acquire(2, a));
+  EXPECT_TRUE(store.acquire(3, b));
+  store.clearAll();
+  EXPECT_FALSE(store.acquire(3, b));
+}
+TEST(ResultStoreTest, LeaseSurvivesReplacementReleaseAndStoreDestruction) {
+  ResultLease retained;
+  {
+    ResultStore store;
+    const auto id = store.publish(2, Image{2, 1, {11, 22}}, {-5, 7, 2, 1});
+    retained = store.acquire(2, id);
+    ASSERT_TRUE(retained);
+    EXPECT_EQ(retained.image(), store.acquire(2, id).image());
+    const auto next = store.publish(2, Image{1, 1, {33}});
+    EXPECT_FALSE(store.acquire(2, id));
+    store.release(2, next);
+    EXPECT_EQ(retained.image()->pixels[1], 22u);
+  }
+  ASSERT_TRUE(retained);
+  EXPECT_EQ(retained.image()->pixels[0], 11u);
+  EXPECT_EQ(retained.metadata().bounds, (ScreenPhysicalRect{-5, 7, 2, 1}));
+  EXPECT_EQ(retained.metadata().width, 2);
+}
+TEST(ResultStoreTest, InvalidScopeOrSelectionCannotAccessOrPublish) {
+  ResultStore store;
+  EXPECT_EQ(store.publish(0, Image{1, 1, {1}}), kInvalidResultId);
+  const auto id = store.publish(2, Image{1, 1, {2}});
+  EXPECT_FALSE(store.acquire(0, id));
+  EXPECT_FALSE(store.acquire(2, ResultSelection{ResultSelectionKind::Current, id}));
+  EXPECT_EQ(store.publish(2, Image{2, 1, {1}}), kInvalidResultId);
+  EXPECT_TRUE(store.acquire(2, id));
+}
+}  // namespace qingying

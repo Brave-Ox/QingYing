@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01 契约层、F9-02 Dispatcher 提交语义及自动验收完成；F9-03～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01 契约层、F9-02 Dispatcher 提交语义、F9-03 作用域结果与 ResultLease 及自动验收完成；F9-04～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层、F9-02 Dispatcher 提交语义及自动验收完成，F9-03～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层、F9-02 Dispatcher 提交语义、F9-03 作用域结果与 ResultLease 及自动验收完成，F9-04～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -579,17 +579,32 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-03：实现按作用域保存结果及 ResultLease，迁移 GUI
 
-**状态：未开始；前置：F9-01、F9-02。** 建议提交：`feat(f9-03): isolate result scopes and add immutable leases`。
+**状态：验收完成（作用域隔离、lease 生命周期与 GUI 回归自动测试）；前置：F9-01、F9-02。**
 
 **文件范围：** 修改 `include/qingying/app/result_store.h`、`src/app/result_store.cpp`、`include/qingying/app/result_action_service.h`、`src/app/result_action_service.cpp`、`src/app/action_handlers.cpp`、`src/app/capture_workflow.cpp`；检查现有 `capture_session.hpp` 兼容门面。
 
-- [ ] 将单槽扩为每 scope 一个槽，实现 publish/acquire/clearScope，lease 持有不可变图和元数据；clearAll 只用于整体退出。
-- [ ] 将 GUI 的发布、取消、结束和退出调用迁移到明确的 GUI scope；保留旧同步接口适配，F9 路径不使用 get/current 深拷贝。
-- [ ] Handler 与 ResultActionService 均按可信 scope 解析 ResultSelection；CaptureRegion 成功返回实际 ResultId、尺寸和边界。
-- [ ] 模态保存对话框期间持有 lease，防止嵌套消息泵使源图失效；Pin 自身图的导出继续使用 Pin 所拥有的图。
-- [ ] 保留“正式开始新捕获即清本 scope 旧图、失败不恢复”的 GUI 契约；外部受理前的预检顺序由 F9-07/F9-12 落实。
+- [x] 将单槽扩为每 scope 一个槽，实现 publish/acquire/clearScope，lease 持有不可变图和元数据；clearAll 只用于整体退出。
+- [x] 将 GUI 的发布、取消、结束和退出调用迁移到明确的 GUI scope；保留旧同步接口适配，F9 路径不使用 get/current 深拷贝。
+- [x] Handler 与 ResultActionService 均按可信 scope 解析 ResultSelection；CaptureRegion 成功返回实际 ResultId、尺寸和边界。
+- [x] 模态保存对话框期间持有 lease，防止嵌套消息泵使源图失效；Pin 自身图的导出继续使用 Pin 所拥有的图。
+- [x] 保留“正式开始新捕获即清本 scope 旧图、失败不恢复”的 GUI 契约；外部受理前的预检顺序由 F9-07/F9-12 落实。
 
 **验收：** 扩展 `tests/result_store_test.cpp`、`tests/action_handlers_test.cpp`、`tests/capture_session_test.cpp`、`tests/capture_workflow_test.cpp`；新增 `tests/result_action_service_test.cpp`。验证 A/B/GUI 不串图、越权 ID 拒绝、清槽后既有 lease 存活、模态重入不悬空。
+
+**实现记录：** ResultStore 由 UI 线程管理每 scope 一个槽，ResultLease 封装 `shared_ptr<const Image>` 和 CapturedResult 元数据；合法 lease 可跨清槽、替换及 Store 析构存活，旧 ID 不再接受新 acquire。旧无 scope 接口仅适配 GUI；所有权不匹配统一拒绝，不泄露其他 scope 的结果。ResultActionService 在模态路径持有 lease，注入 SaveDialog 以验证重入；Pin 回调继续消费 Pin 自有图像。另修改 `src/app/application.cpp` 在整体退出时 clearAll，及 `tests/CMakeLists.txt` 登记新测试。
+
+```text
+完成日期：2026-09-07
+源码基线：de4ca0896cd33019047dc5fde4b3f1e534d1833a + 本次工作区改动（未自动提交）
+自动测试：
+  cmake --build build --config Release --target qingying_tests --parallel：通过。
+  ctest --test-dir build -C Release -R '^(ResultStoreTest|ResultActionServiceTest|AppActionHandlersTest|CaptureSessionTest|CaptureWorkflow.*Test)\.' --output-on-failure：28/28 通过，新增 9 个测试。
+  .\build.bat Release test：Release EXE/测试目标构建通过，438/438 通过，0 失败。
+  本地日志：build/f9-03-release-test.log（构建产物，不入库）。
+重入证据：注入保存对话框在返回路径前清槽并替换结果，实际导出 PNG 与原图单独导出的文件逐字节一致。
+真实桌面/客户端验收：未新增 Tool；未进行原生保存对话框人工操作验收。
+剩余限制：TTL 和像素预算由 F9-04 实现；外部受理预检、异步保存 worker 和生产 MCP 接入仍属后续任务。
+```
 
 ### F9-04：补结果到期、预留预算与实际像素回收
 

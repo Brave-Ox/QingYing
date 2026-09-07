@@ -203,7 +203,8 @@ void showSelectionOverlay() {
 
     Image source;
     if (annotated_result_ready && active_result_id != kInvalidResultId) {
-      const Image* existing = results.getImage(active_result_id);
+      const auto lease = results.acquire(kGuiResultScopeId, active_result_id);
+      const Image* existing = lease.image();
       if (existing != nullptr) {
         source = *existing;
       }
@@ -249,11 +250,11 @@ void showSelectionOverlay() {
 
   void dispatchResultAction(SelectionAction action, ResultId result_id) {
     if (action == SelectionAction::Save) {
-      (void)result_actions.save(result_id);
+      (void)result_actions.save(kGuiResultScopeId, ResultSelection::specific(result_id));
       return;
     }
     if (action == SelectionAction::Pin) {
-      const ActionResult pin_result = result_actions.pin(result_id);
+      const ActionResult pin_result = result_actions.pin(kGuiResultScopeId, ResultSelection::specific(result_id));
       if (!pin_result.ok) {
         MessageBoxW(owner_window, L"Failed to pin the latest capture.",
                     L"QingYing", MB_OK | MB_ICONERROR);
@@ -261,7 +262,7 @@ void showSelectionOverlay() {
       return;
     }
     if (action == SelectionAction::Copy) {
-      (void)result_actions.copy(result_id);
+      (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(result_id));
     }
   }
 
@@ -271,7 +272,7 @@ void showSelectionOverlay() {
     switch (route) {
       case CaptureWorkflowRoute::AnnotatedResult:
         if (annotated_result_ready &&
-            results.getImage(active_result_id) != nullptr) {
+            static_cast<bool>(results.acquire(kGuiResultScopeId, active_result_id))) {
           dispatchResultAction(region.action, active_result_id);
         }
         annotated_result_ready = false;
@@ -308,7 +309,7 @@ void showSelectionOverlay() {
       capture_result = dispatcher.dispatch(capture_request);
     }
     if (capture_result.ok) {
-      active_result_id = results.currentId();
+      active_result_id = results.currentId(kGuiResultScopeId);
       if (active_result_id != kInvalidResultId) {
         dispatchResultAction(region.action, active_result_id);
       }
@@ -346,14 +347,14 @@ void showSelectionOverlay() {
 
     bool overlay_success = completion_result.ok;
     if (completion_result.ok) {
-      active_result_id = results.publish(std::move(completion_image));
+      active_result_id = results.publish(kGuiResultScopeId, std::move(completion_image));
       longshot_result_ready = active_result_id != kInvalidResultId;
       if (!longshot_result_ready) {
         overlay_success = false;
         pending_overlay_error = L"长截图生成了无效结果，请重新框选后再试。";
       } else {
         // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
-        const ActionResult copy_result = result_actions.copy(active_result_id);
+        const ActionResult copy_result = result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id));
         if (!copy_result.ok) {
           overlay_success = false;
           longshot_result_ready = false;
@@ -387,7 +388,7 @@ void showSelectionOverlay() {
 
     // A new screenshot starts a new result lifetime. Release the previous
     // full-size image before allocating another capture/selection buffer.
-    results.clear();
+    results.clearScope(kGuiResultScopeId);
     active = true;
     active_result_id = kInvalidResultId;
 
@@ -457,19 +458,20 @@ void showSelectionOverlay() {
     }
 
     Image annotated_image = std::move(pending_annotation.rendered_image);
-    active_result_id = results.publish(std::move(annotated_image));
+    active_result_id = results.publish(kGuiResultScopeId, std::move(annotated_image));
     if (active_result_id == kInvalidResultId) {
       finishWorkflow();
       return;
     }
-    const Image* annotated_result = results.getImage(active_result_id);
+    const auto annotated_lease = results.acquire(kGuiResultScopeId, active_result_id);
+    const Image* annotated_result = annotated_lease.image();
     if (annotated_result == nullptr) {
       finishWorkflow();
       return;
     }
 
     // 保持原有体验：完成标注立即复制；结果工具栏随后仍可继续保存或钉图。
-    (void)result_actions.copy(active_result_id);
+    (void)result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id));
 
     // 编辑器关闭后重新捕获桌面，并把合成图贴回原选区，恢复统一的
     // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
@@ -492,7 +494,7 @@ void showSelectionOverlay() {
     // The result is only needed while this workflow is presenting its action
     // surface. Once the operation ends, release the pixel buffer so an idle
     // resident process does not retain the last screenshot.
-    results.clear();
+    results.clearScope(kGuiResultScopeId);
     stopLongShotWorker();
     longshot_result_ready = false;
     active_result_id = kInvalidResultId;
@@ -528,7 +530,7 @@ void showSelectionOverlay() {
     longshot_controller.cancel();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
-    results.clear();
+    results.clearScope(kGuiResultScopeId);
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;
@@ -555,7 +557,7 @@ void showSelectionOverlay() {
     selection_overlay.drainMessages();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
-    results.clear();
+    results.clearScope(kGuiResultScopeId);
     active = false;
     stage = WorkflowStage::Idle;
     longshot_result_ready = false;

@@ -147,3 +147,46 @@ TEST(AppActionHandlersTest, FailedCaptureReleasesPreviousResult) {
   EXPECT_EQ(result_store.currentId(), qingying::kInvalidResultId);
   EXPECT_FALSE(result_store.current().has_value());
 }
+
+TEST(AppActionHandlersTest, ScopedCaptureReportsMetadataAndFailureOnlyClearsItsScope) {
+  using namespace qingying;
+  ActionDispatcher dispatcher;
+  CaptureEngine capture;
+  ExportService exporter;
+  PinManager pins;
+  ResultStore store;
+  ResultActionService actions(store, exporter, pins);
+  bool fail = false;
+  registerAppHandlers(dispatcher, capture, store, actions,
+      [&](const ActionRequest&, Image& out) {
+        ActionResult result;
+        result.ok = !fail;
+        result.error_code = fail ? ErrorCode::kCaptureFailed : ErrorCode::kOk;
+        if (!fail) out = Image{2, 1, {21, 22}};
+        return result;
+      });
+  const auto gui = store.publish(Image{1, 1, {1}});
+  const auto b = store.publish(3, Image{1, 1, {3}});
+  auto request = makeActionRequest(CaptureRegionRequest{{-8, 9, 2, 1}});
+  request.context.result_scope = 2;
+  const auto result = dispatcher.dispatch(request);
+  ASSERT_TRUE(result.ok);
+  const auto* output = std::get_if<CapturedResult>(&result.output);
+  ASSERT_NE(output, nullptr);
+  EXPECT_EQ(output->result_id, store.currentId(2));
+  EXPECT_EQ(output->width, 2);
+  EXPECT_EQ(output->height, 1);
+  EXPECT_EQ(output->bounds, (ScreenPhysicalRect{-8, 9, 2, 1}));
+  for (ActionPayload payload : {ActionPayload{CopyRequest{ResultSelection::specific(b)}},
+                               ActionPayload{SaveRequest{ResultSelection::specific(b), L"unused.png"}},
+                               ActionPayload{PinRequest{ResultSelection::specific(b)}}}) {
+    ActionRequest foreign{payload};
+    foreign.context.result_scope = 2;
+    EXPECT_FALSE(dispatcher.dispatch(foreign).ok);
+  }
+  fail = true;
+  EXPECT_FALSE(dispatcher.dispatch(request).ok);
+  EXPECT_EQ(store.currentId(2), kInvalidResultId);
+  EXPECT_TRUE(store.acquire(3, b));
+  EXPECT_TRUE(store.acquire(kGuiResultScopeId, gui));
+}

@@ -6,6 +6,8 @@
 #include <Windows.h>
 
 #include <string>
+#include <functional>
+#include <optional>
 
 namespace qingying {
 
@@ -17,8 +19,9 @@ class PinManager;
 // policy while PinManager remains responsible only for pin windows.
 class ResultActionService final {
  public:
+  using SaveDialog = std::function<std::optional<std::wstring>(HWND)>;
   ResultActionService(ResultStore& results, ExportService& export_service,
-                      PinManager& pin_manager);
+                      PinManager& pin_manager, SaveDialog save_dialog = {});
 
   void setOwnerWindow(HWND owner_window) noexcept;
   void bindPinWindowActions();
@@ -27,6 +30,11 @@ class ResultActionService final {
   ActionResult save(ResultId result_id, const std::wstring& path);
   ActionResult save(ResultId result_id);
   ActionResult pin(ResultId result_id);
+  ActionResult copy(ResultScopeId scope, const ResultSelection& selection);
+  ActionResult save(ResultScopeId scope, const ResultSelection& selection,
+                    const std::wstring& path);
+  ActionResult save(ResultScopeId scope, const ResultSelection& selection);
+  ActionResult pin(ResultScopeId scope, const ResultSelection& selection);
 
  private:
   ActionResult copyImage(const Image& image);
@@ -42,6 +50,7 @@ class ResultActionService final {
   ExportService& export_service_;
   PinManager& pin_manager_;
   HWND owner_window_{nullptr};
+  SaveDialog save_dialog_;
 };
 
 }  // namespace qingying

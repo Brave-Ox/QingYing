@@ -39,10 +39,10 @@ class CaptureSession {
   const ResultStore& store() const noexcept { return *store_; }
 
   void setResult(Image image) {
-    (void)store_->publish(std::move(image));
+    (void)store_->publish(kGuiResultScopeId, std::move(image));
   }
 
-  void clear() { store_->clear(); }
+  void clear() { store_->clearScope(kGuiResultScopeId); }
 
  private:
   ResultStore owned_store_;

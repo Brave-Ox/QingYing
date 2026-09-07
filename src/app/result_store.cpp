@@ -19,87 +19,85 @@ bool ResultStore::isValidImage(const Image& image) noexcept {
 }
 
 ResultId ResultStore::allocateId() {
-  ResultId candidate = next_id_;
-  if (candidate == kInvalidResultId) {
-    candidate = 1;
+  // Exhaustion fails closed: never reuse an id still held by a consumer.
+  if (next_id_ == kInvalidResultId) return kInvalidResultId;
+  return next_id_++;
+}
+
+ResultId ResultStore::publish(ResultScopeId scope, Image image,
+                              ScreenPhysicalRect bounds) {
+  if (scope == kInvalidResultScopeId || !isValidImage(image)) {
+    return kInvalidResultId;
   }
-  next_id_ = candidate + 1;
-  if (next_id_ == kInvalidResultId) {
-    next_id_ = 1;
-  }
-  return candidate;
+  const ResultId id = allocateId();
+  if (id == kInvalidResultId) return id;
+  ResultLease lease;
+  lease.metadata_.result_id = id;
+  lease.metadata_.width = image.width;
+  lease.metadata_.height = image.height;
+  bounds.width = image.width;
+  bounds.height = image.height;
+  lease.metadata_.bounds = bounds;
+  lease.image_ = std::make_shared<const Image>(std::move(image));
+  slots_[scope] = std::move(lease);
+  return id;
 }
 
 ResultId ResultStore::publish(Image image) {
-  if (!isValidImage(image)) {
-    return kInvalidResultId;
-  }
-
-  const ResultId result_id = allocateId();
-  if (result_id == kInvalidResultId) {
-    return kInvalidResultId;
-  }
-
-  // Release the old pixel buffer before taking ownership of the new one.
-  // This also makes the replacement semantics explicit when a caller does
-  // not clear at the beginning of its operation.
-  current_image_.reset();
-  current_image_.emplace(std::move(image));
-  current_id_ = result_id;
-  return result_id;
+  return publish(kGuiResultScopeId, std::move(image));
 }
 
-std::optional<ResultSnapshot> ResultStore::get(ResultId result_id) const {
-  const Image* image = getImage(result_id);
-  if (image == nullptr) {
-    return std::nullopt;
-  }
-  return ResultSnapshot{result_id, *image};
+ResultLease ResultStore::acquire(ResultScopeId scope, ResultId id) const noexcept {
+  const auto it = slots_.find(scope);
+  if (it == slots_.end() || id == kInvalidResultId ||
+      it->second.metadata().result_id != id) return {};
+  return it->second;
+}
+
+ResultLease ResultStore::acquire(
+    ResultScopeId scope, const ResultSelection& selection) const noexcept {
+  if (!selection.valid()) return {};
+  return acquire(scope, selection.kind == ResultSelectionKind::Current
+                            ? currentId(scope) : selection.result_id);
+}
+
+ResultId ResultStore::currentId(ResultScopeId scope) const noexcept {
+  const auto it = slots_.find(scope);
+  return it == slots_.end() ? kInvalidResultId : it->second.metadata().result_id;
+}
+
+std::optional<ResultSnapshot> ResultStore::get(ResultId id) const {
+  const auto lease = acquire(kGuiResultScopeId, id);
+  if (!lease) return std::nullopt;
+  return ResultSnapshot{id, *lease.image()};
 }
 
 std::optional<ResultSnapshot> ResultStore::current() const {
-  if (current_id_ == kInvalidResultId) {
-    return std::nullopt;
-  }
-  return get(current_id_);
+  return get(currentId());
 }
 
-const Image* ResultStore::getImage(ResultId result_id) const noexcept {
-  if (result_id == kInvalidResultId) {
-    return nullptr;
-  }
-
-  if (result_id != current_id_ || !current_image_) {
-    return nullptr;
-  }
-  return &*current_image_;
+const Image* ResultStore::getImage(ResultId id) const noexcept {
+  return acquire(kGuiResultScopeId, id).image();
 }
 
 const Image* ResultStore::currentImage() const noexcept {
-  return getImage(current_id_);
+  return getImage(currentId());
 }
 
 ResultId ResultStore::resolve(const ResultSelection& selection) const noexcept {
-  if (selection.kind == ResultSelectionKind::Current) {
-    return selection.result_id == kInvalidResultId ? current_id_
-                                                    : kInvalidResultId;
-  }
-  if (selection.kind == ResultSelectionKind::Explicit &&
-      selection.result_id != kInvalidResultId) {
-    return selection.result_id;
-  }
-  return kInvalidResultId;
+  // Legacy GUI selection helper; acquire performs the ownership check.
+  if (!selection.valid()) return kInvalidResultId;
+  return selection.kind == ResultSelectionKind::Current
+             ? currentId() : selection.result_id;
 }
 
-void ResultStore::clear() noexcept {
-  current_image_.reset();
-  current_id_ = kInvalidResultId;
-}
+void ResultStore::clearScope(ResultScopeId scope) noexcept { slots_.erase(scope); }
+void ResultStore::clearAll() noexcept { slots_.clear(); }
+void ResultStore::clear() noexcept { clearScope(kGuiResultScopeId); }
 
-void ResultStore::release(ResultId result_id) noexcept {
-  if (result_id == current_id_) {
-    clear();
-  }
+void ResultStore::release(ResultScopeId scope, ResultId id) noexcept {
+  if (id != kInvalidResultId && currentId(scope) == id) clearScope(scope);
 }
+void ResultStore::release(ResultId id) noexcept { release(kGuiResultScopeId, id); }
 
 }  // namespace qingying

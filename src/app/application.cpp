@@ -74,6 +74,7 @@ struct Application::Impl {
     // Stop asynchronous capture work before unregistering the hotkey and
     // destroying the tray-owned UI services.
     capture_workflow_.shutdown();
+    result_store_.clearAll();
     hotkey_.unregisterAll(tray_.hwnd());
   }
 
@@ -100,6 +101,7 @@ struct Application::Impl {
         // any non-modal overlays and joins its worker before TrayController
         // posts quit.
         capture_workflow_.shutdown();
+        result_store_.clearAll();
         return false;
       }
       if (msg == WM_QINGYING_LONGSHOT_COMPLETE) {

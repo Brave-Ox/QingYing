@@ -1,5 +1,12 @@
 ﻿#include "qingying/app/capture_workflow.hpp"
 
+#include "qingying/action/action_dispatcher.hpp"
+#include "qingying/app/longshot_controller.hpp"
+#include "qingying/app/result_action_service.h"
+#include "qingying/capture/capture_engine.hpp"
+#include "qingying/export/export_service.hpp"
+#include "qingying/pin/pin_manager.hpp"
+
 #include <gtest/gtest.h>
 
 namespace qingying {
@@ -71,3 +78,27 @@ TEST(CaptureWorkflowRouteTest, OrdinaryResultActionsCaptureRegion) {
 }
 
 }  // namespace qingying
+
+
+TEST(CaptureWorkflowLifetimeTest, CancelAndShutdownPreserveExternalResults) {
+  using namespace qingying;
+  ActionDispatcher dispatcher;
+  CaptureEngine capture;
+  LongShotEngine engine(capture);
+  SelectionOverlay overlay;
+  LongShotController controller(engine, overlay);
+  ResultStore store;
+  ExportService exporter;
+  PinManager pins;
+  ResultActionService actions(store, exporter, pins);
+  CaptureWorkflow workflow(dispatcher, capture, controller, store, actions, pins, overlay);
+  const auto external = store.publish(2, Image{1, 1, {22}});
+  store.publish(Image{1, 1, {11}});
+  workflow.cancel();
+  EXPECT_EQ(store.currentId(), kInvalidResultId);
+  EXPECT_TRUE(store.acquire(2, external));
+  store.publish(Image{1, 1, {33}});
+  workflow.shutdown();
+  EXPECT_EQ(store.currentId(), kInvalidResultId);
+  EXPECT_TRUE(store.acquire(2, external));
+}

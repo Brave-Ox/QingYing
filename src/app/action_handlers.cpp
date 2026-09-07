@@ -52,7 +52,7 @@ class CaptureRegionHandler final : public IActionHandler {
 
     // A new capture starts a new result lifetime. Do not retain the previous
     // full-size image when this attempt later fails.
-    results_.clear();
+    results_.clearScope(request.context.result_scope);
 
     Image image;
     ActionResult result;
@@ -61,11 +61,17 @@ class CaptureRegionHandler final : public IActionHandler {
     } else {
       result = capture_.captureRegion(payload->region, image);
     }
-    if (result.ok &&
-        results_.publish(std::move(image)) == kInvalidResultId) {
-      result.ok = false;
-      result.error_code = ErrorCode::kCaptureFailed;
-      result.message = "capture returned an invalid image";
+    if (result.ok) {
+      const auto id = results_.publish(request.context.result_scope,
+                                      std::move(image), payload->region);
+      if (id == kInvalidResultId) {
+        result.ok = false;
+        result.error_code = ErrorCode::kCaptureFailed;
+        result.message = "capture returned an invalid image";
+        result.output = std::monostate{};
+      } else {
+        result.output = results_.acquire(request.context.result_scope, id).metadata();
+      }
     }
     return result;
   }
@@ -88,7 +94,7 @@ class CopyHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("copy");
     }
-    return result_actions_.copy(results_.resolve(payload->result));
+    return result_actions_.copy(request.context.result_scope, payload->result);
   }
 
  private:
@@ -108,7 +114,7 @@ class SaveHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("save");
     }
-    return result_actions_.save(results_.resolve(payload->result),
+    return result_actions_.save(request.context.result_scope, payload->result,
                                 payload->path);
   }
 
@@ -129,7 +135,7 @@ class PinHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("pin");
     }
-    return result_actions_.pin(results_.resolve(payload->result));
+    return result_actions_.pin(request.context.result_scope, payload->result);
   }
 
  private:

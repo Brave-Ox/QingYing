@@ -4,7 +4,9 @@
 #include "qingying/action/types.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <unordered_map>
 
 namespace qingying {
 
@@ -19,12 +21,35 @@ struct ResultSnapshot {
   }
 };
 
-// Owns at most one published capture result and the current-result selection.
+// Immutable ownership retained independently of the store and its scope slot.
+class ResultLease {
+ public:
+  explicit operator bool() const noexcept { return image_ != nullptr; }
+  const Image* image() const noexcept { return image_.get(); }
+  const CapturedResult& metadata() const noexcept { return metadata_; }
+
+ private:
+  friend class ResultStore;
+  std::shared_ptr<const Image> image_;
+  CapturedResult metadata_;
+};
+
+// UI-thread-owned slots, at most one published result per trusted scope.
+// Acquired leases may outlive the store and be consumed on worker threads.
 // Capture entry points clear the previous result before attempting a new
 // capture, so a failed capture leaves the store empty instead of retaining a
 // large stale pixel buffer.
 class ResultStore {
  public:
+  ResultId publish(ResultScopeId scope, Image image,
+                   ScreenPhysicalRect bounds = {});
+  ResultLease acquire(ResultScopeId scope, ResultId id) const noexcept;
+  ResultLease acquire(ResultScopeId scope,
+                      const ResultSelection& selection) const noexcept;
+  ResultId currentId(ResultScopeId scope) const noexcept;
+  void clearScope(ResultScopeId scope) noexcept;
+  void clearAll() noexcept;  // Application-wide shutdown only.
+  void release(ResultScopeId scope, ResultId id) noexcept;
   // Replaces the current image and returns a new id, or kInvalidResultId when
   // image is malformed.
   ResultId publish(Image image);
@@ -34,11 +59,11 @@ class ResultStore {
   std::optional<ResultSnapshot> get(ResultId result_id) const;
   std::optional<ResultSnapshot> current() const;
 
-  // Non-owning views used by compatibility adapters and action services that
-  // only need to pass the image to another synchronous operation.
+  // GUI-only compatibility views, invalidated by slot replacement/clear.
+  // Consumers that may reenter the message loop must use acquire instead.
   const Image* getImage(ResultId result_id) const noexcept;
   const Image* currentImage() const noexcept;
-  ResultId currentId() const noexcept { return current_id_; }
+  ResultId currentId() const noexcept { return currentId(kGuiResultScopeId); }
 
   // Resolves current-result or explicit-result selection without exposing the
   // store's internal storage to action handlers.
@@ -47,16 +72,14 @@ class ResultStore {
   // Releases the current image when the owning operation has finished.
   void release(ResultId result_id) noexcept;
 
-  // Explicit reset for session/application teardown. Ids are not reused after
-  // clear().
+  // GUI-only reset. Application teardown uses clearAll; ids are not reused.
   void clear() noexcept;
 
  private:
   static bool isValidImage(const Image& image) noexcept;
   ResultId allocateId();
 
-  std::optional<Image> current_image_;
-  ResultId current_id_{kInvalidResultId};
+  std::unordered_map<ResultScopeId, ResultLease> slots_;
   ResultId next_id_{1};
 };
 

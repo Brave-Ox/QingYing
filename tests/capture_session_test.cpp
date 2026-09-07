@@ -40,3 +40,14 @@ TEST(CaptureSessionTest, ClearDropsResult) {
   EXPECT_FALSE(session.hasResult());
   EXPECT_TRUE(session.result().empty());
 }
+
+TEST(CaptureSessionTest, CompatibilityFacadeOnlyMutatesGuiScope) {
+  qingying::ResultStore store;
+  const auto external = store.publish(2, qingying::Image{1, 1, {99}});
+  qingying::CaptureSession session(store);
+  session.setResult(qingying::Image{1, 1, {11}});
+  EXPECT_EQ(session.result().pixels[0], 11u);
+  session.clear();
+  EXPECT_FALSE(session.hasResult());
+  EXPECT_TRUE(store.acquire(2, external));
+}
