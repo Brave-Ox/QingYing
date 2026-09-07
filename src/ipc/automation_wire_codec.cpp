@@ -690,6 +690,7 @@ Json messageJson(const WireMessage& message, const AutomationLimits& limits, Wir
       Json result{{"type", "hello"}, {"wire_version", value.wire_version},
           {"role", value.role == HelloRole::Client ? "client" : "server"}, {"capabilities", capabilitiesJson(value.capabilities)}};
       if (value.application_epoch) result["application_epoch"] = *value.application_epoch;
+      if (value.connection_generation) result["connection_generation"] = *value.connection_generation;
       if (value.limits) result["limits"] = limitsJson(*value.limits);
       return result;
     } else if constexpr (std::is_same_v<T, WireRequest>) return requestJson(value, limits);
@@ -712,17 +713,18 @@ WireMessage readMessage(const Json& value, const AutomationLimits& limits, WireC
   if (type == "hello") {
     require(value.contains("wire_version"));
     require(uint(value.at("wire_version"), UINT32_MAX) == kWireVersion, WireError::UnsupportedVersion);
-    fields(value, {"type", "wire_version", "role", "capabilities"}, {"application_epoch", "limits"});
+    fields(value, {"type", "wire_version", "role", "capabilities"}, {"application_epoch", "connection_generation", "limits"});
     WireHello result;
     const auto& role = string(value.at("role"), 16);
     require(role == "client" || role == "server");
     result.role = role == "client" ? HelloRole::Client : HelloRole::Server;
     result.capabilities = readCapabilities(value.at("capabilities"));
     if (result.role == HelloRole::Server) {
-      require(value.contains("application_epoch") && value.contains("limits"));
+      require(value.contains("application_epoch") && value.contains("connection_generation") && value.contains("limits"));
       result.application_epoch = id(value.at("application_epoch"));
+      result.connection_generation = id(value.at("connection_generation"));
       result.limits = readLimits(value.at("limits"));
-    } else require(!value.contains("application_epoch") && !value.contains("limits"));
+    } else require(!value.contains("application_epoch") && !value.contains("connection_generation") && !value.contains("limits"));
     return result;
   }
   if (type == "response") {

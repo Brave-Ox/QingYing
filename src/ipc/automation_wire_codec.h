@@ -16,6 +16,7 @@ struct WireHello {
   HelloRole role{HelloRole::Client};
   // Server metadata, NOT proof of identity. Bind only after OS authentication.
   std::optional<ApplicationEpoch> application_epoch;
+  std::optional<ConnectionGeneration> connection_generation;
   std::vector<std::string> capabilities;
   std::optional<AutomationLimits> limits;
 };

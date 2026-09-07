@@ -8,6 +8,8 @@ add_executable(qingying_tests
   ui_action_scheduler_test.cpp
   automation_endpoint_test.cpp
   automation_wire_codec_test.cpp
+  pipe_transport_test.cpp
+  pipe_identity_test.cpp
   interaction_gate_test.cpp
   annotation_document_test.cpp
   annotation_editor_session_test.cpp

@@ -1,6 +1,6 @@
 # F9 私有 IPC wire v1
 
-本文件记录 F9-08 已实现的 codec 边界。入口位于 `src/ipc/automation_wire_codec.h`，不公开 JSON 类型。它不是 MCP stdio 协议，不创建管道、不认证连接，也不执行动作。
+本文件记录 F9-08 的 codec 边界及 F9-09 的本机管道传输。codec 入口位于 `src/ipc/automation_wire_codec.h`，不公开 JSON 类型；管道入口为 `PipeServer` 与 `PipeAutomationClient`。这是私有 IPC，不是 MCP stdio 协议。生产开关和应用接线留到 F9-11。
 
 ## 帧与错误
 
@@ -18,11 +18,24 @@ WireError 是本地解码错误，不等同于 ActionResult.error_code：Invalid
 {"type":"hello","wire_version":1,"role":"client","capabilities":[]}
 ```
 
-服务端使用 `role:"server"`，另须提供非零 uint64 `application_epoch`、完整 `limits` 和实际 `capabilities`；客户端 hello 不接受 epoch/limits。版本不为 1 返回 UnsupportedVersion。capabilities 不重复，只能使用 codec 已知动作/控制能力名称；服务端仍须按实际启用能力填充。
+服务端使用 `role:"server"`，另须提供非零 uint64 `application_epoch`、`connection_generation`、完整 `limits` 和实际 `capabilities`；客户端 hello 不接受 epoch/generation/limits。F9-09 补齐服务端 generation 字段，客户端据此绑定服务端实际分配的连接；F9-08 的开发态 server hello 缺少此字段时会被拒绝。版本不为 1 返回 UnsupportedVersion。capabilities 不重复，只能使用 codec 已知动作/控制能力名称；当前传输默认空列表，实际 Tool 能力接线留到后续任务。
 
 limits 覆盖 AutomationLimits 全部字段，整数保持原类型；chrono 字段改为 `result_ttl_ms`、`completed_operation_ttl_ms`、`default_longshot_timeout_ms`、`default_request_timeout_ms`、`max_request_timeout_ms`、`tombstone_ttl_ms`，接收值最多 24 小时并继续验证限额间关系。对端声明不能自动放宽本地 decoder 限额。
 
-epoch 和能力声明仅是协议元数据。F9-09 须先通过操作系统完成身份校验，再建立可信连接；不得以 hello 或 JSON 中的进程号作为身份依据。codec 本身不实现握手时序与消息方向检查，后续 transport/session 负责这些准入规则。
+epoch、generation 和能力声明仅是协议元数据。F9-09 先通过操作系统完成身份校验，再建立可信连接；不得以 hello 或 JSON 中的进程号作为身份依据。codec 本身不实现握手时序与消息方向检查，Pipe 传输负责这些准入规则。
+
+## 本机 Pipe 传输与线程边界（F9-09）
+
+- 端点固定为 `\\\\.\\pipe\\QingYing.Automation.v1.<logon-sid>`；测试仅允许追加 `.test.<字母数字、下划线或连字符>`，不能注入远程路径。默认最多四个槽，等待 hello、等待 UI 创建 context 和等待 UI 清理都占用槽位。
+- 所有实例在 worker 启动前创建。首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，全部实例使用受保护的显式登录 SID DACL、`PIPE_REJECT_REMOTE_CLIENTS` 和非继承句柄；原始实例句柄保持到所有 worker 回收，断连后复用实例，避免重新创建端点的空隙。抢占或身份检查失败直接关闭，不尝试其他名称或权限。
+- 双向查询管道实际进程和会话，再读取 token 比较 user SID、logon SID 和 session。服务端读取 client hello 后还模拟客户端，校验有效 token；RAII 保证回到自身身份。客户端以 `SECURITY_IDENTIFICATION` 打开管道，只向对端提供身份查询所需模拟级别。
+- `PipeServer::start/drain/stop` 在创建它的 UI owner 线程调用；I/O 不直接访问 Endpoint、ResultStore 或 Workflow。UI 周期调用 `drain()`；connect hook 绑定 `Endpoint::connectAuthenticated`，submit hook 绑定 `Scheduler::submit`，revoke hook 绑定线程安全的 `Scheduler::disconnect`，disconnect hook 绑定 UI 的 `Endpoint::disconnect`。hook 不得抛异常或重入 server。先撤销传输和 scheduler 准入，再清理 UI scope；首次队列受理时间保留至 scheduler。
+- 每个槽一个连接/read worker，每条连接一个独立 write worker。连接、读、写均为 overlapped；短读写按实际字节数推进。握手默认 3 秒（包括等待 UI），已认证连接空闲读取可等待，部分帧必须在 3 秒内收完；每个输出帧默认 3 秒写期限。期限可注入为 1 毫秒至 1 分钟。
+- 普通/控制请求分别遵守本地和全局容量，已交给 UI 但未完成的请求仍计数；drain 优先控制队列，每轮只处理有界快照。重复在途 request/RPC id、超容量、错误消息方向或畸形帧会关闭该连接。输出同时限制帧数和总字节数（含正在写的帧及四字节前缀），超限或写超时只撤销该连接。迟到或重复的 completion 不会消费新请求。
+- `PipeAutomationClient` 实现 `IAutomationClient`。每个对象只连接一次；先完成 `connect()`，之后可并发 submit/close。请求跟踪在发送前建立；接收完成在 reader 线程，立即拒绝在调用线程。close 取消 I/O 并等待 reader 结算所有 pending 回调；回调内 close 会先结算其余回调，当前回调返回后 reader 继续回收。回调不得抛异常。连接失败、断连后不重放请求。
+- stop 先撤销准入并唤醒所有 I/O；每个 pending 操作调用 `CancelIoEx` 后收取 `GetOverlappedResult`，再释放 OVERLAPPED、event 和 buffer。worker 不等 UI 消息、不调用 `FlushFileBuffers`；UI join 的只是已收到停止信号且不依赖 UI 的 I/O worker。重新启用构造新的 PipeServer，Endpoint 继续分配不复用的 generation。
+
+Windows API 依据：[Named Pipe 安全与权限](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)、[获取真实客户端进程](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getnamedpipeclientprocessid)、[取消后收取 I/O 完成](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelioex)。跨实际登录会话、远程拒绝和完整生产进程验证仍在 F9-24/F9-11；本地单测只创建测试专用管道。
 
 ## 请求
 

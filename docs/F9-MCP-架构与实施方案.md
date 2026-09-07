@@ -733,17 +733,23 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-09：实现本机 Named Pipe 传输、身份校验与 I/O 退出
 
-**状态：未开始；前置：F9-08。** 建议提交：`feat(f9-09): implement authenticated local pipe transport`。
+**状态：已完成（2026-09-07）；前置：F9-08。**
 
 **文件范围：** 新增 `include/qingying/ipc/pipe_automation_client.h`、`include/qingying/ipc/pipe_server.h`、`src/ipc/pipe_automation_client.cpp`、`src/ipc/pipe_server.cpp`、`src/ipc/pipe_identity.cpp`。
 
-- [ ] 实现本机登录会话管道命名、有限连接槽和 overlapped connect/read/write；处理短读写、刚连接即断开及 ERROR_PIPE_CONNECTED。
-- [ ] 第一次监听就设置明确 DACL、登录 SID 校验、PIPE_REJECT_REMOTE_CLIENTS 和首实例防抢占；客户端也验证服务端身份，不能信任 JSON 中的 pid/user。
-- [ ] hello 成功后形成可信连接上下文；最多 4 条已认证连接，未完成握手连接也受槽位与期限限制。
-- [ ] 请求与完成都走有界队列，单个慢读客户端只影响自身连接；断连先撤销 generation/准入，再请求 UI 清理。
-- [ ] stop 时取消 pending I/O 并收取完成结果，OVERLAPPED/buffer 活到完成之后；UI 不调用无限等待的 FlushFileBuffers，不发布宽松权限的临时入口。
+- [x] 实现本机登录会话管道命名、有限连接槽和 overlapped connect/read/write；处理短读写、刚连接即断开及 ERROR_PIPE_CONNECTED。
+- [x] 第一次监听就设置明确 DACL、登录 SID 校验、PIPE_REJECT_REMOTE_CLIENTS 和首实例防抢占；客户端也验证服务端身份，不能信任 JSON 中的 pid/user。
+- [x] hello 成功后形成可信连接上下文；最多 4 条已认证连接，未完成握手连接也受槽位与期限限制。
+- [x] 请求与完成都走有界队列，单个慢读客户端只影响自身连接；断连先撤销 generation/准入，再请求 UI 清理。
+- [x] stop 时取消 pending I/O 并收取完成结果，OVERLAPPED/buffer 活到完成之后；UI 不调用无限等待的 FlushFileBuffers，不发布宽松权限的临时入口。
 
 **验收：** 新增 `tests/pipe_transport_test.cpp`、`tests/pipe_identity_test.cpp`；用测试专用管道覆盖短读写、部分帧、握手超时、慢客户端、第五连接、端点抢占、身份拒绝和 cancel 后完成。实际跨登录会话/远程拒绝验证列入 F9-24；本地测试不得启用网络服务。
+
+完成记录：新增 PipeServer、实现 IAutomationClient 的 PipeAutomationClient，以及私有 pipe_identity / pipe_io 辅助层。所有实例在启动 worker 前设置受保护的登录 SID DACL、本机拒远程标志，首实例防抢占；实例句柄保留到退出，断连后复用。双向核验操作系统提供的进程、user/logon SID 与 session，服务端还核验模拟 token 并 RAII 恢复自身身份。hello 补齐服务端非零 connection_generation，绑定 Endpoint 分配的真实 context，客户端不能从请求注入身份。
+
+每个连接独立 read/write worker，握手、部分帧和输出写入均有期限；普通/控制请求拥有独立的本地及全局容量，在途请求计数持续到完成，输出帧数和字节预算包括正在写的帧。UI 周期 drain 有界快照，通过 hook 接到 Endpoint / Scheduler；断连先同步撤销 scheduler 准入，再 UI 清理。close/stop 唤醒 I/O，并在释放 OVERLAPPED/buffer 前收取取消完成；迟到和重复 completion 不影响新请求，客户端不重连或重放。具体线程契约和后续接线方式见 [私有 wire v1](./F9-IPC-wire-v1.md)。
+
+新增 23 个管道传输测试和 4 个身份测试，包含单槽反复瞬断回收、逐字节帧、握手超时、第五连接、慢读及写超时、输出预算、全局/控制容量、实际 DACL 拒绝匿名 token、客户端有效身份拒绝、端点抢占、取消后复用句柄和回调内 close。执行 `.\build.bat Release test`：Release 构建成功，全量 **614/614** 通过，CTest **17.71 秒**。源码统一 UTF-8 BOM + CRLF，文档 UTF-8 无 BOM + CRLF。托盘 EXE 仍为 467,968 字节；生产开关、MCP stdio 和完整应用接线留到 F9-10/F9-11，实际跨登录会话与远程拒绝验证保留在 F9-24。
 
 ### F9-10：实现 MCP session、stdio 传输和静态 ToolCatalog
 

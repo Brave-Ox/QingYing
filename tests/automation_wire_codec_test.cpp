@@ -211,10 +211,12 @@ TEST(AutomationWireCodecTest, HelloHasStrictVersionAndUntrustedServerMetadata) {
   WireHello hello;
   hello.role = HelloRole::Server;
   hello.application_epoch = UINT64_MAX;
+  hello.connection_generation = UINT64_MAX - 1;
   hello.capabilities = {"status", "get_operation"};
   hello.limits = AutomationLimits{};
   const auto copy = std::get<WireHello>(roundtrip(hello));
   EXPECT_EQ(copy.application_epoch, UINT64_MAX);
+  EXPECT_EQ(copy.connection_generation, UINT64_MAX - 1);
   EXPECT_EQ(copy.limits->max_frame_bytes, 65536u);
   EXPECT_EQ(decodeBody(R"({"type":"hello","wire_version":2,"role":"client","capabilities":[]})").error, WireError::UnsupportedVersion);
   EXPECT_FALSE(decodeBody(R"({"type":"hello","wire_version":1,"role":"client","capabilities":[],"application_epoch":1})"));
