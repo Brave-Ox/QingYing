@@ -90,6 +90,24 @@ enum class AbortReason { None, UserCancel, ClientCancel, Deadline, Disconnect,
                          Shutdown };
 enum class ResultAvailability { None, Available, Released, Expired };
 
+struct OperationControlStatus {
+  AbortReason abort_reason{AbortReason::None};
+  bool committed{false};
+  bool settled{false};
+};
+
+// Small thread-safe execution boundary for workflow/export. Implementations
+// arbitrate cancellation and the one commit permission at the same lock.
+// Commit permission is not completion: actual execution must still report its
+// outcome to the UI owner. I/O may request cancellation, never settle records.
+class IOperationControl {
+ public:
+  virtual ~IOperationControl() = default;
+  virtual bool requestCancel(AbortReason reason) = 0;
+  virtual bool tryCommit() = 0;
+  virtual OperationControlStatus status() = 0;
+};
+
 struct OperationProgress {
   std::string stage;
   std::uint64_t frames{0};

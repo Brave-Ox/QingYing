@@ -8,3 +8,9 @@ target_link_libraries(qingying_automation_contract
   INTERFACE qingying_action
 )
 target_compile_features(qingying_automation_contract INTERFACE cxx_std_17)
+
+add_library(qingying_automation STATIC operation_registry.cpp)
+target_link_libraries(qingying_automation PUBLIC qingying_automation_contract)
+if(WIN32)
+  target_link_libraries(qingying_automation PRIVATE bcrypt)
+endif()

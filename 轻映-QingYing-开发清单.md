@@ -37,7 +37,7 @@
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 完整 Release 全绿 | 2026-09-07 F9-04 后 Release：CTest 459/459 通过；结果到期、预算、lease 和 GUI 兼容目标测试 49/49 通过 |
+| 自动测试 | 专项全绿 | 完整 Release 全绿 | 2026-09-07 F9-05 后 Release：CTest 487/487 通过；OperationRegistry、取消/提交仲裁及契约目标测试 58/58 通过 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -55,7 +55,7 @@
 | **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
-| **F9** | Agent / MCP | **契约、Dispatcher、作用域结果与预算完成，接入仍 Stub** | F9-01～F9-04 已完成，含 ResultLease、TTL、预算预留和实际像素回收；`McpBridge` 仍为骨架 | OperationRegistry、Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
+| **F9** | Agent / MCP | **内部契约、结果预算与操作注册表完成，接入仍 Stub** | F9-01～F9-05 已完成，含 OperationRegistry、连接内幂等及取消/提交仲裁；`McpBridge` 仍为骨架 | UiActionScheduler、Endpoint、Named Pipe、协议、Tool 映射、鉴权边界 |
 
 ### F1～F9 与技术模块
 
@@ -140,6 +140,7 @@
 - [x] F9-02：Dispatcher 保留同步兼容入口，增加独立异步 Handler / executor / submit 完成回调，并保证取消、期限、异常和重复完成语义；2026-09-07 新增 Dispatcher 回归测试，目标测试 28/28 通过；完整 Release 为 429 个测试 425 个通过、4 个既有 BitBlt 环境失败（详见 F9 方案完成记录）；
 - [x] F9-03：ResultStore 按可信 scope 隔离，ResultLease 持有不可变图和元数据，GUI 清理不影响外部结果；Handler 返回真实截图结果，模态保存持有 lease；2026-09-07 目标测试 28/28、完整 Release 438/438 通过（详见 F9 方案完成记录）；
 - [x] F9-04：外部结果固定 TTL、有界失效记录、可回滚预算预留和按实际共享所有权回收；新增 21 个测试，2026-09-07 目标测试 49/49、完整 Release 459/459 通过；UI 定时清扫及捕获前预检接线留给后续任务（详见 F9 方案完成记录）；
+- [x] F9-05：OperationRegistry 管理连接隔离的操作状态、终态保留、随机句柄与幂等记录；OperationControl 仲裁取消和提交，等待执行者确认终态；新增 28 个测试，2026-09-07 目标测试 58/58、完整 Release 487/487 通过，生产调度接线留给后续任务（详见 F9 方案完成记录）；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；

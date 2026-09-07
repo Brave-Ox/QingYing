@@ -4,6 +4,7 @@ add_executable(qingying_tests
   action_dispatcher_test.cpp
   action_handlers_test.cpp
   automation_contract_test.cpp
+  operation_registry_test.cpp
   annotation_document_test.cpp
   annotation_editor_session_test.cpp
   annotation_engine_test.cpp
@@ -106,6 +107,7 @@ target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
     qingying_automation_contract
+    qingying_automation
     qingying_mcp
     qingying_annotate
     qingying_capture

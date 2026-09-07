@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01～F9-04 契约、Dispatcher、作用域结果与 lease、结果到期和预算回收及自动验收完成；F9-05～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01～F9-05 契约、Dispatcher、作用域结果与预算、OperationRegistry 及自动验收完成；F9-06～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01～F9-04 契约、Dispatcher、作用域结果与 lease、结果到期和预算回收及自动验收完成，F9-05～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01～F9-05 契约、Dispatcher、作用域结果与预算、OperationRegistry 及自动验收完成，F9-06～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -641,18 +641,39 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-05：建立 OperationRegistry 与连接内幂等记录
 
-**状态：未开始；前置：F9-01。** 建议提交：`feat(f9-05): track scoped operations and idempotent requests`。
+**状态：验收完成（操作状态、连接隔离、幂等与取消/提交竞争测试）；前置：F9-01。**
 
 **文件范围：** 新增 `include/qingying/automation/operation_registry.h`、`src/automation/operation_registry.cpp`，建立 `qingying_automation` STATIC target；在 `automation_contract.h` 补充下层可使用的中立提交/取消接口。
 
-- [ ] 为可信连接分配操作 ID，执行前建立记录；支持 queued、运行/交互阶段、取消处理中和唯一终态，保存轻量元数据与 failure_stage/frame。
-- [ ] 实现按 scope 查询/取消、每连接 64 条终态记录及 5 分钟保留上限；终态记录不持有 Image/ResultLease。
-- [ ] 绑定应用 epoch、连接 generation 与对外不透明 operation/result 句柄；句柄归属由主进程复核，断连或重启后的旧句柄不可复用。
-- [ ] 实现 request_key + 规范化参数的有界去重；同 key 同参数复用既有操作，不同参数返回 Conflict；失效记录被回收后的边界明确记录。
-- [ ] 实现 OperationControl 的取消/提交仲裁，tryCommit 与取消请求共享互斥或原子状态并检查 deadline；取得提交权不提前标成功，实际副作用仍可失败。应用层向 Workflow/导出注入 contract 中的小接口或回调，下层不依赖 Registry 实现 target。I/O 只请求取消，Registry 的 map/终态仍只由 UI 修改。
-- [ ] 取消只请求收尾，等待实际执行者确认后进入终态；操作成功和结果过期分别表达，禁止根据新 RPC id 自动重放副作用。
+- [x] 为可信连接分配操作 ID，执行前建立记录；支持 queued、运行/交互阶段、取消处理中和唯一终态，保存轻量元数据与 failure_stage/frame。
+- [x] 实现按 scope 查询/取消、每连接 64 条终态记录及 5 分钟保留上限；终态记录不持有 Image/ResultLease。
+- [x] 绑定应用 epoch、连接 generation 与对外不透明 operation/result 句柄；句柄归属由主进程复核，断连或重启后的旧句柄不可复用。
+- [x] 实现 request_key + 规范化参数的有界去重；同 key 同参数复用既有操作，不同参数返回 Conflict；失效记录被回收后的边界明确记录。
+- [x] 实现 OperationControl 的取消/提交仲裁，tryCommit 与取消请求共享互斥或原子状态并检查 deadline；取得提交权不提前标成功，实际副作用仍可失败。应用层向 Workflow/导出注入 contract 中的小接口或回调，下层不依赖 Registry 实现 target。I/O 只请求取消，Registry 的 map/终态仍只由 UI 修改。
+- [x] 取消只请求收尾，等待实际执行者确认后进入终态；操作成功和结果过期分别表达，禁止根据新 RPC id 自动重放副作用。
 
 **验收：** 新增 `tests/operation_registry_test.cpp`，覆盖同步完成、取消先赢/提交先赢两种竞争、重复/越权取消、相同 RPC id 的两条连接、幂等冲突、重连旧 ID、元数据限额和像素零持有。
+
+**实现记录：**
+
+- 建立独立 `qingying_automation` STATIC target，公开依赖 contract，Windows 私有链接 bcrypt。Registry 校验 UI 线程归属，创建 queued 记录后才向执行者交付控制接口；进度推进、完成、回收均由 UI 执行。默认每连接最多 64 条终态、保留 5 分钟，活动记录上限复用队列加桌面操作额度（每连接 9、全局 33）；断连后的未收尾记录仍计入额度。
+- `IOperationControl` 是下层唯一需要的中立仲裁接口；OperationControl 可在操作分配前创建，begin 沿用同一对象并校验连接、scope、请求 ID、受理时间及期限。requestCancel、tryCommit 和 settle 使用同一互斥边界；取消/超时只进入 Cancelling，执行者 complete 后才进入唯一终态。取得提交权仅进入 Finalizing，实际导出失败仍为 Failed；副作用成功需要提交权。
+- 应用组合根负责传入本次运行唯一 epoch，Registry 分配不复用的 generation 和 OperationId。Windows 句柄使用 BCryptGenRandom 产生的 128 位随机值，查找同时复核 epoch/generation/scope，不直接格式化内部数字 ID。断连立即拒绝查询和句柄解析，等待实际执行者收尾后才释放连接槽。
+- Save/Copy/Pin 的幂等比较包含动作类型、精确 ResultId 和 Save 的词法规范化路径，统一分隔符及点路径，不做大小写折叠或文件系统授权。RPC ID 和超时不作为副作用参数。相同 key/参数复用同一记录及结果，不同参数返回 Conflict；记录因数量或 TTL 被回收后，key 的保证同时结束，后续显式提交视作新操作，系统不会自动重放。
+- 结果失效只更新 result_availability，保留已成功操作的终态及输出元数据。普通解析拒绝失效句柄；release/status 可显式解析保留的失效映射，仍须由 ResultStore 复核实际归属与可消费性。失效映射每连接最多保留 max_tombstones_per_connection 条及 tombstone_ttl 时间，断连立即清除。
+- 进度、诊断、规范化参数及输出均有容量限制，超限完成以 ResourceLimit 结算；记录不持 Image/ResultLease。测试在保留成功操作快照时清空 ResultStore，验证实际 retained_bytes 为 0。
+
+```text
+完成日期：2026-09-07
+源码基线：8220b8f76a8c6efb1bb9b328f6f3951214ebb08c + 本次工作区改动（未自动提交）
+自动测试：
+  cmake --build build --config Release --target qingying_tests --parallel：通过。
+  ctest --test-dir build -C Release -R '^(OperationRegistryTest|OperationControlTest|AutomationContractTest)\.' --output-on-failure：58/58 通过，新增 28 个用例。
+  .\build.bat Release test：Release EXE/测试目标构建通过，487/487 通过，0 失败。
+  本地日志：build/f9-05-target-tests.log、build/f9-05-release-test.log（构建产物，不入库）。
+真实客户端/桌面验收：本项未新增 Tool，通过 fake clock、实际线程竞争和所有权断言验收。
+后续接线：F9-06/F9-07 建立调度、RequestId→控制对象关联及 Endpoint 注入；Workflow/导出副作用点使用 IOperationControl 的生产接线随对应任务完成。epoch 创建、结果失效通知和真实路径授权由后续应用入口落实，当前未启动 Pipe/MCP 服务。
+```
 
 ### F9-06：实现有界 UiActionScheduler 与线程消息接线
 
