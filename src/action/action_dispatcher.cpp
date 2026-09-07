@@ -1,6 +1,9 @@
 ﻿#include "qingying/action/action_dispatcher.hpp"
 
+#include <atomic>
+#include <memory>
 #include <type_traits>
+#include <utility>
 
 namespace qingying {
 
@@ -24,7 +27,44 @@ ActionResult requestFailure(const ActionRequest& request, int error_code,
   return result;
 }
 
+void correlate(const ActionRequest& request, ActionResult& result) noexcept {
+  result.request_id = request.request_id;
+  result.operation_id = request.operation_id;
+}
+
+ActionResult handlerFailure(const ActionRequest& request) {
+  return requestFailure(request, ErrorCode::kUnknown,
+                        "action handler threw an exception");
+}
+
+struct CompletionState {
+  std::atomic_bool delivered{false};
+  ActionCompletion callback;
+};
+
+ActionCompletion atMostOnce(ActionCompletion completion) {
+  auto state = std::make_shared<CompletionState>();
+  state->callback = std::move(completion);
+  return [state](ActionResult result) mutable {
+    if (state->delivered.exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    if (!state->callback) {
+      return;
+    }
+    // A consumer callback is outside the action boundary. Do not let a
+    // throwing callback cause a second completion or escape a worker thread.
+    try {
+      state->callback(std::move(result));
+    } catch (...) {
+    }
+  };
+}
+
 }  // namespace
+
+ActionDispatcher::ActionDispatcher(ActionExecutor executor)
+    : executor_(std::move(executor)) {}
 
 ActionValidationResult validateActionRequest(const ActionRequest& request) {
   if (!request.context.valid()) {
@@ -113,6 +153,19 @@ void ActionDispatcher::registerHandler(std::unique_ptr<IActionHandler> handler) 
   handlers_[key] = std::move(handler);
 }
 
+void ActionDispatcher::registerAsyncHandler(
+    std::unique_ptr<IAsyncActionHandler> handler) {
+  if (!handler) {
+    return;
+  }
+  const Key key = static_cast<Key>(handler->type());
+  async_handlers_[key] = std::move(handler);
+}
+
+void ActionDispatcher::setExecutor(ActionExecutor executor) {
+  executor_ = std::move(executor);
+}
+
 ActionResult ActionDispatcher::dispatch(const ActionRequest& request) const {
   const ActionValidationResult validation = validateActionRequest(request);
   if (!validation.valid) {
@@ -135,18 +188,74 @@ ActionResult ActionDispatcher::dispatch(const ActionRequest& request) const {
                           "no handler registered for action");
   }
 
-  ActionResult result = it->second->handle(request);
+  ActionResult result;
+  try {
+    result = it->second->handle(request);
+  } catch (...) {
+    return handlerFailure(request);
+  }
+  // Cancellation and deadlines are admission guards. Once a synchronous
+  // handler has run, its result represents the side effects it committed.
+  correlate(request, result);
+  return result;
+}
+
+void ActionDispatcher::submit(const ActionRequest& request,
+                              ActionCompletion completion) const {
+  ActionCompletion complete = atMostOnce(
+      [request, completion = std::move(completion)](ActionResult result) mutable {
+        correlate(request, result);
+        if (completion) {
+          completion(std::move(result));
+        }
+      });
+
+  const ActionValidationResult validation = validateActionRequest(request);
+  if (!validation.valid) {
+    complete(requestFailure(request, ErrorCode::kInvalidArgument,
+                            validation.message));
+    return;
+  }
   if (request.cancellation.isCancellationRequested()) {
-    return requestFailure(request, ErrorCode::kCancelled,
-                          "action cancelled during dispatch");
+    complete(requestFailure(request, ErrorCode::kCancelled,
+                            "action cancelled before dispatch"));
+    return;
   }
   if (request.timedOut()) {
-    return requestFailure(request, ErrorCode::kTimeout,
-                          "action timed out during dispatch");
+    complete(requestFailure(request, ErrorCode::kTimeout,
+                            "action timed out before dispatch"));
+    return;
   }
-  result.request_id = request.request_id;
-  result.operation_id = request.operation_id;
-  return result;
+
+  const Key key = static_cast<Key>(request.type());
+  const auto async_it = async_handlers_.find(key);
+  if (async_it != async_handlers_.end() && async_it->second) {
+    try {
+      // Copy the guarded callback so a handler may retain and invoke it later;
+      // all copies share the same once state.
+      async_it->second->handleAsync(request, complete, executor_);
+    } catch (...) {
+      // If the handler completed before throwing, atMostOnce suppresses this
+      // fallback and preserves the already delivered result.
+      complete(handlerFailure(request));
+    }
+    return;
+  }
+
+  const auto it = handlers_.find(key);
+  if (it == handlers_.end() || !it->second) {
+    complete(requestFailure(request, ErrorCode::kNotImplemented,
+                            "no handler registered for action"));
+    return;
+  }
+
+  try {
+    ActionResult result = it->second->handle(request);
+    correlate(request, result);
+    complete(std::move(result));
+  } catch (...) {
+    complete(handlerFailure(request));
+  }
 }
 
 }  // namespace qingying

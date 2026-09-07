@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：F9-01 契约层及自动验收完成；F9-02～F9-24 未开始，尚无新增可调用 Tool。
+> 方案状态：F9-01 契约层、F9-02 Dispatcher 提交语义及自动验收完成；F9-03～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层及自动验收完成，F9-02～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层、F9-02 Dispatcher 提交语义及自动验收完成，F9-03～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -531,7 +531,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 ```text
 任务：F9-01
 状态：验收完成（契约层自动测试）
-实际提交 SHA：未提交；验证基线 ba10df04b987b87788e3e6b10fe53e2726b17b58 + 本次工作区改动
+实际提交 SHA：ab3e8f433c110b1dfac8c2e6cf375ebc0a9921fa；验证基线 ba10df04b987b87788e3e6b10fe53e2726b17b58 + 本次工作区改动
 本次执行命令与结果：
   cmake -S . -B build：通过。
   cmake --build build --config Release --target qingying_tests --parallel：通过。
@@ -545,16 +545,37 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-02：修正 Dispatcher 提交语义并增加异步完成入口
 
-**状态：未开始；前置：F9-01。** 建议提交：`fix(f9-02): preserve committed results and add action submission`。
+**状态：验收完成（Dispatcher 自动测试）；前置：F9-01。**
 
-**文件范围：** 修改 `include/qingying/action/action_dispatcher.hpp`、`include/qingying/action/i_action_handler.hpp`、`src/action/action_dispatcher.cpp`；按需新增中立的异步 Handler 头。
+**文件范围：** 修改 `include/qingying/action/action_dispatcher.hpp`、`include/qingying/action/i_action_handler.hpp`、`src/action/action_dispatcher.cpp`、`tests/action_dispatcher_test.cpp`；新增中立的 `include/qingying/action/i_async_action_handler.h`。
 
-- [ ] 保留同步 `dispatch`，去掉覆盖 Handler 实际结果的通用尾检；执行前仍验证参数、取消和期限，统一关联 request/operation ID。
-- [ ] 增加 `submit(request, completion)`；同步 Handler 通过适配器立即完成，异步 Handler 通过独立注册/选择入口提交，禁止同步调用返回未完成的“成功”。
-- [ ] 定义完成只能交付一次、同步回调允许发生、拒绝/异常也必须完成的契约；executor 由应用层注入，action target 不依赖线程池、Pipe 或 Workflow。
-- [ ] 更新旧取消测试，使提交后成功、提交前取消和 Handler 自身返回取消分别有明确预期；保存的具体提交点留给 F9-13/F9-14。
+- [x] 保留同步 `dispatch`，去掉覆盖 Handler 实际结果的通用尾检；执行前仍验证参数、取消和期限，统一关联 request/operation ID。
+- [x] 增加 `submit(request, completion)`；同步 Handler 通过适配器立即完成，异步 Handler 通过独立注册/选择入口提交，禁止同步调用返回未完成的“成功”。
+- [x] 定义完成只能交付一次、同步回调允许发生、拒绝/异常也必须完成的契约；executor 由应用层注入，action target 不依赖线程池、Pipe 或 Workflow。
+- [x] 更新旧取消测试，使提交后成功、提交前取消和 Handler 自身返回取消分别有明确预期；保存的具体提交点留给 F9-13/F9-14。
 
 **验收：** 扩展 `tests/action_dispatcher_test.cpp`，用 fake Handler 验证同步/延后完成、重复完成、提交前取消、提交后取消、排队期限不重置及错误关联。GUI 同步 Handler 行为可继续使用。
+
+**实现说明：**
+
+- `ActionDispatcher::dispatch` 仍是同步兼容入口；取消和期限只在 Handler 执行前拒绝，Handler 已执行后保留其实际结果，包括 Handler 自身返回取消或提交期间才到达的取消。
+- 新增 `IAsyncActionHandler`、`registerAsyncHandler` 和 `ActionExecutor`。`submit` 优先选择独立注册的异步 Handler；没有异步 Handler 时立即适配同步 Handler。executor 由调用方注入，action 模块不创建线程或依赖 UI、Pipe、Workflow。
+- 完成回调通过共享的原子 once 状态最多交付一次；同步回调、重复回调、Handler 在完成前/完成后抛异常、校验/取消/期限/缺少 Handler 均有确定的 ActionResult，并统一回填 request_id/operation_id。`submitted_at` 由可信入口设置，Dispatcher 不因提交或出队重置期限。
+- 当前异步 Handler 的最终业务实现、队列和 worker 生命周期留给 F9-05～F9-14；本项没有新增可调用 MCP Tool。
+
+**完成记录（2026-09-07）：**
+
+```text
+任务：F9-02
+状态：验收完成（Dispatcher 自动测试）
+实际提交 SHA：已提交；验证基线 ab3e8f433c110b1dfac8c2e6cf375ebc0a9921fa + 本次工作区改动
+本次执行命令与结果：
+  cmake --build build --config Release --target qingying_tests --parallel：通过。
+  ctest --test-dir build -C Release -R '^(ActionDispatcherTest|ActionRequestTest)\.' --output-on-failure：28/28 通过。
+  .\build.bat Release test：Release EXE/测试目标构建通过；429 个测试中 425 个通过，4 个既有 BitBlt 环境失败（CaptureEngineTest.CaptureFullScreenProducesNonEmptyImage、CaptureRegionHasExpectedDimensions、CaptureRegionPixelsAreBgra、F1SelectionIntegrationTest.SelectionToPhysicalPixelsToCapture）。
+真实客户端/桌面验收证据：本项只扩展内部 Dispatcher 契约，不新增 MCP Tool；不执行客户端或桌面人工验收。
+剩余限制与后续任务：F9-03 负责作用域 ResultStore/ResultLease；异步 Handler 的真实保存 worker、队列/取消回收和 MCP 接线仍由后续任务完成。上述 4 个 BitBlt 失败属于桌面捕获环境限制，需在可用桌面会话中复测。
+```
 
 ### F9-03：实现按作用域保存结果及 ResultLease，迁移 GUI
 

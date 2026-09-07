@@ -37,7 +37,7 @@
 | 常驻内存 | ≤ 40 MB | 未测 | 托盘空闲状态记录工作集与峰值 |
 | 唤起时延 | ≤ 300 ms | 未测 | 记录热键消息到 Overlay 首帧完成的时间 |
 | 主路径演示 | 约 15 秒 | 代码闭环 | F3 标注后自动复制并可继续 Save / Pin / 再编辑；完整人工 Demo 待记录 |
-| 自动测试 | 专项全绿 | 当前环境有既有失败 | 2026-09-07 当前 Release 构建目录：CTest 执行 382 个，378 个通过，4 个 `BitBlt` 失败；本次 `build.bat Release test` 因 MSBuild FileTracker 权限错误未进入编译 |
+| 自动测试 | 专项全绿 | 当前环境有既有失败 | 2026-09-07 F9-02 后 Release：CTest 执行 429 个，425 个通过，4 个既有 `BitBlt` 桌面捕获失败；Dispatcher/Action 目标测试 28/28 通过 |
 
 约束：F1～F7 不依赖网络；模型不进入安装包；主截图路径必须本地闭环。
 
@@ -55,7 +55,7 @@
 | **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
-| **F9** | Agent / MCP | **契约完成，接入仍 Stub** | F9-01 中立请求/输出/自动化契约已完成；`McpBridge` 仍为骨架 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
+| **F9** | Agent / MCP | **契约与 Dispatcher 完成，接入仍 Stub** | F9-01 中立请求/输出/自动化契约、F9-02 Dispatcher 提交语义已完成；`McpBridge` 仍为骨架 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
 
 ### F1～F9 与技术模块
 
@@ -136,7 +136,8 @@
 
 - [x] GUI 主路径已有 `ActionDispatcher`；
 - [x] `ActionRequest` 已改为 `std::variant` 类型化 payload，并具备 request / operation id、取消、超时和结果选择；
-- [x] F9-01：GUI 默认作用域、类型化输出、中立自动化契约、集中限额和稳定错误映射；2026-09-07 新增 30 个契约测试，Release 全量 412/412 通过（未提交，详见 F9 方案完成记录）；
+- [x] F9-01：GUI 默认作用域、类型化输出、中立自动化契约、集中限额和稳定错误映射；2026-09-07 新增 30 个契约测试，Release 全量 412/412 通过（已提交 ab3e8f43，详见 F9 方案完成记录）；
+- [x] F9-02：Dispatcher 保留同步兼容入口，增加独立异步 Handler / executor / submit 完成回调，并保证取消、期限、异常和重复完成语义；2026-09-07 新增 Dispatcher 回归测试，目标测试 28/28 通过；完整 Release 为 429 个测试 425 个通过、4 个既有 BitBlt 环境失败（详见 F9 方案完成记录）；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；

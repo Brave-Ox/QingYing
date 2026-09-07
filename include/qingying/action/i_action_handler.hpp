@@ -2,7 +2,13 @@
 
 #include "qingying/action/types.hpp"
 
+#include <functional>
+
 namespace qingying {
+
+// The dispatcher owns correlation and exactly-once completion; handlers only
+// produce a typed ActionResult. The callback may be invoked synchronously.
+using ActionCompletion = std::function<void(ActionResult)>;
 
 class IActionHandler {
  public:
