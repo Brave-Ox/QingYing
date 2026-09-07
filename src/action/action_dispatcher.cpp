@@ -27,6 +27,9 @@ ActionResult requestFailure(const ActionRequest& request, int error_code,
 }  // namespace
 
 ActionValidationResult validateActionRequest(const ActionRequest& request) {
+  if (!request.context.valid()) {
+    return invalidRequest("result scope must be nonzero");
+  }
   if ((request.request_id == kInvalidRequestId) !=
       (request.operation_id == kInvalidOperationId)) {
     return invalidRequest(

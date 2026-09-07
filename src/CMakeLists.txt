@@ -1,6 +1,7 @@
 # Build functional modules before the application target.
 
 add_subdirectory(action)
+add_subdirectory(automation)
 add_subdirectory(ui)
 add_subdirectory(capture)
 add_subdirectory(export)

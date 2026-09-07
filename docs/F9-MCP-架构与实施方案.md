@@ -1,6 +1,6 @@
 # F9 Agent / MCP：架构与实施方案
 
-> 方案状态：待实现；本文没有修改生产代码。
+> 方案状态：F9-01 契约层及自动验收完成；F9-02～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
 >
@@ -37,7 +37,7 @@ qingying.exe                   已运行的托盘主进程
 
 ## 2. 基于当前源码的判断
 
-以下是已落地基础，可以直接复用：
+以下是制定方案时 `40d22e21` 基线的已落地基础，可以直接复用；实施后的状态以第 12 节各任务记录为准：
 
 - `include/qingying/action/types.hpp:112`：Action payload 已经是 `std::variant`；`:182` 已有 request/operation ID、取消令牌、超时和提交时间。**无需重新做一遍类型化 Action 重构。**
 - `include/qingying/action/types.hpp:63`：已有 `ResultSelection::current/specific`。
@@ -447,7 +447,7 @@ rect = {x, y, width, height}
 
 JSON 无法解析、JSON-RPC envelope 非法、未知 method/tool 属协议错误；合法工具中的业务参数越界、窗口歧义、Busy、结果失效和执行失败用 `isError:true` 与结构化业务错误。未知工具在 2025 profile 用 InvalidParams，未知 method 用 MethodNotFound；不要把所有业务失败伪装成 JSON-RPC 内部错误。[Tool 错误约定](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 
-保留现有稳定码 10/20/30/40/41/50/60/80/81/100 的含义。建议新增尚未占用的码：82 Busy、83 ResultExpired、84 ResultNotFound、85 AccessDenied、86 ResourceLimit、87 ShuttingDown、88 OperationNotFound、89 Conflict；冻结前复查仓库并补映射测试。
+F9-01 已冻结业务错误码及 `errorCodeSymbol(int)` 映射：保留 0 Ok、1 Unknown、10 NotReady、20 InvalidArgument、30 CaptureFailed、40 WindowNotFound、41 WindowAmbiguous、50 LongShotUnsupported、60 ExportFailed、70 CommandUnmatched、80 Cancelled、81 Timeout、100 NotImplemented；新增 82 Busy、83 ResultExpired、84 ResultNotFound、85 AccessDenied、86 ResourceLimit、87 ShuttingDown、88 OperationNotFound、89 Conflict。未知数值保留原 code，symbol 使用 Unknown；协议错误与业务错误继续按本节分层，协议编码实现留给 F9-08/F9-10。
 
 错误输出含 code、symbol、message、request_id、operation_id 和必要的 failure_stage/frame。对调用者不可见的 ID 可统一返回 NotFound，避免泄漏其他作用域信息。保留近期失效句柄的小型 tombstone 才能准确区分 Expired 与 NotFound；元数据上限与有效期同样受限。
 
@@ -478,7 +478,7 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### 12.1 执行约定与依赖
 
-下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前所有任务均为未开始，复用的既有能力不计为 F9 已完成。
+下面每个 `F9-xx` 对应一个可独立审查的提交，默认按编号顺序推进；“前置”列出最小依赖，允许在独立分支开发。依赖尚未合入时可以编写实现和 fake 测试，但不能把未接通的能力注册为生产 Tool。当前 F9-01 契约层及自动验收完成，F9-02～F9-24 未开始；复用的既有能力不计为 F9 已完成。‘每个任务完成后不自动提交’
 
 每项任务都包含建议提交名、现有/新增文件、实施勾选和验收条件。新增文件是建议落点；实现时若调整名称，应在同一提交更新本任务。现有文件保留后缀和编码；本 Markdown 保持 UTF-8 无 BOM、CRLF。负责人由团队实际领取时填写，不预设人员。
 
@@ -508,16 +508,40 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-01：补齐中立的请求上下文、输出和自动化契约
 
-**状态：未开始；前置：无。** 建议提交：`feat(f9-01): define automation contracts and typed action outputs`。
+**状态：验收完成（契约层自动测试）；前置：无。**
 
-**文件范围：** 修改 `include/qingying/action/types.hpp`、`src/CMakeLists.txt`；新增 `include/qingying/automation/automation_contract.h`、`src/automation/CMakeLists.txt`，建立 `qingying_automation_contract` INTERFACE target。
+**文件范围：** 修改 `include/qingying/action/types.hpp`、`src/action/action_dispatcher.cpp`（仅增加 scope 非零校验）、`src/CMakeLists.txt`、`tests/CMakeLists.txt`；新增 `include/qingying/action/automation_limits.h`、`include/qingying/automation/automation_contract.h`、`src/automation/CMakeLists.txt` 和 `tests/automation_contract_test.cpp`，建立 `qingying_automation_contract` INTERFACE target。
 
-- [ ] 保留现有 ActionPayload，新增 GUI 默认作用域、ActionContext、CapturedResult / SavedResult / CopiedResult / PinnedResult / StatusInfo / WindowCandidates 等类型化输出；旧调用方通过默认值继续编译。
-- [ ] 定义中立的 IAutomationClient、请求/完成 DTO、操作状态、连接 generation 和应用 epoch；覆盖 execute、begin_longshot、get/cancel/release。私有取消目标支持 OperationId 或连接内 RequestId，公共 cancel_operation Tool 仍只接受 operation_id；契约不含 JSON、HWND、HANDLE 或客户端产品名。
-- [ ] 将第 6、7、9 节的限额集中为可注入的配置值；区分内部数值 ID 与外部不透明句柄，明确外部不能填写可信 scope。
-- [ ] 冻结第 11.1 节的错误码及映射规则，保留现有错误含义。这里只定义 PinnedResult，不伪造尚未实现的 PinId。
+- [x] 保留现有 ActionPayload，新增 GUI 默认作用域、ActionContext、CapturedResult / SavedResult / CopiedResult / PinnedResult / StatusInfo / WindowCandidates 等类型化输出；旧调用方通过默认值继续编译。
+- [x] 定义中立的 IAutomationClient、请求/完成 DTO、操作状态、连接 generation 和应用 epoch；覆盖 execute、begin_longshot、get/cancel/release。私有取消目标支持 OperationId 或连接内 RequestId，公共 cancel_operation Tool 仍只接受 operation_id；契约不含 JSON、HWND、HANDLE 或客户端产品名。
+- [x] 将第 6、7、9 节的限额集中为可注入的配置值；区分内部数值 ID 与外部不透明句柄，明确外部不能填写可信 scope。
+- [x] 冻结第 11.1 节的错误码及映射规则，保留现有错误含义。这里只定义 PinnedResult，不伪造尚未实现的 PinId。
 
 **验收：** 新增 `tests/automation_contract_test.cpp`，验证默认 GUI 上下文、非法 ID/字段组合和错误码；旧 Action 构造及现有测试仍编译。此提交没有新工具可调用。
+
+**实现说明：**
+
+- GUI scope 为 1，0 为非法 scope；既有 Action 构造、current 选择和 data 字段保持兼容，新增 output 默认 monostate。只有真实生产者才能填写 CapturedResult / PinnedResult 等成功元数据，当前 Handler 尚未迁移。
+- AutomationRequest 是私有传输 DTO，复用 ActionPayload，但结果消费必须指定有效 ResultId；execute 不接受调用者指定的 OperationId。TrustedAutomationContext 单独保存可信 scope、epoch、generation、取消令牌和首次受理时间，不能从 wire body 解码。数值 ID 仅用于内部；ResultHandle / OperationHandle 区分外部句柄类型，后续映射须绑定应用实例和连接，不直接把整数转成外部句柄。
+- IAutomationClient 声明 submit/close 生命周期与完成一次、允许同步完成、拒绝/异常也完成的规则；execute 在实际执行后完成，begin_longshot 在进入选区后返回。每个 client 实例永久绑定一个 epoch/generation，重连须新建实例，不迁移或重放旧请求。取消目标用 variant 在 OperationId / RequestId 之间互斥选择。OperationSnapshot 只保留轻量元数据，区分操作终态和图片有效性。此处是接口契约，实际线程、映射和调度履约由后续任务实现。
+- AutomationLimits 集中第 6、7、9 节的默认值。未由方案定值的配置本次取：普通请求期限 30 秒、请求期限上限 30 分钟（配置最多 24 小时）；控制队列每连接 4 / 全局 16；输出每连接 16 帧 / 1 MiB；导出 worker 1 / 队列 8；查询/文件名/路径分别 1024/255/32767 个 UTF-16 单元；request_key/外部句柄各 128 字节；tombstone 每连接 64 条、5 分钟。幂等记录复用完成操作元数据限额和保留期。限额均可注入；合法性检查不等于已经实现队列、预算或路径控制。
+
+**完成记录（2026-09-07）：**
+
+```text
+任务：F9-01
+状态：验收完成（契约层自动测试）
+实际提交 SHA：未提交；验证基线 ba10df04b987b87788e3e6b10fe53e2726b17b58 + 本次工作区改动
+本次执行命令与结果：
+  cmake -S . -B build：通过。
+  cmake --build build --config Release --target qingying_tests --parallel：通过。
+  ctest --test-dir build -C Release -R '^(AutomationContractTest|ActionRequestTest|ActionDispatcherTest|ActionHandlersTest|McpBridgeTest)\.' --output-on-failure：44/44 通过，包含 30 个新增契约测试。
+  .\build.bat Release test：Release EXE/测试目标构建通过；412/412 通过，0 失败，CTest 9.54 秒。
+  首次沙箱内目标构建因 MSBuild FileTracker E_ACCESSDENIED 失败；上述成功构建和测试在沙箱外执行。本次完整测试未出现历史记录中的 BitBlt 失败。
+  本地日志：build/f9-01-target-build.log、build/f9-01-target-tests.log、build/f9-01-release-test.log（构建产物，不入库）。
+真实客户端/桌面验收证据：本项无新 Tool，不执行 MCP 客户端人工验收；不将现有桌面自动测试等同于客户端验收。
+剩余限制与后续任务：F9-02 开始实现异步/提交语义；scope 存储隔离、真实输出生产、句柄映射、队列/预算执行及 Pipe/MCP 接入仍由后续任务完成。
+```
 
 ### F9-02：修正 Dispatcher 提交语义并增加异步完成入口
 

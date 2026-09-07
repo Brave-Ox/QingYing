@@ -55,7 +55,7 @@
 | **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
-| **F9** | Agent / MCP | **Stub** | `McpBridge` PIMPL 骨架存在 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
+| **F9** | Agent / MCP | **契约完成，接入仍 Stub** | F9-01 中立请求/输出/自动化契约已完成；`McpBridge` 仍为骨架 | Named Pipe、协议、Tool 映射、主线程调度、鉴权边界 |
 
 ### F1～F9 与技术模块
 
@@ -136,6 +136,7 @@
 
 - [x] GUI 主路径已有 `ActionDispatcher`；
 - [x] `ActionRequest` 已改为 `std::variant` 类型化 payload，并具备 request / operation id、取消、超时和结果选择；
+- [x] F9-01：GUI 默认作用域、类型化输出、中立自动化契约、集中限额和稳定错误映射；2026-09-07 新增 30 个契约测试，Release 全量 412/412 通过（未提交，详见 F9 方案完成记录）；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；

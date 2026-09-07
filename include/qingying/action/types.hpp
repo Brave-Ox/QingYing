@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "qingying/action/automation_limits.h"
 #include "qingying/geometry/rect_types.h"
 
 #include <atomic>
@@ -8,14 +9,33 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace qingying {
 
 using ResultId = std::uint64_t;
 
 constexpr ResultId kInvalidResultId = 0;
+
+using ResultScopeId = std::uint64_t;
+using PinId = std::uint64_t;
+
+constexpr ResultScopeId kInvalidResultScopeId = 0;
+constexpr ResultScopeId kGuiResultScopeId = 1;
+constexpr PinId kInvalidPinId = 0;
+
+// The trusted application entry point supplies the scope. It is not a
+// client-controlled action argument; existing GUI callers keep their scope.
+struct ActionContext {
+  ResultScopeId result_scope{kGuiResultScopeId};
+
+  constexpr bool valid() const noexcept {
+    return result_scope != kInvalidResultScopeId;
+  }
+};
 
 using RequestId = std::uint64_t;
 using OperationId = std::uint64_t;
@@ -49,8 +69,117 @@ constexpr int kExportFailed = 60;
 constexpr int kCommandUnmatched = 70;
 constexpr int kCancelled = 80;
 constexpr int kTimeout = 81;
+constexpr int kBusy = 82;
+constexpr int kResultExpired = 83;
+constexpr int kResultNotFound = 84;
+constexpr int kAccessDenied = 85;
+constexpr int kResourceLimit = 86;
+constexpr int kShuttingDown = 87;
+constexpr int kOperationNotFound = 88;
+constexpr int kConflict = 89;
 constexpr int kNotImplemented = 100;
 }  // namespace ErrorCode
+
+// Stable symbols shared by protocol adapters and diagnostics. Unknown numeric
+// codes retain their number and use the Unknown symbol.
+constexpr std::string_view errorCodeSymbol(int error_code) noexcept {
+  switch (error_code) {
+    case ErrorCode::kOk: return "Ok";
+    case ErrorCode::kUnknown: return "Unknown";
+    case ErrorCode::kNotReady: return "NotReady";
+    case ErrorCode::kInvalidArgument: return "InvalidArgument";
+    case ErrorCode::kCaptureFailed: return "CaptureFailed";
+    case ErrorCode::kWindowNotFound: return "WindowNotFound";
+    case ErrorCode::kWindowAmbiguous: return "WindowAmbiguous";
+    case ErrorCode::kLongShotUnsupported: return "LongShotUnsupported";
+    case ErrorCode::kExportFailed: return "ExportFailed";
+    case ErrorCode::kCommandUnmatched: return "CommandUnmatched";
+    case ErrorCode::kCancelled: return "Cancelled";
+    case ErrorCode::kTimeout: return "Timeout";
+    case ErrorCode::kBusy: return "Busy";
+    case ErrorCode::kResultExpired: return "ResultExpired";
+    case ErrorCode::kResultNotFound: return "ResultNotFound";
+    case ErrorCode::kAccessDenied: return "AccessDenied";
+    case ErrorCode::kResourceLimit: return "ResourceLimit";
+    case ErrorCode::kShuttingDown: return "ShuttingDown";
+    case ErrorCode::kOperationNotFound: return "OperationNotFound";
+    case ErrorCode::kConflict: return "Conflict";
+    case ErrorCode::kNotImplemented: return "NotImplemented";
+    default: return "Unknown";
+  }
+}
+
+enum class CaptureMode {
+  VisibleScreen,
+};
+
+enum class ImageFormat {
+  Png,
+};
+
+struct CapturedResult {
+  ResultId result_id{kInvalidResultId};
+  int width{0};
+  int height{0};
+  ScreenPhysicalRect bounds{};
+  CaptureMode capture_mode{CaptureMode::VisibleScreen};
+  // GUI results need not expire. External producers provide their actual
+  // monotonic deadline; adapters compute remaining time when responding.
+  std::optional<std::chrono::steady_clock::time_point> expires_at;
+};
+
+struct SavedResult {
+  ResultId result_id{kInvalidResultId};
+  std::wstring absolute_path;
+  ImageFormat format{ImageFormat::Png};
+};
+
+struct CopiedResult {
+  ResultId result_id{kInvalidResultId};
+};
+
+struct PinnedResult {
+  ResultId result_id{kInvalidResultId};
+  // Metadata only: the pin owner must allocate a real id before publishing.
+  PinId pin_id{kInvalidPinId};
+};
+
+struct WindowCandidate {
+  std::wstring title;
+  std::uint32_t process_id{0};
+  ScreenPhysicalRect bounds{};
+  // An opaque discovery token, never a platform window handle.
+  std::string window_token;
+};
+
+struct WindowCandidates {
+  std::vector<WindowCandidate> candidates;
+  bool truncated{false};
+};
+
+struct ResourceUsage {
+  std::uint64_t result_bytes{0};
+  std::uint32_t agent_pin_count{0};
+  std::uint64_t agent_pin_bytes{0};
+};
+
+struct StatusInfo {
+  bool reachable{false};
+  // Absence means unknown, including when the application cannot be reached.
+  std::optional<bool> app_running;
+  std::optional<bool> automation_enabled;
+  std::optional<bool> busy;
+  std::string busy_reason;
+  std::string build_version;
+  std::string connection_reason;
+  std::vector<std::string> capabilities;
+  std::optional<AutomationLimits> limits;
+  std::optional<ResourceUsage> resources;
+};
+
+using ActionOutput =
+    std::variant<std::monostate, StatusInfo, CapturedResult, SavedResult,
+                 CopiedResult, PinnedResult, WindowCandidates>;
 
 enum class ResultSelectionKind {
   Current,
@@ -187,6 +316,7 @@ struct ActionRequest {
   std::chrono::steady_clock::time_point submitted_at{
       std::chrono::steady_clock::now()};
   ActionPayload payload{StatusRequest{}};
+  ActionContext context{};
 
   ActionRequest() = default;
 
@@ -259,6 +389,7 @@ struct ActionResult {
   // producer did not expose a more precise failure location.
   std::string failure_stage;
   int failure_frame{0};
+  ActionOutput output{};
 };
 
 }  // namespace qingying
