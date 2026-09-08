@@ -239,6 +239,36 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         setColorPickerEyedropperCursor();
         return TRUE;
       }
+      if (data != nullptr &&
+          data->inlineText().m_selected_text_index !=
+              kInvalidAnnotationIndex &&
+          data->inlineText().m_selected_text_index <
+              data->core().m_session.engine().document().count())
+      {
+        POINT cursor_point{};
+        if (GetCursorPos(&cursor_point) != FALSE &&
+            ScreenToClient(hwnd, &cursor_point) != FALSE)
+        {
+          const Annotation& annotation =
+              data->core().m_session.engine().document().items().at(
+                  data->inlineText().m_selected_text_index);
+          const AnnotationEditorTextChrome chrome =
+              makeTextChrome(data, annotation, false);
+          if (data->inlineText().m_text_rotating ||
+              annotationEditorHitTextChrome(
+                  chrome, cursor_point.x, cursor_point.y) ==
+                  AnnotationEditorTextHit::Rotate)
+          {
+            const HCURSOR cursor =
+                LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_CROSS));
+            if (cursor != nullptr)
+            {
+              SetCursor(cursor);
+              return TRUE;
+            }
+          }
+        }
+      }
       if (data != nullptr && data->chrome().m_toolbar_hover >= 0 &&
           data->chrome().m_toolbar_items[static_cast<std::size_t>(data->chrome().m_toolbar_hover)]
                   .id == kButtonMoveId)

@@ -146,6 +146,8 @@ struct AnnotationEditorInlineTextState
   GdiObject m_inline_edit_key_brush;
   float m_text_anchor_x{0.0f};
   float m_text_anchor_y{0.0f};
+  float m_text_wrap_width{0.0f};
+  float m_text_max_width{0.0f};
   std::size_t m_editing_text_index{kInvalidAnnotationIndex};
   std::size_t m_selected_text_index{kInvalidAnnotationIndex};
   DWORD m_last_text_click_tick{0};
@@ -158,6 +160,7 @@ struct AnnotationEditorInlineTextState
   bool m_inline_commit_busy{false};
   bool m_text_gesture_active{false};
   bool m_text_dragging{false};
+  bool m_text_rotating{false};
   std::size_t m_text_target_index{kInvalidAnnotationIndex};
   float m_text_press_x{0.0f};
   float m_text_press_y{0.0f};
@@ -165,6 +168,9 @@ struct AnnotationEditorInlineTextState
   float m_text_origin_y{0.0f};
   float m_text_drag_x{0.0f};
   float m_text_drag_y{0.0f};
+  float m_text_rotation_degrees{0.0f};
+  float m_text_rotation_initial_degrees{0.0f};
+  float m_text_rotation_press_degrees{0.0f};
 };
 
 struct AnnotationEditorChromeState

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <algorithm>
+#include <cmath>
 
 #include "qingying/annotate/annotation_types.hpp"
 
@@ -100,6 +101,10 @@ inline constexpr std::uint32_t AnnotationEditorInlineEditColorKeyRgb =
     255u | (255u << 16);
 inline constexpr int AnnotationEditorTextChromePadPx = 4;
 inline constexpr int AnnotationEditorTextDeleteButtonPx = 16;
+inline constexpr int AnnotationEditorTextRotationHandleRadiusPx = 6;
+inline constexpr float AnnotationEditorTextRotationHandleOffsetPx = 24.0f;
+inline constexpr float AnnotationEditorRotationSnapDegrees = 15.0f;
+inline constexpr double AnnotationEditorPi = 3.14159265358979323846;
 
 inline constexpr int AnnotationEditorButtonCount =
     AnnotationEditorToolButtonCount + AnnotationEditorActionButtonCount;
@@ -565,6 +570,12 @@ inline int annotationEditorInlineEditHeight(int font_size)
   return font_size + AnnotationEditorInlineEditHeightPad;
 }
 
+inline int annotationEditorInlineEditHeight(int font_size, int line_count)
+{
+  return (std::max)(1, line_count) * font_size +
+         AnnotationEditorInlineEditHeightPad;
+}
+
 inline int annotationEditorInlineEditPaddedExtent(int text_extent_px)
 {
   const int extent = (std::max)(0, text_extent_px);
@@ -586,6 +597,12 @@ inline int annotationEditorInlineEditWidth(int text_extent_px, int remain_width)
                          annotationEditorInlineEditPaddedExtent(text_extent_px));
   width = (std::min)(width, remain_width);
   return (std::max)(1, width);
+}
+
+inline int annotationEditorTextAvailableWidth(int image_width, float text_x)
+{
+  const int start_x = static_cast<int>(text_x);
+  return (std::max)(1, image_width - start_x);
 }
 
 inline constexpr std::size_t AnnotationEditorInvalidIndex =
@@ -611,6 +628,7 @@ enum class AnnotationEditorTextHit
   None,
   Body,
   Delete,
+  Rotate,
 };
 
 struct AnnotationEditorRect
@@ -953,12 +971,68 @@ struct AnnotationEditorTextChrome
 {
   AnnotationEditorRect frame{};
   AnnotationEditorRect delete_button{};
+  AnnotationEditorRect rotation_handle_bounds{};
+  PointF corners[4]{};
+  PointF center{};
+  PointF delete_center{};
+  PointF rotation_handle{};
+  PointF rotation_connector_start{};
+  PointF rotation_connector_end{};
+  float rotation_degrees{0.0f};
 };
 
 inline bool annotationEditorContains(const AnnotationEditorRect& rect, int x,
                                      int y)
 {
   return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+inline float annotationEditorNormalizeDegrees(float degrees)
+{
+  float normalized = std::fmod(degrees, 360.0f);
+  if (normalized < 0.0f)
+  {
+    normalized += 360.0f;
+  }
+  if (normalized >= 360.0f)
+  {
+    normalized = 0.0f;
+  }
+  return normalized;
+}
+
+inline float annotationEditorSnapRotationDegrees(float degrees, bool snap)
+{
+  if (!snap)
+  {
+    return annotationEditorNormalizeDegrees(degrees);
+  }
+  const float snapped =
+      std::round(degrees / AnnotationEditorRotationSnapDegrees) *
+      AnnotationEditorRotationSnapDegrees;
+  return annotationEditorNormalizeDegrees(snapped);
+}
+
+inline PointF annotationEditorRotatePoint(const PointF& point,
+                                          const PointF& center,
+                                          float degrees)
+{
+  const double radians =
+      static_cast<double>(degrees) * AnnotationEditorPi / 180.0;
+  const double cosine = std::cos(radians);
+  const double sine = std::sin(radians);
+  const double dx = static_cast<double>(point.x - center.x);
+  const double dy = static_cast<double>(point.y - center.y);
+  return PointF{
+      center.x + static_cast<float>(dx * cosine - dy * sine),
+      center.y + static_cast<float>(dx * sine + dy * cosine)};
+}
+
+inline PointF annotationEditorInverseRotatePoint(const PointF& point,
+                                                 const PointF& center,
+                                                 float degrees)
+{
+  return annotationEditorRotatePoint(point, center, -degrees);
 }
 
 enum class AnnotationEditorColorPickerHit
@@ -1139,7 +1213,7 @@ inline void annotationEditorPlaceColorPicker(int anchor_x, int anchor_y,
 
 inline AnnotationEditorTextChrome annotationEditorTextChrome(
     int origin_x, int origin_y, int text_x, int text_y, int text_width,
-    int text_height)
+    int text_height, float rotation_degrees = 0.0f)
 {
   AnnotationEditorTextChrome chrome{};
   chrome.frame.left = origin_x + text_x - AnnotationEditorTextChromePadPx;
@@ -1156,17 +1230,81 @@ inline AnnotationEditorTextChrome annotationEditorTextChrome(
       chrome.frame.top - AnnotationEditorTextDeleteButtonPx / 2;
   chrome.delete_button.bottom =
       chrome.delete_button.top + AnnotationEditorTextDeleteButtonPx;
+  chrome.center = PointF{
+      static_cast<float>(chrome.frame.left + chrome.frame.right) / 2.0f,
+      static_cast<float>(chrome.frame.top + chrome.frame.bottom) / 2.0f};
+  const PointF local_corners[4] = {
+      PointF{static_cast<float>(chrome.frame.left),
+             static_cast<float>(chrome.frame.top)},
+      PointF{static_cast<float>(chrome.frame.right),
+             static_cast<float>(chrome.frame.top)},
+      PointF{static_cast<float>(chrome.frame.right),
+             static_cast<float>(chrome.frame.bottom)},
+      PointF{static_cast<float>(chrome.frame.left),
+             static_cast<float>(chrome.frame.bottom)}};
+  chrome.rotation_degrees =
+      annotationEditorNormalizeDegrees(rotation_degrees);
+  for (int index = 0; index < 4; ++index)
+  {
+    chrome.corners[index] = annotationEditorRotatePoint(
+        local_corners[index], chrome.center, chrome.rotation_degrees);
+  }
+
+  chrome.delete_center = chrome.corners[1];
+  chrome.delete_button.left = static_cast<int>(std::lround(
+      chrome.delete_center.x - AnnotationEditorTextDeleteButtonPx / 2.0f));
+  chrome.delete_button.top = static_cast<int>(std::lround(
+      chrome.delete_center.y - AnnotationEditorTextDeleteButtonPx / 2.0f));
+  chrome.delete_button.right =
+      chrome.delete_button.left + AnnotationEditorTextDeleteButtonPx;
+  chrome.delete_button.bottom =
+      chrome.delete_button.top + AnnotationEditorTextDeleteButtonPx;
+
+  const PointF& top_left = chrome.corners[0];
+  const float direction_x = top_left.x - chrome.center.x;
+  const float direction_y = top_left.y - chrome.center.y;
+  const float direction_length =
+      std::sqrt(direction_x * direction_x + direction_y * direction_y);
+  const float scale =
+      direction_length > 0.0f
+          ? AnnotationEditorTextRotationHandleOffsetPx / direction_length
+          : 0.0f;
+  chrome.rotation_handle =
+      PointF{top_left.x + direction_x * scale,
+             top_left.y + direction_y * scale};
+  chrome.rotation_connector_start = top_left;
+  chrome.rotation_connector_end = chrome.rotation_handle;
+  chrome.rotation_handle_bounds.left = static_cast<int>(std::lround(
+      chrome.rotation_handle.x - AnnotationEditorTextRotationHandleRadiusPx));
+  chrome.rotation_handle_bounds.top = static_cast<int>(std::lround(
+      chrome.rotation_handle.y - AnnotationEditorTextRotationHandleRadiusPx));
+  chrome.rotation_handle_bounds.right =
+      chrome.rotation_handle_bounds.left +
+      AnnotationEditorTextRotationHandleRadiusPx * 2;
+  chrome.rotation_handle_bounds.bottom =
+      chrome.rotation_handle_bounds.top +
+      AnnotationEditorTextRotationHandleRadiusPx * 2;
   return chrome;
 }
 
 inline AnnotationEditorTextHit annotationEditorHitTextChrome(
     const AnnotationEditorTextChrome& chrome, int x, int y)
 {
+  if (annotationEditorContains(chrome.rotation_handle_bounds, x, y))
+  {
+    return AnnotationEditorTextHit::Rotate;
+  }
   if (annotationEditorContains(chrome.delete_button, x, y))
   {
     return AnnotationEditorTextHit::Delete;
   }
-  if (annotationEditorContains(chrome.frame, x, y))
+  const PointF local = annotationEditorInverseRotatePoint(
+      PointF{static_cast<float>(x), static_cast<float>(y)}, chrome.center,
+      chrome.rotation_degrees);
+  if (local.x >= static_cast<float>(chrome.frame.left) &&
+      local.x < static_cast<float>(chrome.frame.right) &&
+      local.y >= static_cast<float>(chrome.frame.top) &&
+      local.y < static_cast<float>(chrome.frame.bottom))
   {
     return AnnotationEditorTextHit::Body;
   }

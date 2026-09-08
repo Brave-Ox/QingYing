@@ -213,6 +213,8 @@ struct Annotation
   PointF end{};
   std::vector<PointF> points{};
   std::wstring text;
+  float text_wrap_width{0.0f};
+  float rotation_degrees{0.0f};
   int mosaic_block_size{DefaultMosaicBlockSize};
 };
 

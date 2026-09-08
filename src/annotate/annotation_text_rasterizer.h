@@ -8,6 +8,10 @@ namespace qingying {
 
 GdiObject createAnnotationTextFont(const AnnotationStyle& style,
                                    int font_size);
+bool measureAnnotationTextLayout(HDC hdc, const Annotation& annotation,
+                                 int max_width, SIZE& out_size);
+bool applyAnnotationTextWorldTransform(HDC hdc, float rotation_degrees,
+                                       float center_x, float center_y);
 
 // AnnotationRenderer 的平台边界：仅负责把文字字形栅格化到 BGRA32 图像。
 // 几何图形和像素合成仍由 AnnotationRenderer 保持平台无关。

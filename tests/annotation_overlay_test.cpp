@@ -848,6 +848,16 @@ TEST(AnnotationOverlayTest, InlineEditHeightTracksFontSize)
             32 + AnnotationEditorInlineEditHeightPad);
 }
 
+TEST(AnnotationOverlayTest, InlineEditHeightGrowsWithWrappedLineCount)
+{
+  EXPECT_EQ(annotationEditorInlineEditHeight(20, 1),
+            20 + AnnotationEditorInlineEditHeightPad);
+  EXPECT_EQ(annotationEditorInlineEditHeight(20, 3),
+            60 + AnnotationEditorInlineEditHeightPad);
+  EXPECT_EQ(annotationEditorInlineEditHeight(20, 0),
+            20 + AnnotationEditorInlineEditHeightPad);
+}
+
 TEST(AnnotationOverlayTest, TextStyleTargetUsesSelectionOrEditingIndex)
 {
   constexpr std::size_t kInvalid = AnnotationEditorInvalidIndex;
@@ -893,6 +903,14 @@ TEST(AnnotationOverlayTest, InlineEditWidthGrowsWithTextThenClampsToRemain)
   EXPECT_EQ(annotationEditorInlineEditWidth(400, 400), 400);
   EXPECT_EQ(annotationEditorInlineEditWidth(120, 50), 50);
   EXPECT_EQ(annotationEditorInlineEditWidth(120, 0), 1);
+}
+
+TEST(AnnotationOverlayTest, TextAvailableWidthStopsAtScreenshotRightEdge)
+{
+  EXPECT_EQ(annotationEditorTextAvailableWidth(800, 120.0f), 680);
+  EXPECT_EQ(annotationEditorTextAvailableWidth(800, 799.0f), 1);
+  EXPECT_EQ(annotationEditorTextAvailableWidth(800, 900.0f), 1);
+  EXPECT_EQ(annotationEditorTextAvailableWidth(0, 0.0f), 1);
 }
 
 TEST(AnnotationOverlayTest, InlineEditFormatWidthLeavesGlyphAndCaret)
@@ -949,6 +967,51 @@ TEST(AnnotationOverlayTest, TextChromeHitTestPrefersDeleteOverBody)
             AnnotationEditorTextHit::Delete);
   EXPECT_EQ(annotationEditorHitTextChrome(chrome, chrome.frame.left + 2,
                                           chrome.frame.top + 2),
+            AnnotationEditorTextHit::Body);
+  EXPECT_EQ(annotationEditorHitTextChrome(chrome, 0, 0),
+            AnnotationEditorTextHit::None);
+}
+
+TEST(AnnotationOverlayTest, TextRotationNormalizesAndSnapsToFifteenDegrees)
+{
+  EXPECT_FLOAT_EQ(annotationEditorNormalizeDegrees(360.0f), 0.0f);
+  EXPECT_FLOAT_EQ(annotationEditorNormalizeDegrees(-30.0f), 330.0f);
+  EXPECT_FLOAT_EQ(annotationEditorNormalizeDegrees(390.0f), 30.0f);
+  EXPECT_FLOAT_EQ(annotationEditorSnapRotationDegrees(22.0f, true), 15.0f);
+  EXPECT_FLOAT_EQ(annotationEditorSnapRotationDegrees(23.0f, true), 30.0f);
+  EXPECT_FLOAT_EQ(annotationEditorSnapRotationDegrees(23.0f, false), 23.0f);
+}
+
+TEST(AnnotationOverlayTest, TextRotationPointRoundTripsAroundCenter)
+{
+  const PointF center{10.0f, 10.0f};
+  const PointF source{20.0f, 10.0f};
+  const PointF rotated =
+      annotationEditorRotatePoint(source, center, 90.0f);
+  EXPECT_NEAR(rotated.x, 10.0f, 0.001f);
+  EXPECT_NEAR(rotated.y, 20.0f, 0.001f);
+
+  const PointF restored =
+      annotationEditorInverseRotatePoint(rotated, center, 90.0f);
+  EXPECT_NEAR(restored.x, source.x, 0.001f);
+  EXPECT_NEAR(restored.y, source.y, 0.001f);
+}
+
+TEST(AnnotationOverlayTest, RotatedTextChromeHitsControlsAndBody)
+{
+  const AnnotationEditorTextChrome chrome =
+      annotationEditorTextChrome(0, 0, 10, 10, 40, 20, 90.0f);
+  EXPECT_EQ(annotationEditorHitTextChrome(
+                chrome, static_cast<int>(chrome.rotation_handle.x),
+                static_cast<int>(chrome.rotation_handle.y)),
+            AnnotationEditorTextHit::Rotate);
+  EXPECT_EQ(annotationEditorHitTextChrome(
+                chrome, static_cast<int>(chrome.delete_center.x),
+                static_cast<int>(chrome.delete_center.y)),
+            AnnotationEditorTextHit::Delete);
+  EXPECT_EQ(annotationEditorHitTextChrome(
+                chrome, static_cast<int>(chrome.center.x),
+                static_cast<int>(chrome.center.y)),
             AnnotationEditorTextHit::Body);
   EXPECT_EQ(annotationEditorHitTextChrome(chrome, 0, 0),
             AnnotationEditorTextHit::None);

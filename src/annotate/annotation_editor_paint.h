@@ -59,16 +59,20 @@ struct AnnotationEditorPaintSnapshot
   bool stroke_popup_visible{false};
 
   bool text_dragging{false};
+  bool text_rotating{false};
   std::size_t text_target_index{kInvalidAnnotationIndex};
   float text_drag_x{0.0f};
   float text_drag_y{0.0f};
+  float text_rotation_degrees{0.0f};
   float text_anchor_x{0.0f};
   float text_anchor_y{0.0f};
+  float text_wrap_width{0.0f};
   bool inline_edit_visible{false};
   std::size_t editing_text_index{kInvalidAnnotationIndex};
   std::size_t selected_text_index{kInvalidAnnotationIndex};
   std::wstring inline_text;
   int inline_caret{0};
+  POINT inline_caret_position{};
   RECT inline_edit_rect{};
 };
 

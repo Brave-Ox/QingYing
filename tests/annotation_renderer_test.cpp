@@ -106,6 +106,40 @@ std::uint32_t pixelAt(const Image& image, int x, int y)
                          static_cast<std::size_t>(x));
 }
 
+RectF changedPixelBounds(const Image& before, const Image& after)
+{
+  int left = after.width;
+  int top = after.height;
+  int right = 0;
+  int bottom = 0;
+  bool changed = false;
+  for (int y = 0; y < after.height; ++y)
+  {
+    for (int x = 0; x < after.width; ++x)
+    {
+      const std::size_t index =
+          static_cast<std::size_t>(y) * static_cast<std::size_t>(after.width) +
+          static_cast<std::size_t>(x);
+      if (before.pixels.at(index) == after.pixels.at(index))
+      {
+        continue;
+      }
+      changed = true;
+      left = (std::min)(left, x);
+      top = (std::min)(top, y);
+      right = (std::max)(right, x + 1);
+      bottom = (std::max)(bottom, y + 1);
+    }
+  }
+  if (!changed)
+  {
+    return RectF{};
+  }
+  return RectF{static_cast<float>(left), static_cast<float>(top),
+               static_cast<float>(right - left),
+               static_cast<float>(bottom - top)};
+}
+
 // 统计以 (cx, cy) 为中心的方框内、不在 axis_y 这一行上的着色像素数量。
 // 用于区分「只有主干线」和「主干线 + 箭头头部」。
 int countColoredOffAxis(const Image& image, int cx, int cy, int radius,
@@ -746,6 +780,74 @@ TEST(AnnotationRendererTest, TextItalicStyleChangesRasterizedGlyphs)
   ASSERT_TRUE(renderer.rasterize(makeCanvas(), normal_document, normal_out));
   ASSERT_TRUE(renderer.rasterize(makeCanvas(), italic_document, italic_out));
   EXPECT_NE(normal_out.pixels, italic_out.pixels);
+}
+
+TEST(AnnotationRendererTest, LongTextWrapsInsideConfiguredWidth)
+{
+  Image source;
+  source.width = 160;
+  source.height = 120;
+  source.pixels.assign(static_cast<std::size_t>(source.width) *
+                           static_cast<std::size_t>(source.height),
+                       kWhitePx);
+
+  Annotation text;
+  text.type = AnnotationType::Text;
+  text.start = PointF{10.0f, 8.0f};
+  text.text = L"AAAAAAAAAAAAAAAA";
+  text.text_wrap_width = 42.0f;
+  text.style.color = ColorBgra{0, 0, 255, 255};
+  text.style.font_size = 18;
+
+  AnnotationDocument document;
+  ASSERT_TRUE(document.add(text));
+  const AnnotationRenderer renderer;
+  Image out;
+  ASSERT_TRUE(renderer.rasterize(source, document, out));
+
+  const RectF changed = changedPixelBounds(source, out);
+  EXPECT_GT(changed.height, 24.0f);
+  EXPECT_LE(changed.x + changed.width,
+            text.start.x + text.text_wrap_width + 1.0f);
+}
+
+TEST(AnnotationRendererTest, TextRotationChangesRasterizedOrientation)
+{
+  Image source;
+  source.width = 180;
+  source.height = 160;
+  source.pixels.assign(static_cast<std::size_t>(source.width) *
+                           static_cast<std::size_t>(source.height),
+                       kWhitePx);
+
+  Annotation horizontal;
+  horizontal.type = AnnotationType::Text;
+  horizontal.start = PointF{50.0f, 55.0f};
+  horizontal.text = L"MMMM";
+  horizontal.text_wrap_width = 90.0f;
+  horizontal.style.color = ColorBgra{0, 0, 255, 255};
+  horizontal.style.font_size = 24;
+
+  Annotation rotated = horizontal;
+  rotated.rotation_degrees = 90.0f;
+  AnnotationDocument horizontal_document;
+  AnnotationDocument rotated_document;
+  ASSERT_TRUE(horizontal_document.add(horizontal));
+  ASSERT_TRUE(rotated_document.add(rotated));
+
+  const AnnotationRenderer renderer;
+  Image horizontal_out;
+  Image rotated_out;
+  ASSERT_TRUE(
+      renderer.rasterize(source, horizontal_document, horizontal_out));
+  ASSERT_TRUE(renderer.rasterize(source, rotated_document, rotated_out));
+
+  const RectF horizontal_bounds =
+      changedPixelBounds(source, horizontal_out);
+  const RectF rotated_bounds = changedPixelBounds(source, rotated_out);
+  EXPECT_GT(horizontal_bounds.width, horizontal_bounds.height);
+  EXPECT_GT(rotated_bounds.height, rotated_bounds.width);
+  EXPECT_NE(horizontal_out.pixels, rotated_out.pixels);
 }
 
 TEST(AnnotationRendererTest, MosaicBrushPixelatesTouchedBlocks)

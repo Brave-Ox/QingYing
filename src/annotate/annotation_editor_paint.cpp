@@ -1,6 +1,7 @@
 ﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "annotate/annotation_editor_paint.h"
 #include <cstddef>
@@ -98,11 +99,15 @@ AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
       IsWindowVisible(stroke_popup.m_stroke_popup) != FALSE;
 
   snapshot.text_dragging = inline_text.m_text_dragging;
+  snapshot.text_rotating = inline_text.m_text_rotating;
   snapshot.text_target_index = inline_text.m_text_target_index;
   snapshot.text_drag_x = inline_text.m_text_drag_x;
   snapshot.text_drag_y = inline_text.m_text_drag_y;
+  snapshot.text_rotation_degrees =
+      inline_text.m_text_rotation_degrees;
   snapshot.text_anchor_x = inline_text.m_text_anchor_x;
   snapshot.text_anchor_y = inline_text.m_text_anchor_y;
+  snapshot.text_wrap_width = inline_text.m_text_wrap_width;
   snapshot.editing_text_index = inline_text.m_editing_text_index;
   snapshot.selected_text_index = inline_text.m_selected_text_index;
   if (inline_text.m_inline_edit != nullptr)
@@ -120,6 +125,13 @@ AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
     const int text_length = static_cast<int>(snapshot.inline_text.size());
     snapshot.inline_caret =
         (std::min)(text_length, (std::max)(0, static_cast<int>(selection_start)));
+    const LRESULT caret_position = SendMessageW(
+        inline_text.m_inline_edit, EM_POSFROMCHAR,
+        static_cast<WPARAM>(snapshot.inline_caret), 0);
+    snapshot.inline_caret_position.x =
+        static_cast<int>(static_cast<short>(LOWORD(caret_position)));
+    snapshot.inline_caret_position.y =
+        static_cast<int>(static_cast<short>(HIWORD(caret_position)));
 
     RECT edit_rect{};
     if (snapshot.overlay != nullptr &&
@@ -258,12 +270,16 @@ void paintEditor(const AnnotationEditorPaintSnapshot& snapshot, HDC hdc,
       snapshot.text_dragging &&
       snapshot.text_target_index != kInvalidAnnotationIndex &&
       snapshot.text_target_index < snapshot.document.count();
+  const bool rotate =
+      snapshot.text_rotating &&
+      snapshot.text_target_index != kInvalidAnnotationIndex &&
+      snapshot.text_target_index < snapshot.document.count();
   const bool hide_editing =
       snapshot.inline_edit_visible &&
       snapshot.editing_text_index != kInvalidAnnotationIndex &&
       snapshot.editing_text_index < snapshot.document.count();
 
-  if (relocate || hide_editing)
+  if (relocate || rotate || hide_editing)
   {
     AnnotationDocument temp;
     const auto& items = snapshot.document.items();
@@ -280,6 +296,10 @@ void paintEditor(const AnnotationEditorPaintSnapshot& snapshot, HDC hdc,
         item.start.y = snapshot.text_drag_y;
         item.bounds.x = item.start.x;
         item.bounds.y = item.start.y;
+      }
+      if (rotate && i == snapshot.text_target_index)
+      {
+        item.rotation_degrees = snapshot.text_rotation_degrees;
       }
       (void)temp.add(item);
     }
@@ -394,8 +414,35 @@ void drawTextSelectionFrame(HDC hdc,
   {
     const SelectGuard selected_pen(hdc, pen.get());
     const SelectGuard selected_brush(hdc, GetStockObject(NULL_BRUSH));
-    Rectangle(hdc, chrome.frame.left, chrome.frame.top, chrome.frame.right,
-              chrome.frame.bottom);
+    POINT corners[5]{};
+    for (int index = 0; index < 4; ++index)
+    {
+      corners[index].x =
+          static_cast<LONG>(std::lround(chrome.corners[index].x));
+      corners[index].y =
+          static_cast<LONG>(std::lround(chrome.corners[index].y));
+    }
+    corners[4] = corners[0];
+    (void)Polyline(hdc, corners, 5);
+    MoveToEx(
+        hdc,
+        static_cast<int>(std::lround(chrome.rotation_connector_start.x)),
+        static_cast<int>(std::lround(chrome.rotation_connector_start.y)),
+        nullptr);
+    (void)LineTo(
+        hdc, static_cast<int>(
+                 std::lround(chrome.rotation_connector_end.x)),
+        static_cast<int>(std::lround(chrome.rotation_connector_end.y)));
+
+    const AnnotationEditorRect& rotate_bounds =
+        chrome.rotation_handle_bounds;
+    const GdiObject rotate_fill(CreateSolidBrush(RGB(255, 255, 255)));
+    if (rotate_fill)
+    {
+      const SelectGuard selected_fill(hdc, rotate_fill.get());
+      (void)Ellipse(hdc, rotate_bounds.left, rotate_bounds.top,
+                    rotate_bounds.right, rotate_bounds.bottom);
+    }
   }
 
   RECT delete_rect{chrome.delete_button.left, chrome.delete_button.top,

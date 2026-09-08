@@ -1,6 +1,7 @@
 ﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -127,6 +128,9 @@ void commitInlineText(AnnotationEditorHost* data)
   annotation.start = PointF{anchor_x, anchor_y};
   annotation.text.assign(buffer);
   annotation.style = data->core().m_controller.style();
+  annotation.text_wrap_width = data->inlineText().m_text_wrap_width;
+  annotation.rotation_degrees =
+      data->inlineText().m_text_rotation_degrees;
   fillTextHitBounds(overlay, annotation);
 
   bool ok = false;
@@ -175,6 +179,7 @@ void resetTextGesture(AnnotationEditorHost* data)
   }
   data->inlineText().m_text_gesture_active = false;
   data->inlineText().m_text_dragging = false;
+  data->inlineText().m_text_rotating = false;
   data->inlineText().m_text_target_index = kInvalidAnnotationIndex;
 }
 
@@ -286,25 +291,11 @@ void selectFontSizeInCombo(AnnotationEditorHost* data, int font_size)
 
 bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size)
 {
-  out_size.cx = 0;
-  out_size.cy = 0;
-  if (hdc == nullptr || annotation.text.empty())
-  {
-    return false;
-  }
-
-  const GdiObject font(createAnnotationTextFont(
-      annotation.style, annotation.style.font_size));
-  if (!font)
-  {
-    return false;
-  }
-
-  const SelectGuard selected(hdc, font.get());
-  const BOOL ok = GetTextExtentPoint32W(
-      hdc, annotation.text.c_str(), static_cast<int>(annotation.text.size()),
-      &out_size);
-  return ok != FALSE;
+  constexpr int LegacySingleLineWidth = 32767;
+  const int width = annotation.text_wrap_width > 0.0f
+                        ? static_cast<int>(annotation.text_wrap_width)
+                        : LegacySingleLineWidth;
+  return measureAnnotationTextLayout(hdc, annotation, width, out_size);
 }
 
 void measureTextHitSize(HDC hdc, const Annotation& annotation, int& out_width,
@@ -317,7 +308,11 @@ void measureTextHitSize(HDC hdc, const Annotation& annotation, int& out_width,
   SIZE size{};
   if (measureAnnotationText(hdc, annotation, size))
   {
-    out_width = (std::max)(static_cast<int>(size.cx), kTextMinHitWidthPx);
+    const int layout_width =
+        annotation.text_wrap_width > 0.0f
+            ? static_cast<int>(annotation.text_wrap_width)
+            : static_cast<int>(size.cx);
+    out_width = (std::max)(layout_width, kTextMinHitWidthPx);
     out_height = (std::max)(static_cast<int>(size.cy), kTextMinHitHeightPx);
   }
 }
@@ -348,8 +343,16 @@ AnnotationEditorTextChrome makeTextChrome(const AnnotationEditorHost* data,
     text_x = static_cast<int>(data->inlineText().m_text_drag_x);
     text_y = static_cast<int>(data->inlineText().m_text_drag_y);
   }
-  return annotationEditorTextChrome(data->window().m_image_origin_x, data->window().m_image_origin_y,
-                                    text_x, text_y, width, height);
+  float rotation_degrees = annotation.rotation_degrees;
+  if (data->inlineText().m_text_rotating &&
+      data->inlineText().m_text_target_index ==
+          data->inlineText().m_selected_text_index)
+  {
+    rotation_degrees = data->inlineText().m_text_rotation_degrees;
+  }
+  return annotationEditorTextChrome(
+      data->window().m_image_origin_x, data->window().m_image_origin_y, text_x,
+      text_y, width, height, rotation_degrees);
 }
 
 AnnotationEditorTextChrome makeTextChrome(
@@ -373,9 +376,15 @@ AnnotationEditorTextChrome makeTextChrome(
     text_x = static_cast<int>(snapshot.text_drag_x);
     text_y = static_cast<int>(snapshot.text_drag_y);
   }
-  return annotationEditorTextChrome(snapshot.image_origin_x,
-                                    snapshot.image_origin_y, text_x, text_y,
-                                    width, height);
+  float rotation_degrees = annotation.rotation_degrees;
+  if (snapshot.text_rotating &&
+      snapshot.text_target_index == snapshot.selected_text_index)
+  {
+    rotation_degrees = snapshot.text_rotation_degrees;
+  }
+  return annotationEditorTextChrome(
+      snapshot.image_origin_x, snapshot.image_origin_y, text_x, text_y, width,
+      height, rotation_degrees);
 }
 
 std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y)
@@ -399,13 +408,27 @@ std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y)
         data->inlineText().m_text_dragging && data->inlineText().m_text_target_index == index;
     const AnnotationEditorTextChrome chrome =
         makeTextChrome(data, annotation, dragging);
+    const AnnotationEditorTextHit chrome_hit =
+        annotationEditorHitTextChrome(chrome, x, y);
+    if (chrome_hit != AnnotationEditorTextHit::None &&
+        (chrome_hit != AnnotationEditorTextHit::Rotate ||
+         data->inlineText().m_selected_text_index == index))
+    {
+      return index;
+    }
+
+    const PointF local = annotationEditorInverseRotatePoint(
+        PointF{static_cast<float>(x), static_cast<float>(y)}, chrome.center,
+        chrome.rotation_degrees);
     AnnotationEditorRect grab = chrome.frame;
     grab.left -= kTextHitPaddingPx;
     grab.top -= kTextHitPaddingPx;
     grab.right += kTextHitPaddingPx;
     grab.bottom += kTextHitPaddingPx;
-    if (annotationEditorContains(chrome.delete_button, x, y) ||
-        annotationEditorContains(grab, x, y))
+    if (local.x >= static_cast<float>(grab.left) &&
+        local.x < static_cast<float>(grab.right) &&
+        local.y >= static_cast<float>(grab.top) &&
+        local.y < static_cast<float>(grab.bottom))
     {
       return index;
     }
@@ -472,6 +495,14 @@ void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
 
 bool isCtrlZKey(WPARAM key) {
   return key == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
+float textRotationPointerDegrees(const PointF& center, int x, int y)
+{
+  const double radians =
+      std::atan2(static_cast<double>(y) - center.y,
+                 static_cast<double>(x) - center.x);
+  return static_cast<float>(radians * 180.0 / AnnotationEditorPi);
 }
 
 LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -624,15 +655,16 @@ void layoutInlineEdit(AnnotationEditorHost* data)
     return;
   }
 
-  const Image& source = data->core().m_session.source();
   const int canvas_x = static_cast<int>(data->inlineText().m_text_anchor_x);
   const int canvas_y = static_cast<int>(data->inlineText().m_text_anchor_y);
-  const int remain_width = source.width - canvas_x;
 
   wchar_t buffer[kInlineTextMaxChars]{};
   GetWindowTextW(data->inlineText().m_inline_edit, buffer, kInlineTextMaxChars);
 
   int text_extent = 0;
+  int width = annotationEditorInlineEditWidth(
+      text_extent, static_cast<int>(data->inlineText().m_text_max_width));
+  SIZE layout_size{};
   const HDC hdc = GetDC(data->inlineText().m_inline_edit);
   if (hdc != nullptr)
   {
@@ -663,6 +695,14 @@ void layoutInlineEdit(AnnotationEditorHost* data)
         text_extent += -last.abcC;
       }
     }
+    width = annotationEditorInlineEditWidth(
+        text_extent, static_cast<int>(data->inlineText().m_text_max_width));
+    Annotation draft;
+    draft.type = AnnotationType::Text;
+    draft.style = data->core().m_controller.style();
+    draft.text.assign(buffer);
+    draft.text_wrap_width = static_cast<float>(width);
+    (void)measureAnnotationTextLayout(hdc, draft, width, layout_size);
     if (old_font != nullptr)
     {
       SelectObject(hdc, old_font);
@@ -671,9 +711,11 @@ void layoutInlineEdit(AnnotationEditorHost* data)
   }
 
   invalidateInlineEditRegion(data);
-  const int width = annotationEditorInlineEditWidth(text_extent, remain_width);
-  const int height =
-      annotationEditorInlineEditHeight(data->core().m_controller.style().font_size);
+  data->inlineText().m_text_wrap_width = static_cast<float>(width);
+  const int font_size = data->core().m_controller.style().font_size;
+  const int layout_height =
+      layout_size.cy > 0 ? static_cast<int>(layout_size.cy) : font_size;
+  const int height = layout_height + AnnotationEditorInlineEditHeightPad;
   const HWND host = data->inlineText().m_inline_edit_host != nullptr ? data->inlineText().m_inline_edit_host
                                                       : data->inlineText().m_inline_edit;
   positionOwnedPopup(host, data->window().m_overlay, data->window().m_image_origin_x + canvas_x,
@@ -683,9 +725,8 @@ void layoutInlineEdit(AnnotationEditorHost* data)
     SetWindowPos(data->inlineText().m_inline_edit, nullptr, 0, 0, width, height,
                  SWP_NOZORDER | SWP_NOACTIVATE);
   }
-  placeInlineEditCaret(
-      data->inlineText().m_inline_edit, lstrlenW(buffer),
-      annotationEditorInlineEditNeedsHScroll(text_extent, remain_width));
+  placeInlineEditCaret(data->inlineText().m_inline_edit, lstrlenW(buffer),
+                       false);
   invalidateInlineEditRegion(data);
   invalidateImageArea(data);
 }
@@ -727,12 +768,34 @@ void paintLiveInlineText(HDC hdc,
       snapshot.image_origin_x + static_cast<int>(snapshot.text_anchor_x);
   const int origin_y =
       snapshot.image_origin_y + static_cast<int>(snapshot.text_anchor_y);
+  const int wrap_width =
+      (std::max)(1, static_cast<int>(snapshot.text_wrap_width));
+  const int edit_height = static_cast<int>(
+      snapshot.inline_edit_rect.bottom - snapshot.inline_edit_rect.top);
+  const int layout_height = (std::max)(
+      font_px, edit_height - AnnotationEditorInlineEditHeightPad);
+  const int saved_dc = SaveDC(hdc);
+  if (saved_dc == 0)
+  {
+    return;
+  }
+  const float center_x =
+      static_cast<float>(origin_x) + static_cast<float>(wrap_width) / 2.0f;
+  const float center_y =
+      static_cast<float>(origin_y) + static_cast<float>(layout_height) / 2.0f;
+  if (!applyAnnotationTextWorldTransform(
+          hdc, snapshot.text_rotation_degrees, center_x, center_y))
+  {
+    (void)RestoreDC(hdc, saved_dc);
+    return;
+  }
   if (text_len > 0)
   {
-    RECT text_rect{origin_x, origin_y, origin_x + snapshot.source.width,
-                   origin_y + font_px + AnnotationEditorInlineEditHeightPad};
-    DrawTextW(hdc, snapshot.inline_text.c_str(), text_len, &text_rect,
-              DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE);
+    RECT text_rect{origin_x, origin_y, origin_x + wrap_width,
+                   origin_y + snapshot.source.height};
+    (void)DrawTextW(hdc, snapshot.inline_text.c_str(), text_len, &text_rect,
+                    DT_LEFT | DT_TOP | DT_NOPREFIX | DT_WORDBREAK |
+                        DT_EDITCONTROL);
   }
 
   int caret = snapshot.inline_caret;
@@ -745,20 +808,18 @@ void paintLiveInlineText(HDC hdc,
     caret = text_len;
   }
 
-  SIZE prefix{};
-  if (caret > 0)
-  {
-    (void)GetTextExtentPoint32W(hdc, snapshot.inline_text.c_str(), caret,
-                                &prefix);
-  }
-  const int caret_x = origin_x + static_cast<int>(prefix.cx);
+  const int caret_x =
+      snapshot.inline_edit_rect.left + snapshot.inline_caret_position.x;
+  const int caret_y =
+      snapshot.inline_edit_rect.top + snapshot.inline_caret_position.y;
   const GdiObject pen(CreatePen(PS_SOLID, kInlineCaretWidthPx, color));
   if (pen)
   {
     const SelectGuard selected_pen(hdc, pen.get());
-    MoveToEx(hdc, caret_x, origin_y, nullptr);
-    LineTo(hdc, caret_x, origin_y + font_px);
+    MoveToEx(hdc, caret_x, caret_y, nullptr);
+    LineTo(hdc, caret_x, caret_y + font_px);
   }
+  (void)RestoreDC(hdc, saved_dc);
 }
 
 void paintInlineEditFrame(HDC hdc,
@@ -772,18 +833,39 @@ void paintInlineEditFrame(HDC hdc,
 
   const RECT& rect = snapshot.inline_edit_rect;
   const int border = AnnotationEditorInlineEditBorderPx;
-  const HPEN pen = CreatePen(PS_SOLID, border, kInlineEditBorderColor);
-  if (pen == nullptr)
+  const GdiObject pen(CreatePen(PS_SOLID, border, kInlineEditBorderColor));
+  if (!pen)
   {
     return;
   }
-  const HGDIOBJ old_pen = SelectObject(hdc, pen);
-  const HGDIOBJ old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-  Rectangle(hdc, rect.left - border, rect.top - border, rect.right + border,
-            rect.bottom + border);
-  SelectObject(hdc, old_brush);
-  SelectObject(hdc, old_pen);
-  DeleteObject(pen);
+  const SelectGuard selected_pen(hdc, pen.get());
+  const SelectGuard selected_brush(hdc, GetStockObject(NULL_BRUSH));
+  const int edit_layout_height = static_cast<int>(
+      rect.bottom - rect.top - AnnotationEditorInlineEditHeightPad);
+  const float layout_height =
+      static_cast<float>((std::max)(1, edit_layout_height));
+  const PointF center{
+      static_cast<float>(rect.left) + snapshot.text_wrap_width / 2.0f,
+      static_cast<float>(rect.top) + layout_height / 2.0f};
+  const PointF frame_points[4]{
+      PointF{static_cast<float>(rect.left - border),
+             static_cast<float>(rect.top - border)},
+      PointF{static_cast<float>(rect.right + border),
+             static_cast<float>(rect.top - border)},
+      PointF{static_cast<float>(rect.right + border),
+             static_cast<float>(rect.bottom + border)},
+      PointF{static_cast<float>(rect.left - border),
+             static_cast<float>(rect.bottom + border)}};
+  POINT rotated[5]{};
+  for (int index = 0; index < 4; ++index)
+  {
+    const PointF point = annotationEditorRotatePoint(
+        frame_points[index], center, snapshot.text_rotation_degrees);
+    rotated[index].x = static_cast<LONG>(std::lround(point.x));
+    rotated[index].y = static_cast<LONG>(std::lround(point.y));
+  }
+  rotated[4] = rotated[0];
+  (void)Polyline(hdc, rotated, 5);
 }
 
 LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
@@ -892,6 +974,12 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
   canvasFromClient(data, x, y, click_x, click_y);
   data->inlineText().m_text_anchor_x = click_x;
   data->inlineText().m_text_anchor_y = click_y;
+  data->inlineText().m_text_rotation_degrees = 0.0f;
+  data->inlineText().m_text_max_width = static_cast<float>(
+      annotationEditorTextAvailableWidth(source.width, click_x));
+  data->inlineText().m_text_wrap_width =
+      static_cast<float>(annotationEditorInlineEditWidth(
+          0, static_cast<int>(data->inlineText().m_text_max_width)));
 
   if (edit_index != kInvalidAnnotationIndex &&
       edit_index < data->core().m_session.engine().document().count())
@@ -900,6 +988,14 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
         data->core().m_session.engine().document().items().at(edit_index);
     data->inlineText().m_text_anchor_x = existing.start.x;
     data->inlineText().m_text_anchor_y = existing.start.y;
+    data->inlineText().m_text_rotation_degrees =
+        existing.rotation_degrees;
+    const float available_width = static_cast<float>(
+        annotationEditorTextAvailableWidth(source.width, existing.start.x));
+    data->inlineText().m_text_max_width =
+        existing.text_wrap_width > 0.0f
+            ? (std::min)(existing.text_wrap_width, available_width)
+            : available_width;
     initial_text = existing.text;
     selectFontSizeInCombo(data, existing.style.font_size);
     data->core().m_controller.setColor(existing.style.color);
@@ -932,12 +1028,12 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
   }
   applyToolbarColorKey(data->inlineText().m_inline_edit_host);
 
-  // 必须带 ES_AUTOHSCROLL，否则单行 EDIT 在旧宽度内会丢弃新字符，EN_CHANGE
-  // 不会触发，输入框也就无法随文字变宽。布局后再清掉水平滚动残留。
+  // 多行 EDIT 在达到截图右边界后自动换行；透明子窗只承接键盘和 IME，
+  // 实际字形由 Overlay 用相同排版参数绘制。
   data->inlineText().m_inline_edit = CreateWindowExW(
       0, L"EDIT", initial_text.c_str(),
-      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_LEFT, 0, 0, edit_width,
-      edit_height, data->inlineText().m_inline_edit_host,
+      WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_LEFT, 0, 0,
+      edit_width, edit_height, data->inlineText().m_inline_edit_host,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kInlineEditId)),
       instance, nullptr);
   if (data->inlineText().m_inline_edit == nullptr)
@@ -948,6 +1044,8 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
     return;
   }
   SendMessageW(data->inlineText().m_inline_edit, EM_SETLIMITTEXT, kInlineTextMaxChars - 1, 0);
+  SendMessageW(data->inlineText().m_inline_edit, EM_SETMARGINS,
+               EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
   const AnnotationStyle& style = data->core().m_controller.style();
   data->inlineText().m_inline_edit_font =
       createAnnotationTextFont(style, style.font_size);
@@ -983,22 +1081,37 @@ void beginOrEditTextAt(AnnotationEditorHost* data, HWND hwnd, int x, int y)
   const std::size_t hit = hitTestTextAnnotation(data, x, y);
   if (hit != kInvalidAnnotationIndex)
   {
-    if (isTextDoubleClick(data, hit, x, y))
-    {
-      data->inlineText().m_last_text_click_index = kInvalidAnnotationIndex;
-      beginInlineText(data, hwnd, x, y, hit);
-      return;
-    }
-
     const Annotation& existing =
         data->core().m_session.engine().document().items().at(hit);
     const AnnotationEditorTextChrome chrome =
         makeTextChrome(data, existing, false);
-    if (annotationEditorHitTextChrome(chrome, x, y) ==
-        AnnotationEditorTextHit::Delete)
+    const AnnotationEditorTextHit chrome_hit =
+        annotationEditorHitTextChrome(chrome, x, y);
+    if (chrome_hit == AnnotationEditorTextHit::Delete)
     {
       selectTextAnnotation(data, hwnd, hit, x, y);
       (void)deleteSelectedTextAnnotation(data);
+      return;
+    }
+    if (chrome_hit == AnnotationEditorTextHit::Rotate)
+    {
+      selectTextAnnotation(data, hwnd, hit, x, y);
+      data->inlineText().m_text_gesture_active = true;
+      data->inlineText().m_text_rotating = true;
+      data->inlineText().m_text_target_index = hit;
+      data->inlineText().m_text_rotation_initial_degrees =
+          existing.rotation_degrees;
+      data->inlineText().m_text_rotation_degrees =
+          existing.rotation_degrees;
+      data->inlineText().m_text_rotation_press_degrees =
+          textRotationPointerDegrees(chrome.center, x, y);
+      SetCapture(hwnd);
+      return;
+    }
+    if (isTextDoubleClick(data, hit, x, y))
+    {
+      data->inlineText().m_last_text_click_index = kInvalidAnnotationIndex;
+      beginInlineText(data, hwnd, x, y, hit);
       return;
     }
 
@@ -1024,6 +1137,31 @@ void updateTextGesture(AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr || !data->inlineText().m_text_gesture_active)
   {
+    return;
+  }
+
+  if (data->inlineText().m_text_rotating)
+  {
+    const std::size_t index = data->inlineText().m_text_target_index;
+    if (index == kInvalidAnnotationIndex ||
+        index >= data->core().m_session.engine().document().count())
+    {
+      return;
+    }
+    const Annotation& annotation =
+        data->core().m_session.engine().document().items().at(index);
+    const AnnotationEditorTextChrome chrome =
+        makeTextChrome(data, annotation, false);
+    const float pointer_degrees =
+        textRotationPointerDegrees(chrome.center, x, y);
+    const float delta =
+        pointer_degrees -
+        data->inlineText().m_text_rotation_press_degrees;
+    const bool snap = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    data->inlineText().m_text_rotation_degrees =
+        annotationEditorSnapRotationDegrees(
+            data->inlineText().m_text_rotation_initial_degrees + delta, snap);
+    invalidateImageArea(data);
     return;
   }
 
@@ -1055,6 +1193,9 @@ void finishTextGesture(AnnotationEditorHost* data, HWND hwnd, int x, int y)
 
   const std::size_t index = data->inlineText().m_text_target_index;
   const bool was_dragging = data->inlineText().m_text_dragging;
+  const bool was_rotating = data->inlineText().m_text_rotating;
+  const float rotation_degrees =
+      data->inlineText().m_text_rotation_degrees;
   const float press_x = data->inlineText().m_text_press_x;
   const float press_y = data->inlineText().m_text_press_y;
   const float origin_x = data->inlineText().m_text_origin_x;
@@ -1065,6 +1206,24 @@ void finishTextGesture(AnnotationEditorHost* data, HWND hwnd, int x, int y)
   if (index == kInvalidAnnotationIndex ||
       index >= data->core().m_session.engine().document().count())
   {
+    return;
+  }
+
+  if (was_rotating)
+  {
+    Annotation updated =
+        data->core().m_session.engine().document().items().at(index);
+    if (updated.text_wrap_width <= 0.0f)
+    {
+      updated.text_wrap_width =
+          (std::max)(1.0f, updated.bounds.width);
+    }
+    updated.rotation_degrees =
+        annotationEditorNormalizeDegrees(rotation_degrees);
+    if (data->core().m_session.engine().replaceAt(index, updated))
+    {
+      selectTextAnnotation(data, hwnd, index, x, y);
+    }
     return;
   }
 
