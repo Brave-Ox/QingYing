@@ -117,14 +117,18 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
   }
   if (const auto* get = std::get_if<GetOperationRequest>(&request.payload)) {
     tick();
-    const auto snapshot = registry_.get(context, get->operation_id);
+    const auto snapshot = get->operation_handle ? registry_.get(context, *get->operation_handle)
+                                               : registry_.get(context, get->operation_id);
     auto response = responseWith(snapshot ? ErrorCode::kOk : ErrorCode::kOperationNotFound);
     if (snapshot) { response.control = *snapshot; response.result.operation_id = snapshot->operation_id; }
     reply(std::move(response)); return;
   }
   if (const auto* cancel = std::get_if<CancelOperationRequest>(&request.payload)) {
     std::optional<CancellationResult> result;
-    if (const auto* target = std::get_if<OperationCancellation>(&cancel->target)) {
+    if (cancel->operation_handle) {
+      const auto snapshot = registry_.get(context, *cancel->operation_handle);
+      if (snapshot) result = registry_.cancel(context, snapshot->operation_id);
+    } else if (const auto* target = std::get_if<OperationCancellation>(&cancel->target)) {
       result = registry_.cancel(context, target->operation_id);
     } else {
       const auto id = std::get<RequestCancellation>(cancel->target).request_id;
@@ -152,7 +156,11 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     reply(std::move(response)); return;
   }
   if (const auto* release = std::get_if<ReleaseResultRequest>(&request.payload)) {
-    const auto id = release->result_id;
+    const auto resolved = release->result_handle
+        ? registry_.resolveResult(context, *release->result_handle, true)
+        : std::optional<ResultId>{release->result_id};
+    if (!resolved) { reply(responseWith(ErrorCode::kResultNotFound)); return; }
+    const auto id = *resolved;
     const bool was_available = results_.resultStatus(context.action.result_scope, id) == ErrorCode::kOk;
     const auto code = results_.releaseResult(context.action.result_scope, id);
     auto response = responseWith(code);

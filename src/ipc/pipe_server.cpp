@@ -71,12 +71,12 @@ struct PipeServer::Impl {
     try {
       while (WaitForSingleObject(stop_event.get(), 0) == WAIT_TIMEOUT) {
         if (!detail::pipeConnect(pipe, stop_event.get())) {
-          const auto error = GetLastError();
+          const auto connect_error = GetLastError();
           if (WaitForSingleObject(stop_event.get(), 0) != WAIT_TIMEOUT) break;
           // A client may open and close an instance before ConnectNamedPipe
           // starts. Reset that instance instead of permanently losing a slot.
-          if (error == ERROR_NO_DATA || error == ERROR_BROKEN_PIPE ||
-              error == ERROR_PIPE_NOT_CONNECTED) {
+          if (connect_error == ERROR_NO_DATA || connect_error == ERROR_BROKEN_PIPE ||
+              connect_error == ERROR_PIPE_NOT_CONNECTED) {
             DisconnectNamedPipe(pipe);
             continue;
           }

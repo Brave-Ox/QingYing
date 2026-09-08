@@ -16,6 +16,7 @@ AutomationResponse failure(AutomationConnection connection, RequestId id, int co
   response.connection = connection;
   response.result.request_id = id;
   response.result.error_code = code;
+  response.transport_available = code != ErrorCode::kCancelled;
   return response;
 }
 bool controlLane(const AutomationRequest& request) {

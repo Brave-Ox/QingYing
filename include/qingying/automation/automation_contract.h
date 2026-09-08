@@ -144,6 +144,7 @@ struct ExecuteActionRequest {
 struct BeginLongShotRequest {};
 struct GetOperationRequest {
   OperationId operation_id{kInvalidOperationId};
+  std::optional<OperationHandle> operation_handle;
 };
 
 // Wrappers are required because RequestId and OperationId share uint64 storage.
@@ -162,19 +163,22 @@ struct CancelOperationRequest {
   // knows the operation ID. The public cancel_operation tool accepts only an
   // OperationHandle, resolved to OperationCancellation by the trusted map.
   CancellationTarget target{OperationCancellation{}};
+  std::optional<OperationHandle> operation_handle;
 };
 
 struct ReleaseResultRequest {
   ResultId result_id{kInvalidResultId};
+  std::optional<ResultHandle> result_handle;
 };
 
 using AutomationPayload =
     std::variant<ExecuteActionRequest, BeginLongShotRequest, GetOperationRequest,
                  CancelOperationRequest, ReleaseResultRequest>;
 
-// Private client/application DTO, NOT the public tool schema. Numeric IDs have
-// already passed through the connection-bound opaque handle map. The endpoint
-// still verifies ownership. No caller-provided scope, operation ID for execute,
+// Private client/application DTO, NOT the public tool schema. Numeric IDs are
+// for trusted internal callers. MCP control requests carry an opaque handle
+// instead; the endpoint resolves it against the authenticated connection before
+// execution. Supplying both forms is invalid. No caller-provided scope, operation ID for execute,
 // cancellation token or clock timestamp is accepted here.
 struct AutomationRequest {
   RequestId request_id{kInvalidRequestId};
@@ -206,6 +210,9 @@ using AutomationControlOutput =
 
 struct AutomationResponse {
   AutomationConnection connection;
+  // Local transport fact, never read from the wire. A disconnected client
+  // retains its original connection identity but cannot reach the application.
+  bool transport_available{true};
   // request_id always identifies this invocation. operation_id is the executed
   // or queried/cancelled operation, or zero for release, rejection before an
   // operation exists, and RequestId cancellation before operation allocation.
@@ -269,7 +276,7 @@ inline ActionValidationResult validateAutomationRequest(
     return {false, "explicit timeout is outside configured bounds"};
   }
   return std::visit(
-      [&request](const auto& payload) -> ActionValidationResult {
+      [&request, &limits](const auto& payload) -> ActionValidationResult {
         using Payload = std::decay_t<decltype(payload)>;
         if constexpr (std::is_same_v<Payload, ExecuteActionRequest>) {
           const ActionType type = actionType(payload.payload);
@@ -301,10 +308,20 @@ inline ActionValidationResult validateAutomationRequest(
         } else if constexpr (std::is_same_v<Payload, BeginLongShotRequest>) {
           return {true, {}};
         } else if constexpr (std::is_same_v<Payload, GetOperationRequest>) {
+          if (payload.operation_handle) return {
+              payload.operation_id == 0 && payload.operation_handle->valid() &&
+                  payload.operation_handle->value.size() <= limits.max_opaque_handle_bytes,
+              "invalid operation handle or simultaneous numeric target"};
           return {payload.operation_id != kInvalidOperationId,
                   payload.operation_id != kInvalidOperationId
                       ? "" : "operation_id must be nonzero"};
         } else if constexpr (std::is_same_v<Payload, CancelOperationRequest>) {
+          if (payload.operation_handle) {
+            const auto* target = std::get_if<OperationCancellation>(&payload.target);
+            return {target && target->operation_id == 0 && payload.operation_handle->valid() &&
+                payload.operation_handle->value.size() <= limits.max_opaque_handle_bytes,
+                "invalid operation handle or simultaneous numeric target"};
+          }
           const bool valid = std::visit([&request](const auto& target) {
             using Target = std::decay_t<decltype(target)>;
             if constexpr (std::is_same_v<Target, OperationCancellation>) {
@@ -316,6 +333,10 @@ inline ActionValidationResult validateAutomationRequest(
           }, payload.target);
           return {valid, valid ? "" : "invalid cancellation target"};
         } else {
+          if (payload.result_handle) return {
+              payload.result_id == 0 && payload.result_handle->valid() &&
+                  payload.result_handle->value.size() <= limits.max_opaque_handle_bytes,
+              "invalid result handle or simultaneous numeric target"};
           return {payload.result_id != kInvalidResultId,
                   payload.result_id != kInvalidResultId
                       ? "" : "result_id must be nonzero"};

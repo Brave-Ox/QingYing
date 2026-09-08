@@ -753,18 +753,26 @@ isError 表达工具调用是否失败，不把尚在 awaiting_user/running 的 
 
 ### F9-10：实现 MCP session、stdio 传输和静态 ToolCatalog
 
-**状态：未开始；前置：F9-01、F9-08。** 建议提交：`feat(f9-10): implement the stdio MCP session and tool catalog`。
+**状态：已完成（2026-09-08）；前置：F9-01、F9-08。** 建议提交：`feat(f9-10): implement the stdio MCP session and tool catalog`。
 
 **文件范围：** 修改 `include/qingying/mcp/mcp_bridge.hpp`、`src/mcp/mcp_bridge.cpp`、`src/mcp/CMakeLists.txt`；新增 `src/mcp/mcp_protocol_session.cpp`、`src/mcp/stdio_transport.cpp`、`src/mcp/tool_catalog.cpp` 及所需头文件。
 
-- [ ] McpBridge 改依赖 IAutomationClient，移除直接持有 ActionDispatcher 的接口；使用 fake client 完成协议测试。
-- [ ] 按第 4.2 节冻结的 profile 实现初始化顺序、版本协商、ping、tools/list/call 和取消；记录目标客户端实际版本。若目标要求新增 profile，在此任务内完成并测试后再接生产。
-- [ ] 使用继承的标准句柄读写逐行 UTF-8 消息；处理分段输入、EOF、stdout 慢读和有界输出，stdout 仅放协议，诊断写 stderr。
-- [ ] 首批 descriptor 仅包含 status/get_operation/cancel_operation/release_result，schema、decoder、encoder 与实现来自同一登记项；未完成工具不列出。
-- [ ] 处理字符串/数字 RPC id、notification 无应答、重复在途 ID 策略、协议/业务两层错误；status 在 Pipe 不可达时返回 reachable:false、app_running:null。
-- [ ] 在发送前建立原 JSON-RPC id 到内部 RequestId 的映射；协议取消通过该 RequestId 传至 IAutomationClient，独立处理停止应答与业务取消，不等待主进程返回 OperationId。EOF 关闭本连接，不退出托盘，不重放未知结果的副作用。
+- [x] McpBridge 改依赖 IAutomationClient，移除直接持有 ActionDispatcher 的接口；使用 fake client 完成协议测试。
+- [x] 按第 4.2 节冻结的 profile 实现初始化顺序、版本协商、ping、tools/list/call 和取消；运行时记录对端声明的客户端名称、版本及请求/协商协议。目标产品客户端尚未指定，本次只验收 2025-11-25 与测试客户端；如后续目标要求新增 profile，须先实现并验证再接生产。
+- [x] 使用继承的标准句柄读写逐行 UTF-8 消息；处理分段输入、EOF、stdout 慢读和有界输出，stdout 仅放协议，诊断写 stderr。
+- [x] 首批 descriptor 仅包含 status/get_operation/cancel_operation/release_result，schema、decoder、encoder 与实现来自同一登记项；未完成工具不列出。
+- [x] 处理字符串/数字 RPC id、notification 无应答、重复在途 ID 策略、协议/业务两层错误；status 在 Pipe 不可达时返回 reachable:false、app_running:null。
+- [x] 在发送前建立原 JSON-RPC id 到内部 RequestId 的映射；协议取消通过该 RequestId 传至 IAutomationClient，独立处理停止应答与业务取消，不等待主进程返回 OperationId。EOF 关闭本连接，不退出托盘，不重放未知结果的副作用。
 
 **验收：** 更新 `tests/mcp_bridge_test.cpp`，新增 `tests/mcp_protocol_session_test.cpp`、`tests/mcp_tool_catalog_test.cpp`、`tests/stdio_transport_test.cpp`。覆盖协议顺序、版本不兼容、id 精度、错误分层、schema/decoder 一致及输出背压，不依赖实际屏幕。
+
+完成记录：新增 McpProtocolSession、StdioTransport 和静态 ToolCatalog，McpBridge 只依赖中立 IAutomationClient。固定 2025-11-25 initialize/initialized 流程，不支持的版本返回本端支持版本供对端决定；未知 server/discover 返回 -32601。SAX 预检重复键、深度、UTF-8 和大小，保留完整整数与字符串 ID；同一在途 ID 重复时关闭 session，迟到完成复核内部 RequestId。协议取消先停止原响应，再提交 RequestCancellation，并保持有限的在途跟踪。
+
+首批四项工具从同一登记项生成 schema、解码及编码。补齐中立 DTO 和私有 wire 的不透明操作/结果句柄目标，由 Endpoint 按可信 context 调用 Registry 解析，拒绝跨连接和同时指定数字目标；公共输出不泄漏内部数字 ID。增加不进入 wire 的 transport_available 本地事实，解决已断连客户端仍保留旧 connection 身份时 status 的可达性判断。
+
+stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓冲、输出队列和写期限；CancelSynchronousIo 后等待实际返回再回收，stderr 诊断也有写期限。EOF 只清理本 bridge/client，生产托盘和 --mcp-stdio 接线留给 F9-11。profile、错误分层、线程约束与目标客户端记录详见 [MCP stdio profile](./F9-MCP-stdio-profile.md)。
+
+基于 `fb404b9e` 工作区，26 项 MCP/stdio 测试及 2 项新增 Endpoint 句柄隔离测试通过，同时扩充 Pipe 断连断言；替换旧 Bridge 测试后净增 25 项测试。执行 `.\build.bat Release test`：Release 构建成功，全量 **671/671** 通过，CTest **18.83 秒**，最终构建无编译警告。当前托盘 EXE 为 508,928 字节；本次未保存该基线的构建前包体，不以 F9-09 的历史包体推算本次增量（其后已有文本标注功能提交）。源码 UTF-8 BOM + CRLF，文档 UTF-8 无 BOM + CRLF。
 
 ### F9-11：在同一 EXE 中接通双模式、托盘开关与 status
 

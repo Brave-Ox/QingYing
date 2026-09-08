@@ -402,10 +402,13 @@ Json requestJson(const WireRequest& value, const AutomationLimits& limits) {
       result["type"] = "begin_longshot"; result["payload"] = Json::object();
     } else if constexpr (std::is_same_v<T, GetOperationRequest>) {
       result["type"] = "get_operation"; result["payload"] = {{"operation_id", payload.operation_id}};
+      if (payload.operation_handle) result["payload"] = {{"operation_handle", textJson(payload.operation_handle->value, limits.max_opaque_handle_bytes, false)}};
     } else if constexpr (std::is_same_v<T, CancelOperationRequest>) {
       result["type"] = "cancel_operation"; result["payload"] = targetJson(payload.target);
+      if (payload.operation_handle) result["payload"] = {{"operation_handle", textJson(payload.operation_handle->value, limits.max_opaque_handle_bytes, false)}};
     } else {
       result["type"] = "release_result"; result["payload"] = {{"result_id", payload.result_id}};
+      if (payload.result_handle) result["payload"] = {{"result_handle", textJson(payload.result_handle->value, limits.max_opaque_handle_bytes, false)}};
     }
   }, value.request.payload);
   return result;
@@ -418,6 +421,20 @@ WireRequest readRequest(const Json& value, const std::string& type, const Automa
   if (value.contains("timeout_ms")) result.request.timeout = std::chrono::milliseconds{
       uint(value.at("timeout_ms"), static_cast<std::uint64_t>(limits.max_request_timeout.count()))};
   const auto& payload = value.at("payload");
+  if ((type == "get_operation" || type == "cancel_operation") && payload.contains("operation_handle")) {
+    fields(payload, {"operation_handle"});
+    OperationHandle handle{string(payload.at("operation_handle"), limits.max_opaque_handle_bytes, false)};
+    if (type == "get_operation") result.request.payload = GetOperationRequest{0, handle};
+    else result.request.payload = CancelOperationRequest{OperationCancellation{}, handle};
+    require(validateAutomationRequest(result.request, limits).valid);
+    return result;
+  }
+  if (type == "release_result" && payload.contains("result_handle")) {
+    fields(payload, {"result_handle"});
+    result.request.payload = ReleaseResultRequest{0, ResultHandle{string(payload.at("result_handle"), limits.max_opaque_handle_bytes, false)}};
+    require(validateAutomationRequest(result.request, limits).valid);
+    return result;
+  }
   if (type == "execute_action") result.request.payload = readAction(payload, limits);
   else if (type == "begin_longshot") { fields(payload, {}); result.request.payload = BeginLongShotRequest{}; }
   else if (type == "get_operation") {

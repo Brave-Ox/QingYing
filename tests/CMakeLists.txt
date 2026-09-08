@@ -23,6 +23,9 @@ add_executable(qingying_tests
   color_picker_surface_test.cpp
   longshot_request_adapter_test.cpp
   mcp_bridge_test.cpp
+  mcp_protocol_session_test.cpp
+  mcp_tool_catalog_test.cpp
+  stdio_transport_test.cpp
   longshot_controller_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
@@ -111,6 +114,7 @@ target_include_directories(qingying_tests
     ${CMAKE_SOURCE_DIR}/src/longshot
     ${CMAKE_SOURCE_DIR}/src/window
     ${CMAKE_SOURCE_DIR}/src/ipc
+    ${CMAKE_SOURCE_DIR}/src/mcp
 )
 
 target_link_libraries(qingying_tests
@@ -120,6 +124,7 @@ target_link_libraries(qingying_tests
     qingying_automation
     qingying_ipc
     qingying_mcp
+    nlohmann_json::nlohmann_json
     qingying_annotate
     qingying_capture
     qingying_export

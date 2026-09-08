@@ -136,6 +136,7 @@ TEST(PipeTransportTest, CloseSettlesHeldRequestsOnceAndDropsLateCompletion) {
   client.submit(request(1), [&](AutomationResponse response) {
     EXPECT_EQ(response.result.error_code, ErrorCode::kCancelled);
     EXPECT_EQ(response.connection.generation, 1);
+    EXPECT_FALSE(response.transport_available);
     ++calls;
   });
   ASSERT_TRUE(test.pump([&] { return test.submitted == 1; }));

@@ -1,31 +1,19 @@
 ﻿#pragma once
-
-#include "qingying/action/action_dispatcher.hpp"
-
-#include <memory>
-
+#include "qingying/mcp/mcp_protocol_session.h"
 namespace qingying {
-
-// Named Pipe MCP bridge — PIMPL hides protocol details.
-class McpBridge {
+// One connection-bound client; no ActionDispatcher or GUI dependency.
+class McpBridge final {
  public:
-  explicit McpBridge(ActionDispatcher* dispatcher);
+  explicit McpBridge(std::shared_ptr<IAutomationClient> client, AutomationLimits limits = {});
   ~McpBridge();
-
   McpBridge(const McpBridge&) = delete;
   McpBridge& operator=(const McpBridge&) = delete;
-
-  bool start();
-  void stop();
-
-  // The protocol layer hands the already-decoded typed request to this
-  // boundary. It validates the schema and forwards only to ActionDispatcher;
-  // no CaptureSession or GUI object is retained by MCP.
-  ActionResult submit(const ActionRequest& request) const;
-
+  void receive(std::string_view line);
+  std::optional<std::string> takeOutput();
+  bool closed() const;
+  void stop() noexcept;
+  mcp::ClientInfo clientInfo() const;
  private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
+  mcp::McpProtocolSession session_;
 };
-
 }  // namespace qingying

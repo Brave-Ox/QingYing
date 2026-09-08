@@ -145,6 +145,37 @@ TEST_F(AutomationEndpointTest, TruthfulStatusIncludesOccupancyQueuesBudgetAndSaf
   EXPECT_EQ(info.queues->running, 1u);
   EXPECT_EQ(info.capabilities, (std::vector<std::string>{"status", "get_operation", "cancel_operation", "release_result"}));
 }
+TEST_F(AutomationEndpointTest, OpaqueOperationHandlesAreResolvedInsideOwnerScope) {
+  AutomationRequest original;
+  original.request_id = 9000;
+  const auto created = registry.begin(first, original);
+  ASSERT_TRUE(created.ok());
+  const auto good = submit(first, GetOperationRequest{0, created.handle});
+  const auto foreign = submit(second, GetOperationRequest{0, created.handle});
+  pump();
+  EXPECT_TRUE(responses.at(good).result.ok);
+  EXPECT_EQ(responses.at(good).result.operation_id, created.operation_id);
+  EXPECT_EQ(responses.at(foreign).result.error_code, ErrorCode::kOperationNotFound);
+  const auto cancel_foreign = submit(second, CancelOperationRequest{OperationCancellation{}, created.handle});
+  const auto cancel_owner = submit(first, CancelOperationRequest{OperationCancellation{}, created.handle});
+  pump();
+  EXPECT_EQ(responses.at(cancel_foreign).result.error_code, ErrorCode::kOperationNotFound);
+  EXPECT_TRUE(responses.at(cancel_owner).result.ok);
+}
+TEST_F(AutomationEndpointTest, OpaqueReleaseRejectsOtherScopeAndAllowsIdempotentOwnerRelease) {
+  const auto id = store.publish(first.action.result_scope, Image{1, 1, {1}});
+  const auto handle = registry.bindResult(first, id);
+  ASSERT_TRUE(handle);
+  const auto foreign = submit(second, ReleaseResultRequest{0, handle});
+  pump();
+  EXPECT_EQ(responses.at(foreign).result.error_code, ErrorCode::kResultNotFound);
+  EXPECT_EQ(store.resultStatus(first.action.result_scope, id), ErrorCode::kOk);
+  const auto owner = submit(first, ReleaseResultRequest{0, handle}); pump();
+  EXPECT_TRUE(responses.at(owner).result.ok);
+  const auto repeat = submit(first, ReleaseResultRequest{0, handle}); pump();
+  ASSERT_TRUE(responses.at(repeat).result.ok);
+  EXPECT_TRUE(std::get<ReleasedResult>(responses.at(repeat).control).already_released);
+}
 TEST_F(AutomationEndpointTest, UnsafeCaptureIsUnadvertisedAndBusyHasPrecedence) {
   const ExecuteActionRequest capture_request{CaptureRegionRequest{{0, 0, 1, 1}}, {}};
   const auto unsupported = submit(first, capture_request);

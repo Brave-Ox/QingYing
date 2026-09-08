@@ -55,7 +55,7 @@
 | **F6** | 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区、应用 profile 定位滚动控件、滚轮驱动、滚动状态 / 到底 / 无新增 / 上限停止、重叠拼接、预览、暂停 / 继续 / 停止、失败清理；内置适配器已改为 DLL 插件 | Notepad、Explorer、Chrome / Edge / Brave 真实闭环；三类应用验收 |
 | **F7** | 托盘与热键 | **已实现** | 单实例、托盘、退出、开机自启开关、`Ctrl+Shift+Q`、冲突提示 | 重启 Explorer、开机自启和长期驻留人工验证 |
 | **F8** | 口令截图 | **Stub** | `CommandParser` 接口存在 | 本地口令表；`CaptureWindow` / `CropCenter` 实现；未命中降级 |
-| **F9** | Agent / MCP | **内部入口、私有编解码与本机管道完成，生产接线待完成** | F9-01～F9-09 已完成，含应用入口、GUI 共享占用、固定 JSON 依赖、有界 wire codec、本机 Pipe 双向身份校验与 I/O 回收；`McpBridge` 仍为骨架 | MCP 协议、托盘/stdio 接线、Tool 映射及外部动作安全接入 |
+| **F9** | Agent / MCP | **内部入口、Pipe 与 MCP stdio 协议完成，生产接线待完成** | F9-01～F9-10 已完成，含有界 wire/Pipe、双向身份校验、2025-11-25 session、stdio 和四项控制工具目录 | 托盘/stdio 生产接线、截图与导出 Tool 映射及外部动作安全接入 |
 
 ### F1～F9 与技术模块
 
@@ -145,6 +145,7 @@
 - [x] F9-07：组合根注入 AutomationEndpoint，接通中立控制动作、UI 定时清扫、GUI/长截/Pin 模态保存共享占用和幂等退出；同步/异步完成回 UI 结算，取消与断连不提前释放占用；2026-09-07 新增 24 个测试，完整 Release 558/558 通过；生产 Pipe 和外部动作尚未开放（详见 F9 方案完成记录）；
 - [x] F9-08：固定 nlohmann_json 3.11.3 与 SHA-256，支持离线配置；新增 qingying_ipc 和私有 wire v1 编解码，严格检查帧长、深度、重复字段、Unicode、数值和取消目标，保持句柄/RPC id 精度；2026-09-07 新增 29 个测试，完整 Release 587/587 通过；仅 codec，不启用生产监听（详见 F9 方案及 wire v1 说明）；
 - [x] F9-09：实现本机 Named Pipe 服务端与 IAutomationClient，固定登录会话端点、显式 DACL、双向 token 校验、四槽与握手期限；请求/完成有界、独立慢读隔离、先撤销准入再 UI 清理，取消 I/O 后收取完成；2026-09-07 新增 27 个测试，完整 Release 614/614 通过，生产接线留给 F9-11（详见 F9 方案及 wire v1 说明）；
+- [x] F9-10：McpBridge 改依赖 IAutomationClient，完成 2025-11-25 session、逐行 stdio 与四项静态控制工具；完整 ID 精度、取消关联、错误分层、有界输出及 EOF 回收，不透明句柄由 Endpoint 校验；2026-09-08 净增 25 项测试，完整 Release 671/671 通过；具体产品客户端尚未指定，生产接线留给 F9-11（详见 F9 方案及 MCP stdio profile）；
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；

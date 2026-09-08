@@ -55,7 +55,9 @@ Windows API 依据：[Named Pipe 安全与权限](https://learn.microsoft.com/en
 - `cancel_operation`：operation_id 或 request_id，恰好一个。内部 RequestId 目标不可等于本次调用自身 request_id。公共 cancel_operation Tool 仍只接受不透明 OperationHandle，内部 RequestId 不成为公共参数。
 - `release_result`：result_id。
 
-这些数值 ID 属于私有 DTO；生产者负责先解析连接绑定的不透明句柄，应用仍须检查该 ID 的作用域所有权。codec 不创建 TrustedAutomationContext，不接受 scope/user/pid/generation、取消令牌或提交时刻。query 默认最多 1024 UTF-16 单元、路径最多 32767 单元、末尾文件名最多 255 单元、request_key 最多 128 字节；补充平面字符计两个 UTF-16 单元。SAX 在创建 DOM 前检查这些字符串上限，Windows 转换使用严格 Unicode 校验。
+这些数值 ID 属于私有 DTO，应用仍须检查该 ID 的作用域所有权。F9-10 增加控制请求的句柄形式：get_operation/cancel_operation 的 payload 可改为仅包含 operation_handle，release_result 可改为仅包含 result_handle。句柄与数字目标必须互斥；MCP 只生成句柄形式，由 Endpoint 在可信 context 内调用 Registry 解析。codec 不创建 TrustedAutomationContext，不接受 scope/user/pid/generation、取消令牌或提交时刻。query 默认最多 1024 UTF-16 单元、路径最多 32767 单元、末尾文件名最多 255 单元、request_key 最多 128 字节；补充平面字符计两个 UTF-16 单元。SAX 在创建 DOM 前检查这些字符串上限，Windows 转换使用严格 Unicode 校验。
+
+AutomationResponse.transport_available 是 F9-10 为离线 status 补充的客户端本地事实，不进入 wire。服务端 JSON 不能伪造此标记；客户端断连回调同时保留旧 connection 身份并设置 transport_available:false。
 
 save.path 是现有内部 SaveRequest 的完整路径，不是公共 Tool 的 path/name schema；目录合成、覆盖策略、路径授权及句柄所有权属于后续 Tool/应用层。截图坐标保留负原点，但拒绝整数越界及 right/bottom 加法溢出。像素预算和实际桌面范围继续由执行者检查。
 
