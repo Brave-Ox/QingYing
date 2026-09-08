@@ -1,4 +1,5 @@
 ﻿#include "qingying/app/action_handlers.hpp"
+#include "qingying/app/capture_service.h"
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 #include "qingying/capture/capture_engine.hpp"
@@ -17,10 +18,13 @@ TEST(AppActionHandlersTest, RegistersP0Handlers) {
   qingying::ExportService export_service;
   qingying::ResultStore result_store;
   qingying::PinManager pin_manager;
+  qingying::InteractionGate gate;
+  qingying::CaptureService capture_service(capture, result_store, pin_manager,
+                                           gate);
   qingying::ResultActionService result_actions(result_store, export_service,
                                                pin_manager);
 
-  qingying::registerAppHandlers(dispatcher, capture, result_store,
+  qingying::registerAppHandlers(dispatcher, capture_service, result_store,
                                 result_actions);
 
   const qingying::ActionRequest status =
@@ -54,24 +58,26 @@ TEST(AppActionHandlersTest, SuccessfulCapturePublishesExplicitResult) {
   qingying::ExportService export_service;
   qingying::ResultStore result_store;
   qingying::PinManager pin_manager;
+  qingying::InteractionGate gate;
   qingying::ResultActionService result_actions(result_store, export_service,
                                                pin_manager);
 
-  const qingying::CaptureRegionInvoker capture_region =
-      [](const qingying::ActionRequest&, qingying::Image& out) {
+  qingying::CaptureService capture_service(
+      capture, result_store, pin_manager, gate,
+      [](const qingying::ScreenPhysicalRect&, qingying::Image& out) {
         out = qingying::Image{2, 1, {0xFF112233u, 0xFF445566u}};
         qingying::ActionResult result;
         result.ok = true;
         result.error_code = qingying::ErrorCode::kOk;
         result.message = "injected capture success";
         return result;
-      };
-  qingying::registerAppHandlers(dispatcher, capture, result_store,
-                                result_actions, capture_region);
+      });
+  qingying::registerAppHandlers(dispatcher, capture_service, result_store,
+                                result_actions);
 
   const qingying::ActionRequest request = qingying::makeActionRequest(
       qingying::CaptureRegionRequest{
-          qingying::ScreenPhysicalRect{0, 0, 10, 10}});
+          qingying::ScreenPhysicalRect{0, 0, 2, 1}});
   const qingying::ActionResult result = dispatcher.dispatch(request);
 
   ASSERT_TRUE(result.ok);
@@ -88,6 +94,9 @@ TEST(AppActionHandlersTest, PinUsesLatestCaptureResult) {
   qingying::ExportService export_service;
   qingying::ResultStore result_store;
   qingying::PinManager pin_manager;
+  qingying::InteractionGate gate;
+  qingying::CaptureService capture_service(capture, result_store, pin_manager,
+                                           gate);
   qingying::ResultActionService result_actions(result_store, export_service,
                                                pin_manager);
 
@@ -98,7 +107,7 @@ TEST(AppActionHandlersTest, PinUsesLatestCaptureResult) {
   ASSERT_NE(result_store.publish(std::move(image)),
             qingying::kInvalidResultId);
 
-  qingying::registerAppHandlers(dispatcher, capture, result_store,
+  qingying::registerAppHandlers(dispatcher, capture_service, result_store,
                                 result_actions);
 
   const qingying::ActionRequest pin =
@@ -116,6 +125,7 @@ TEST(AppActionHandlersTest, FailedCaptureReleasesPreviousResult) {
   qingying::ExportService export_service;
   qingying::ResultStore result_store;
   qingying::PinManager pin_manager;
+  qingying::InteractionGate gate;
   qingying::ResultActionService result_actions(result_store, export_service,
                                                pin_manager);
 
@@ -125,17 +135,18 @@ TEST(AppActionHandlersTest, FailedCaptureReleasesPreviousResult) {
   previous.pixels = {0xFF112233u, 0xFF445566u};
   ASSERT_NE(result_store.publish(previous), qingying::kInvalidResultId);
 
-  const qingying::CaptureRegionInvoker fail_capture =
-      [](const qingying::ActionRequest&, qingying::Image& out) {
+  qingying::CaptureService capture_service(
+      capture, result_store, pin_manager, gate,
+      [](const qingying::ScreenPhysicalRect&, qingying::Image& out) {
         out = qingying::Image{};
         qingying::ActionResult result;
         result.ok = false;
         result.error_code = qingying::ErrorCode::kCaptureFailed;
         result.message = "injected capture failure";
         return result;
-      };
-  qingying::registerAppHandlers(dispatcher, capture, result_store,
-                                result_actions, fail_capture);
+      });
+  qingying::registerAppHandlers(dispatcher, capture_service, result_store,
+                                result_actions);
 
   const qingying::ActionRequest request = qingying::makeActionRequest(
       qingying::CaptureRegionRequest{
@@ -154,17 +165,19 @@ TEST(AppActionHandlersTest, ScopedCaptureReportsMetadataAndFailureOnlyClearsItsS
   CaptureEngine capture;
   ExportService exporter;
   PinManager pins;
+  InteractionGate gate;
   ResultStore store;
   ResultActionService actions(store, exporter, pins);
   bool fail = false;
-  registerAppHandlers(dispatcher, capture, store, actions,
-      [&](const ActionRequest&, Image& out) {
+  CaptureService capture_service(capture, store, pins, gate,
+      [&](const ScreenPhysicalRect&, Image& out) {
         ActionResult result;
         result.ok = !fail;
         result.error_code = fail ? ErrorCode::kCaptureFailed : ErrorCode::kOk;
         if (!fail) out = Image{2, 1, {21, 22}};
         return result;
       });
+  registerAppHandlers(dispatcher, capture_service, store, actions);
   const auto gui = store.publish(Image{1, 1, {1}});
   const auto b = store.publish(3, Image{1, 1, {3}});
   auto request = makeActionRequest(CaptureRegionRequest{{-8, 9, 2, 1}});

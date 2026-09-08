@@ -207,11 +207,20 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     }
     reply(responseWith(ErrorCode::kNotReady)); return;
   }
-  auto guard = gate_.acquire(InteractionKind::Capture);
+  // CropCenter is a synchronous CaptureService handler and performs its own
+  // busy admission. Internal CaptureRegion keeps the established endpoint
+  // execution guard.
+  const bool handler_owns_interaction = type == ActionType::CropCenter;
+  auto guard = handler_owns_interaction
+      ? InteractionGate::Guard{}
+      : gate_.acquire(InteractionKind::Capture);
   auto execution = std::make_shared<Execution>(Execution{context,
       submission.operation_id, request.request_id, std::move(guard), {}, {}});
   executions_.emplace(ticket, execution);
-  if (!execution->guard) { reply(responseWith(ErrorCode::kBusy)); return; }
+  if (!handler_owns_interaction && !execution->guard) {
+    reply(responseWith(ErrorCode::kBusy));
+    return;
+  }
   registry_.advance(context, submission.operation_id, OperationState::Running);
   ActionRequest dispatched{action->payload};
   dispatched.request_id = request.request_id;

@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/capture_workflow.hpp"
 
 #include "qingying/action/action_dispatcher.hpp"
+#include "qingying/app/capture_service.h"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/result_action_service.h"
 #include "qingying/capture/capture_engine.hpp"
@@ -90,8 +91,11 @@ TEST(CaptureWorkflowLifetimeTest, CancelAndShutdownPreserveExternalResults) {
   ResultStore store;
   ExportService exporter;
   PinManager pins;
+  InteractionGate gate;
+  CaptureService capture_service(capture, store, pins, gate);
   ResultActionService actions(store, exporter, pins);
-  CaptureWorkflow workflow(dispatcher, capture, controller, store, actions, pins, overlay);
+  CaptureWorkflow workflow(capture, capture_service, controller, store,
+                           actions, pins, overlay, &gate);
   const auto external = store.publish(2, Image{1, 1, {22}});
   store.publish(Image{1, 1, {11}});
   workflow.cancel();

@@ -9,8 +9,8 @@
 
 namespace qingying {
 
-class ActionDispatcher;
 class CaptureEngine;
+class CaptureService;
 class LongShotController;
 class PinManager;
 class ResultActionService;
@@ -38,7 +38,7 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
 // annotation, and result actions from the application's message loop.
 class CaptureWorkflow {
  public:
-  CaptureWorkflow(ActionDispatcher& dispatcher, CaptureEngine& capture,
+  CaptureWorkflow(CaptureEngine& capture, CaptureService& capture_service,
                   LongShotController& longshot_controller,
                   ResultStore& results, ResultActionService& result_actions,
                   PinManager& pin_manager,

@@ -1,8 +1,8 @@
 ﻿#include "qingying/app/capture_workflow.hpp"
 
-#include "qingying/action/action_dispatcher.hpp"
 #include "qingying/annotate/annotation_overlay.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/app/capture_service.h"
 #include "qingying/app/capture_preview.hpp"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/longshot_request_adapter.hpp"
@@ -110,13 +110,13 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
 struct CaptureWorkflow::Impl {
   enum class WorkflowStage { Idle, Selecting, Annotating };
 
-  Impl(ActionDispatcher& dispatcher_in, CaptureEngine& capture_in,
+  Impl(CaptureEngine& capture_in, CaptureService& capture_service_in,
        LongShotController& longshot_controller_in,
        ResultStore& results_in, ResultActionService& result_actions_in,
        PinManager& pin_manager_in,
        SelectionOverlay& selection_overlay_in, InteractionGate* gate_in)
-      : dispatcher(dispatcher_in),
-        capture(capture_in),
+      : capture(capture_in),
+        capture_service(capture_service_in),
         longshot_controller(longshot_controller_in),
         results(results_in),
         result_actions(result_actions_in),
@@ -304,13 +304,8 @@ void showSelectionOverlay() {
     ActionRequest capture_request = makeActionRequest(
         CaptureRegionRequest{screen_region});
 
-    ActionResult capture_result;
-    {
-      // Pin 窗口属于普通置顶窗口；否则 GDI 桌面捕获会把它的边框和图像
-      // 一并复制到新截图中。
-      auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
-      capture_result = dispatcher.dispatch(capture_request);
-    }
+    const ActionResult capture_result = capture_service.capture(
+        capture_request, screen_region, gate_owner());
     if (capture_result.ok) {
       active_result_id = results.currentId(kGuiResultScopeId);
       if (active_result_id != kInvalidResultId) {
@@ -595,8 +590,8 @@ void showSelectionOverlay() {
     return &gate == &local_gate ? nullptr : &interaction;
   }
 
-  ActionDispatcher& dispatcher;
   CaptureEngine& capture;
+  CaptureService& capture_service;
   LongShotController& longshot_controller;
   ResultStore& results;
   ResultActionService& result_actions;
@@ -627,11 +622,11 @@ void showSelectionOverlay() {
 };
 
 CaptureWorkflow::CaptureWorkflow(
-    ActionDispatcher& dispatcher, CaptureEngine& capture,
+    CaptureEngine& capture, CaptureService& capture_service,
     LongShotController& longshot_controller, ResultStore& results,
     ResultActionService& result_actions, PinManager& pin_manager,
     SelectionOverlay& selection_overlay, InteractionGate* gate)
-    : impl_(std::make_unique<Impl>(dispatcher, capture, longshot_controller,
+    : impl_(std::make_unique<Impl>(capture, capture_service, longshot_controller,
                                    results, result_actions, pin_manager,
                                    selection_overlay, gate)) {}
 

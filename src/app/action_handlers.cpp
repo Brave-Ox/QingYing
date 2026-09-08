@@ -3,11 +3,11 @@
 #include "qingying/action/i_action_handler.hpp"
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
+#include "qingying/app/capture_service.h"
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 
 #include <memory>
-#include <utility>
 
 namespace qingying {
 namespace {
@@ -36,11 +36,8 @@ class StatusHandler final : public IActionHandler {
 
 class CaptureRegionHandler final : public IActionHandler {
  public:
-  CaptureRegionHandler(CaptureEngine& capture, ResultStore& results,
-                       CaptureRegionInvoker capture_region)
-      : capture_(capture),
-        results_(results),
-        capture_region_(std::move(capture_region)) {}
+  explicit CaptureRegionHandler(CaptureService& capture_service)
+      : capture_service_(capture_service) {}
 
   ActionType type() const override { return ActionType::CaptureRegion; }
 
@@ -50,36 +47,29 @@ class CaptureRegionHandler final : public IActionHandler {
       return invalidPayload("capture region");
     }
 
-    // A new capture starts a new result lifetime. Do not retain the previous
-    // full-size image when this attempt later fails.
-    results_.clearScope(request.context.result_scope);
-
-    Image image;
-    ActionResult result;
-    if (capture_region_) {
-      result = capture_region_(request, image);
-    } else {
-      result = capture_.captureRegion(payload->region, image);
-    }
-    if (result.ok) {
-      const auto id = results_.publish(request.context.result_scope,
-                                      std::move(image), payload->region);
-      if (id == kInvalidResultId) {
-        result.ok = false;
-        result.error_code = ErrorCode::kCaptureFailed;
-        result.message = "capture returned an invalid image";
-        result.output = std::monostate{};
-      } else {
-        result.output = results_.acquire(request.context.result_scope, id).metadata();
-      }
-    }
-    return result;
+    return capture_service_.capture(request, payload->region);
   }
 
  private:
-  CaptureEngine& capture_;
-  ResultStore& results_;
-  CaptureRegionInvoker capture_region_;
+  CaptureService& capture_service_;
+};
+
+class CropCenterHandler final : public IActionHandler {
+ public:
+  explicit CropCenterHandler(CaptureService& capture_service)
+      : capture_service_(capture_service) {}
+
+  ActionType type() const override { return ActionType::CropCenter; }
+
+  ActionResult handle(const ActionRequest& request) override {
+    const auto* payload = std::get_if<CropCenterRequest>(&request.payload);
+    if (payload == nullptr) return invalidPayload("crop center");
+    return capture_service_.cropCenter(request, payload->width,
+                                       payload->height);
+  }
+
+ private:
+  CaptureService& capture_service_;
 };
 
 class CopyHandler final : public IActionHandler {
@@ -145,14 +135,15 @@ class PinHandler final : public IActionHandler {
 
 }  // namespace
 
-void registerAppHandlers(ActionDispatcher& dispatcher, CaptureEngine& capture,
+void registerAppHandlers(ActionDispatcher& dispatcher,
+                         CaptureService& capture_service,
                          ResultStore& results,
-                         ResultActionService& result_actions,
-                         CaptureRegionInvoker capture_region) {
+                         ResultActionService& result_actions) {
   dispatcher.registerHandler(std::make_unique<StatusHandler>());
   dispatcher.registerHandler(
-      std::make_unique<CaptureRegionHandler>(capture, results,
-                                             std::move(capture_region)));
+      std::make_unique<CaptureRegionHandler>(capture_service));
+  dispatcher.registerHandler(
+      std::make_unique<CropCenterHandler>(capture_service));
   dispatcher.registerHandler(
       std::make_unique<CopyHandler>(results, result_actions));
   dispatcher.registerHandler(

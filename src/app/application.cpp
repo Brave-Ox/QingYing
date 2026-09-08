@@ -6,6 +6,7 @@
 #include "qingying/app/automation_settings.h"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/capture_workflow.hpp"
+#include "qingying/app/capture_service.h"
 #include "qingying/app/hotkey_manager.hpp"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/result_action_service.h"
@@ -84,8 +85,9 @@ struct Application::Impl {
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
         result_actions_(result_store_, export_service_, pin_manager_, {}, &interaction_gate_),
+        capture_service_(capture_, result_store_, pin_manager_, interaction_gate_),
         longshot_controller_(longshot_, overlay_),
-        capture_workflow_(dispatcher_, capture_, longshot_controller_,
+        capture_workflow_(capture_, capture_service_, longshot_controller_,
                           result_store_, result_actions_, pin_manager_,
                           overlay_, &interaction_gate_),
         operation_registry_(makeApplicationEpoch()),
@@ -122,7 +124,8 @@ struct Application::Impl {
   }
 
   void registerHandlers() {
-    registerAppHandlers(dispatcher_, capture_, result_store_, result_actions_);
+    registerAppHandlers(dispatcher_, capture_service_, result_store_,
+                        result_actions_);
     result_actions_.bindPinWindowActions();
   }
 
@@ -265,6 +268,7 @@ struct Application::Impl {
   PinManager pin_manager_;
   InteractionGate interaction_gate_;
   ResultActionService result_actions_;
+  CaptureService capture_service_;
   SelectionOverlay overlay_;
   LongShotController longshot_controller_;
   CaptureWorkflow capture_workflow_;

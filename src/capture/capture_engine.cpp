@@ -1,6 +1,7 @@
 ﻿#include <Windows.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -86,6 +87,22 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
     r.ok = false;
     r.error_code = ErrorCode::kInvalidArgument;
     r.message = "captureRegion: width/height must be positive";
+    out = Image{};
+    return r;
+  }
+  const auto right = static_cast<std::int64_t>(x) + width;
+  const auto bottom = static_cast<std::int64_t>(y) + height;
+  const auto row_bytes = static_cast<std::uint64_t>(width) * kBytesPerPixel;
+  const auto pixel_count = static_cast<std::uint64_t>(width) *
+                           static_cast<std::uint64_t>(height);
+  if (right > (std::numeric_limits<int>::max)() ||
+      bottom > (std::numeric_limits<int>::max)() ||
+      row_bytes > static_cast<std::uint64_t>((std::numeric_limits<int>::max)()) ||
+      pixel_count > static_cast<std::uint64_t>(
+                        (std::numeric_limits<std::size_t>::max)() /
+                        sizeof(std::uint32_t))) {
+    r.error_code = ErrorCode::kInvalidArgument;
+    r.message = "captureRegion: dimensions overflow";
     out = Image{};
     return r;
   }
@@ -212,7 +229,7 @@ ActionResult CaptureEngine::cropCenter(int /*width*/, int /*height*/,
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;
-  r.message = "CaptureEngine::cropCenter stub";
+  r.message = "CaptureEngine::cropCenter legacy stub; use CaptureService";
   return r;
 }
 

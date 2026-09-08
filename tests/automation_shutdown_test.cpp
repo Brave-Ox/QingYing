@@ -1,5 +1,6 @@
 ﻿#include "qingying/app/automation_runtime.h"
 #include "qingying/app/automation_settings.h"
+#include "qingying/app/capture_service.h"
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/longshot_controller.hpp"
@@ -25,7 +26,9 @@ class AutomationShutdownTest : public ::testing::Test {
   PinManager pins;
   InteractionGate gate;
   ResultActionService actions{store, exporter, pins, {}, &gate};
-  CaptureWorkflow workflow{dispatcher, capture, controller, store, actions, pins, overlay, &gate};
+  CaptureService capture_service{capture, store, pins, gate};
+  CaptureWorkflow workflow{capture, capture_service, controller, store,
+                           actions, pins, overlay, &gate};
   OperationRegistry registry{901};
   std::vector<std::pair<UINT, UiMessageToken>> messages;
   TrustedAutomationContext last_context;

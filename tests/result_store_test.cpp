@@ -198,6 +198,22 @@ TEST_F(ResultRetentionTest, ReservationTransfersWithoutDoubleCharging) {
   EXPECT_EQ(store.budgetSnapshot().external_retained_bytes, 16u);
 }
 
+TEST_F(ResultRetentionTest, PreflightReservationDoesNotReplaceScopeUntilPublish) {
+  const auto old = store.publish(2, pixels(1));
+  ASSERT_NE(old, kInvalidResultId);
+  auto reservation = store.reserve(2, 4, 1);
+  ASSERT_TRUE(reservation);
+  EXPECT_TRUE(store.acquire(2, old));
+  EXPECT_EQ(store.budgetSnapshot().external_reserved_bytes, 16u);
+  store.clearScope(2);
+  EXPECT_FALSE(store.acquire(2, old));
+  const auto replacement =
+      store.publish(2, pixels(), std::move(reservation), {-5, 7, 4, 1});
+  ASSERT_NE(replacement, kInvalidResultId);
+  EXPECT_EQ(store.acquire(2, replacement).metadata().bounds,
+            (ScreenPhysicalRect{-5, 7, 4, 1}));
+}
+
 TEST_F(ResultRetentionTest, WrongScopeSizeStoreOrCapacityRollsBackReservation) {
   auto reservation = store.reserve(2, 4, 1);
   EXPECT_EQ(store.publish(3, pixels(), std::move(reservation)), kInvalidResultId);

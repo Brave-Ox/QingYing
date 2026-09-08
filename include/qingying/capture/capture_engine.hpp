@@ -21,6 +21,8 @@ class CaptureEngine {
   ActionResult captureRegion(const ScreenPhysicalRect& region, Image& out);
   ActionResult captureRegion(int x, int y, int width, int height, Image& out);
   ActionResult captureWindow(const std::wstring& query, Image& out);
+  // Legacy compatibility stub. Center geometry and result publication belong
+  // to CaptureService; this entry does not duplicate that policy.
   ActionResult cropCenter(int width, int height, Image& out);
 
  private:

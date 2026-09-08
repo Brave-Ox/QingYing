@@ -32,6 +32,9 @@ class PinManager {
   void setActionCallbacks(ImageActionCallback copy_callback,
                           ImageActionCallback save_callback);
   CaptureGuard temporarilyHideForCapture();
+  bool captureExclusionActive() const noexcept {
+    return capture_exclusion_depth_ > 0;
+  }
 
   // 返回所有钉图窗口的屏幕矩形（测试 / 诊断辅助）。
   std::vector<RECT> windowRects() const;

@@ -795,17 +795,21 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-12：复用捕获服务并实现 crop_center Handler
 
-**状态：未开始；前置：F9-07、F9-11。** 建议提交：`feat(f9-12): add scoped center capture through the shared capture service`。
+**状态：已完成（2026-09-08）；前置：F9-07、F9-11。** 建议提交：`feat(f9-12): add scoped center capture through the shared capture service`。
 
 **文件范围：** 新增 `include/qingying/app/capture_service.h`、`src/app/capture_service.cpp`；修改 `src/app/action_handlers.cpp`、`src/app/application.cpp`、`src/app/CMakeLists.txt`；按需补 `src/capture/capture_engine.cpp` 的 checked arithmetic。
 
-- [ ] 提取共享捕获服务，UI 线程负责交互占用、Pin CaptureGuard、一次 captureRegion 和结果发布；GUI 与外部按上下文复用，不产生第二套 GDI 路径。
-- [ ] 实现 CropCenterHandler：取主显示器物理矩形，按第 10.2 节公式计算中心；拒绝非整数、非正数、超屏幕和溢出尺寸。
-- [ ] 先完成参数/busy/预算预检，再正式受理并清本 scope 旧图；预检失败不清旧图，已受理捕获失败不恢复旧图。
-- [ ] 发布真实 result_id、尺寸、bounds、visible_screen 与剩余 TTL；不激活窗口、不显示 SelectionOverlay，捕获失败也恢复 Pin。
-- [ ] 新调用方进入 Handler + 共享服务；旧 CaptureEngine::cropCenter 桩若保留应明确为兼容入口，不复制中心坐标逻辑。
+- [x] 提取共享捕获服务，UI 线程负责交互占用、Pin CaptureGuard、一次 captureRegion 和结果发布；GUI 与外部按上下文复用，不产生第二套 GDI 路径。
+- [x] 实现 CropCenterHandler：取主显示器物理矩形，按第 10.2 节公式计算中心；拒绝非整数、非正数、超屏幕和溢出尺寸。
+- [x] 先完成参数/busy/预算预检，再正式受理并清本 scope 旧图；预检失败不清旧图，已受理捕获失败不恢复旧图。
+- [x] 发布真实 result_id、尺寸、bounds、visible_screen 与剩余 TTL；不激活窗口、不显示 SelectionOverlay，捕获失败也恢复 Pin。
+- [x] 新调用方进入 Handler + 共享服务；旧 CaptureEngine::cropCenter 桩若保留应明确为兼容入口，不复制中心坐标逻辑。
 
 **验收：** 新增 `tests/capture_service_test.cpp`、`tests/crop_center_handler_test.cpp`，扩展 action_handlers/result_store 测试。验证奇数中心偏移、负屏幕坐标、预算与溢出、预检/捕获失败差别、Pin 恢复；生产 Tool 映射留到 F9-15。
+
+**完成记录：** 新增 UI 线程所有的 `CaptureService`，统一完成显式交互所有权、参数/busy/预算预检、当前 scope 替换、Pin 排除、单次 `CaptureEngine::captureRegion` 和带边界/TTL 的结果发布。GUI 普通区域截图复用该服务；`CaptureRegionHandler` 与新增 `CropCenterHandler` 复用同一入口。中心矩形从主显示器物理边界计算，非正数、超屏幕、坐标/stride/像素字节溢出均在捕获前失败；`CaptureEngine` 增加第二道 checked arithmetic，旧 `cropCenter` 明确保留为不复制策略的兼容桩。参数、busy 或预算预检失败保留旧结果，受理后的捕获/发布失败保持本 scope 为空，Pin 通过 RAII 恢复。
+
+**验证记录：** 2026-09-08 新增 11 项测试，专项 36/36、完整 Release 700/700 通过；覆盖奇数差值向下取整、负主屏坐标、完全匹配、非正/超屏幕尺寸、坐标与 row-byte 溢出、预算不足、跨 scope 隔离、外部 TTL/visible_screen 元数据、单次捕获、交互所有权与 Pin 恢复。`crop_center` 的 MCP Tool/schema/capability 仍按计划在 F9-15 开放。
 
 ### F9-13：实现安全保存策略、临时文件和原子提交
 

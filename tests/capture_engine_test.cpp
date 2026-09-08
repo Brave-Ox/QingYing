@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 namespace qingying {
 
 TEST(CaptureEngineTest, CaptureFullScreenProducesNonEmptyImage) {
@@ -62,6 +64,20 @@ TEST(CaptureEngineTest, CaptureInvalidRegionReturnsError) {
 
   EXPECT_FALSE(result.ok);
   EXPECT_NE(result.error_code, ErrorCode::kOk);
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(CaptureEngineTest, CaptureRegionRejectsCoordinateAndStrideOverflow) {
+  CaptureEngine engine;
+  Image out{1, 1, {1}};
+  EXPECT_EQ(engine.captureRegion((std::numeric_limits<int>::max)(), 0, 1, 1,
+                                 out).error_code,
+            ErrorCode::kInvalidArgument);
+  EXPECT_TRUE(out.empty());
+  EXPECT_EQ(engine.captureRegion(0, 0,
+                                 (std::numeric_limits<int>::max)(), 1, out)
+                .error_code,
+            ErrorCode::kInvalidArgument);
   EXPECT_TRUE(out.empty());
 }
 
