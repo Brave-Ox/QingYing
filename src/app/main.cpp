@@ -1,11 +1,13 @@
-// 必须在包含 <Windows.h> 之前定义，确保 DPI 感知相关 API 可用。
+﻿// 必须在包含 <Windows.h> 之前定义，确保 DPI 感知相关 API 可用。
 #define WINVER 0x0A00
 #define _WIN32_WINNT 0x0A00
 #define NTDDI_VERSION 0x0A000003  // Windows 10 1703（RS2）
 
 #include "qingying/app/application.hpp"
+#include "qingying/app/mcp_stdio_runner.h"
 
 #include <Windows.h>
+#include <Shellapi.h>
 
 #include <memory>
 
@@ -69,8 +71,26 @@ void enablePerMonitorDpiAwareness()
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                     PWSTR /*lpCmdLine*/, int /*nCmdShow*/) {
+  int count = 0;
+  auto argv = CommandLineToArgvW(GetCommandLineW(), &count);
+  if (!argv) return 2;
+  std::vector<std::wstring> arguments(argv + 1, argv + count);
+  LocalFree(argv);
+  std::wstring test_namespace;
+#ifdef QINGYING_PROCESS_TESTING
+  if (arguments.empty() || arguments.front().find(L"--test-scope=") != 0) return 2;
+  test_namespace = arguments.front().substr(13);
+  arguments.erase(arguments.begin());
+  if (test_namespace.empty() || test_namespace.size() > 64 ||
+      test_namespace.find_first_not_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::wstring::npos)
+    return 2;
+#endif
+  const auto mode = qingying::parseLaunchMode(arguments);
+  if (mode == qingying::LaunchMode::Invalid) return 2;
+  if (mode == qingying::LaunchMode::McpStdio)
+    return qingying::runMcpStdio(test_namespace);
   enablePerMonitorDpiAwareness();
 
-  qingying::Application app(hInstance);
+  qingying::Application app(hInstance, std::move(test_namespace));
   return app.run();
 }

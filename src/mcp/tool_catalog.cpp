@@ -62,7 +62,8 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
     if (kind == ToolKind::Status && (!response.transport_available || !response.connection.valid()))
       return result({{"reachable", false}, {"app_running", nullptr},
           {"automation_enabled", nullptr}, {"busy", nullptr}, {"limits", nullptr},
-          {"connection_reason", std::string(errorCodeSymbol(response.result.error_code))}}, false);
+          {"connection_reason", response.result.message.empty()
+              ? std::string(errorCodeSymbol(response.result.error_code)) : response.result.message}}, false);
     return toolFailure(response.result.error_code, response.result.message);
   }
   ipc::WireResponse wire;

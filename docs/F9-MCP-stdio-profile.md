@@ -1,6 +1,12 @@
-# F9-10 MCP stdio profile
+# F9-10 / F9-11 MCP stdio profile
 
-实现范围固定为 **2025-11-25 / stdio**。`McpBridge` 持有一个依赖 `IAutomationClient` 的 `McpProtocolSession`；`StdioTransport` 使用继承的标准句柄运行该 bridge。公开头文件不暴露 JSON 类型。生产 `--mcp-stdio` 启动分支、Pipe 连接创建及托盘开关仍由 F9-11 接线。
+实现范围固定为 **2025-11-25 / stdio**。`McpBridge` 持有一个依赖 `IAutomationClient` 的 `McpProtocolSession`；`StdioTransport` 使用继承的标准句柄运行该 bridge。公开头文件不暴露 JSON 类型。F9-11 已接通生产 `--mcp-stdio` 启动分支、Pipe 连接创建及托盘开关。
+
+## 启动与本机开关
+
+无参数运行 `qingying.exe` 进入原有单例托盘；右键勾选“允许本机 Agent 接口”后，客户端可以通过同一个 EXE 的 `--mcp-stdio` 参数启动 bridge。该分支在任何 GUI、热键、单例互斥体和插件构造之前分流，不创建控制台。未知参数退出码为 2，stdio 传输失败为 4，正常 EOF 为 0。
+
+开关默认关闭，以 DWORD `Enabled` 保存在 `HKCU\Software\QingYing\Automation`。关闭开关会撤销并清理已有连接；重新启用后客户端需要重新启动 bridge，旧连接和句柄不能复用。GUI 未运行或接口关闭时，bridge 仍支持 initialize、tools/list；status 返回 `reachable:false` 和 `pipe_not_found` 等原因，不能推断的 GUI 状态为 null。不会自动启动 GUI、重连或重放请求。
 
 ## 握手与支持范围
 
@@ -45,4 +51,4 @@ stdio 为逐行 UTF-8 JSON-RPC，可分段、可连续多行，也接受 CRLF；
 
 EOF 使本 bridge 关闭所绑定的 IAutomationClient，抑制在途请求响应，已排队响应在写期限内排空。不会关闭托盘、重连或重放操作。`AutomationResponse.transport_available` 是客户端本地传输事实，不序列化进 wire：它允许已断连客户端保留旧 connection 身份，同时让 status 正确表达不可达。
 
-依据：[2025 stdio 传输](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)、[CancelSynchronousIo 取消及完成语义](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelsynchronousio)。完整 GUI + stdio 子进程集成与实际目标客户端验收留在 F9-11/F9-24。
+依据：[2025 stdio 传输](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)、[CancelSynchronousIo 取消及完成语义](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelsynchronousio)。F9-11 已通过 GUI + 双 stdio 子进程及慢 stdout 退出测试，M1 本地 status 链路已接通；实际目标客户端验收留在 F9-24。

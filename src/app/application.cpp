@@ -2,6 +2,8 @@
 
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/action_handlers.hpp"
+#include "qingying/app/automation_runtime.h"
+#include "qingying/app/automation_settings.h"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/hotkey_manager.hpp"
@@ -72,8 +74,12 @@ qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
 namespace qingying {
 
 struct Application::Impl {
-  explicit Impl(HINSTANCE instance)
+  explicit Impl(HINSTANCE instance, std::wstring test_namespace)
       : instance_(instance),
+        test_namespace_(std::move(test_namespace)),
+        automation_settings_(test_namespace_),
+        single_instance_(test_namespace_.empty() ? L"Local\\QingYing.SingleInstance" :
+            (L"Local\\QingYing.Test." + test_namespace_).c_str()),
         longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
@@ -93,16 +99,24 @@ struct Application::Impl {
               automation_endpoint_.execute(ticket, context, request, std::move(control));
             }),
         automation_endpoint_(dispatcher_, capture_workflow_, result_store_,
-            operation_registry_, scheduler_, interaction_gate_, {}, {}) {}
+            operation_registry_, scheduler_, interaction_gate_, {}, {}),
+        automation_runtime_(automation_endpoint_, scheduler_, [this] {
+          ipc::PipeOptions options;
+          options.test_suffix = test_namespace_;
+          return options;
+        }()) {}
 
   ~Impl() {
     shutdown();
+    tray_.setMessageFilter({});
+    tray_.setAutomationToggle({});
+    tray_.destroy();
   }
 
   void shutdown() {
     if (stopping_) return;
     stopping_ = true;
-    automation_endpoint_.shutdown();
+    automation_runtime_.shutdown();
     if (tray_.hwnd()) KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
     hotkey_.unregisterAll(tray_.hwnd());
   }
@@ -121,7 +135,7 @@ struct Application::Impl {
         return true;
       }
       if (msg == WM_TIMER && wparam == kAutomationMaintenanceTimer) {
-        automation_endpoint_.tick();
+        automation_runtime_.tick();
         *result = 0;
         return true;
       }
@@ -135,14 +149,20 @@ struct Application::Impl {
         *result = 0;
         return true;
       }
+      if (msg == WM_CLOSE || (msg == WM_ENDSESSION && wparam)) {
+        shutdown();
+        tray_.destroy();
+        *result = 0;
+        return true;
+      }
+      if (msg == WM_QUERYENDSESSION) {
+        *result = TRUE;
+        return true;
+      }
       if (msg == WM_DESTROY) {
         // The tray window owns the process lifetime. CaptureWorkflow closes
         // any non-modal overlays and joins its worker before TrayController
         // posts quit.
-        shutdown();
-        return false;
-      }
-      if (msg == WM_ENDSESSION && wparam) {
         shutdown();
         return false;
       }
@@ -168,6 +188,7 @@ struct Application::Impl {
 
   int run() {
     if (!single_instance_.acquired()) {
+      if (!test_namespace_.empty()) return 1;
       MessageBoxW(nullptr,
                   L"QingYing is already running in the system tray.",
                   L"QingYing", MB_OK | MB_ICONINFORMATION);
@@ -185,17 +206,37 @@ struct Application::Impl {
     result_actions_.setOwnerWindow(tray_.hwnd());
 
     installMessageRouter();
+    tray_.setAutomationToggle([this](bool enabled) {
+      if (enabled && !automation_runtime_.enable()) {
+        MessageBoxW(tray_.hwnd(), L"无法启动本机 Agent 接口。", L"QingYing", MB_OK | MB_ICONERROR);
+        return false;
+      }
+      if (!enabled) automation_runtime_.disable();
+      if (!automation_settings_.setEnabled(enabled)) {
+        if (enabled) automation_runtime_.disable();
+        MessageBoxW(tray_.hwnd(), L"无法保存本机 Agent 接口设置。", L"QingYing", MB_OK | MB_ICONERROR);
+        return !enabled;
+      }
+      return true;
+    });
     if (!SetTimer(tray_.hwnd(), kAutomationMaintenanceTimer, 250, nullptr)) {
       shutdown();
       return 3;
     }
 
-    if (!hotkey_.registerCaptureHotkey(tray_.hwnd())) {
+    if (!hotkey_.registerCaptureHotkey(tray_.hwnd(), test_namespace_.empty() ? 'Q' : VK_F24)) {
+      if (!test_namespace_.empty()) { shutdown(); return 5; }
       MessageBoxW(
           tray_.hwnd(),
           L"Failed to register capture hotkey (Ctrl+Shift+Q).\n"
           L"It may be used by another application.",
           L"QingYing", MB_OK | MB_ICONWARNING);
+    }
+
+    if (automation_settings_.enabled()) {
+      const bool enabled = automation_runtime_.enable();
+      tray_.setAutomationEnabled(enabled);
+      if (!enabled) MessageBoxW(tray_.hwnd(), L"无法启动本机 Agent 接口。", L"QingYing", MB_OK | MB_ICONWARNING);
     }
 
     MSG msg = {};
@@ -205,10 +246,13 @@ struct Application::Impl {
     }
 
     shutdown();
+    tray_.destroy();
     return static_cast<int>(msg.wParam);
   }
 
   HINSTANCE instance_{nullptr};
+  std::wstring test_namespace_;
+  AutomationSettings automation_settings_;
   SingleInstanceGuard single_instance_;
   TrayController tray_;
   HotkeyManager hotkey_;
@@ -227,11 +271,12 @@ struct Application::Impl {
   OperationRegistry operation_registry_;
   UiActionScheduler scheduler_;
   AutomationEndpoint automation_endpoint_;
+  AutomationRuntime automation_runtime_;
   bool stopping_{false};
 };
 
-Application::Application(HINSTANCE instance)
-    : impl_(std::make_unique<Impl>(instance)) {}
+Application::Application(HINSTANCE instance, std::wstring test_namespace)
+    : impl_(std::make_unique<Impl>(instance, std::move(test_namespace))) {}
 
 Application::~Application() = default;
 

@@ -105,6 +105,10 @@ StatusInfo AutomationEndpoint::status() const {
   info.queues = scheduler_.queueUsage();
   return info;
 }
+void AutomationEndpoint::setTransportEnabled(bool enabled) {
+  checkThread();
+  policy_.transport_enabled = enabled && !stopping_;
+}
 void AutomationEndpoint::execute(UiMessageToken ticket,
     const TrustedAutomationContext& context, const AutomationRequest& request,
     std::shared_ptr<OperationControl> control) {
@@ -264,8 +268,8 @@ void AutomationEndpoint::shutdown() {
   if (stopping_) return;
   stopping_ = true;
   gate_.stop();
-  // Future transport: stop admission/cancel I/O first; never block the UI on
-  // pipe flushing. Business/export workers must join before final reclamation.
+  // AutomationRuntime revokes transport admission before entering here.
+  // Business/export workers must join before final reclamation.
   scheduler_.stopAccepting();
   workflow_.shutdown();
   if (policy_.stop_producers) policy_.stop_producers();

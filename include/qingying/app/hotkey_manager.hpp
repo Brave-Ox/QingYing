@@ -13,7 +13,7 @@ class HotkeyManager {
   HotkeyManager(const HotkeyManager&) = delete;
   HotkeyManager& operator=(const HotkeyManager&) = delete;
 
-  bool registerCaptureHotkey(HWND hwnd);
+  bool registerCaptureHotkey(HWND hwnd, UINT key = 'Q');
   void unregisterAll(HWND hwnd);
 
  private:

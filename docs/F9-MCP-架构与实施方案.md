@@ -776,18 +776,22 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-11：在同一 EXE 中接通双模式、托盘开关与 status
 
-**状态：未开始；前置：F9-07、F9-09、F9-10。** 建议提交：`feat(f9-11): wire tray and stdio modes through local IPC`。
+**状态：已完成（2026-09-08）；前置：F9-07、F9-09、F9-10。** 建议提交：`feat(f9-11): wire tray and stdio modes through local IPC`。
 
 **文件范围：** 修改 `src/app/main.cpp`、`src/app/application.cpp`、`include/qingying/app/application.hpp`、`src/app/tray_controller.cpp`、`include/qingying/app/tray_controller.hpp`、`src/app/CMakeLists.txt`；新增 `src/app/mcp_stdio_runner.cpp`、`src/app/automation_settings.cpp` 及对应头。
 
-- [ ] 在构造 Application、SingleInstanceGuard、CaptureEngine、插件宿主前解析 Unicode 命令行；无参进入托盘，--mcp-stdio 只构造 session 与 Pipe client，未知参数明确失败。
-- [ ] GUI 继续使用现有单例互斥体；stdio 不争用它、不注册热键、不建托盘、不创建控制台或 MessageBox。
-- [ ] 增加默认关闭的“允许本机 Agent 接口”设置；启用后在 Handler/托盘 HWND/owner/消息路由就绪时启动 Pipe Server，禁用即停止准入并结算连接。
-- [ ] 将 Pipe → Scheduler → Endpoint → Dispatcher 和 completion 回传完整接线；已实现的控制工具可用，status 报告实际开关/忙碌/限额。
-- [ ] 在窗口仍有效时完成显式 shutdown：关闭准入、结算请求、停止/回收业务 worker、取消并回收 I/O、drain、释放 scope，最后销毁托盘。菜单退出、会话结束和析构兜底复用该流程。
-- [ ] 无托盘或开关关闭时仍可完成协议握手和 tools/list，执行工具返回明确不可达；禁止自动拉起第二个 GUI、监听 TCP/HTTP 或建立远程桥接。
+- [x] 在构造 Application、SingleInstanceGuard、CaptureEngine、插件宿主前解析 Unicode 命令行；无参进入托盘，--mcp-stdio 只构造 session 与 Pipe client，未知参数明确失败。
+- [x] GUI 继续使用现有单例互斥体；stdio 不争用它、不注册热键、不建托盘、不创建控制台或 MessageBox。
+- [x] 增加默认关闭的“允许本机 Agent 接口”设置；启用后在 Handler/托盘 HWND/owner/消息路由就绪时启动 Pipe Server，禁用即停止准入并结算连接。
+- [x] 将 Pipe → Scheduler → Endpoint → Dispatcher 和 completion 回传完整接线；已实现的控制工具可用，status 报告实际开关/忙碌/限额。
+- [x] 在窗口仍有效时完成显式 shutdown：关闭准入、结算请求、停止/回收业务 worker、取消并回收 I/O、drain、释放 scope，最后销毁托盘。菜单退出、会话结束和析构兜底复用该流程。
+- [x] 无托盘或开关关闭时仍可完成协议握手和 tools/list，执行工具返回明确不可达；禁止自动拉起第二个 GUI、监听 TCP/HTTP 或建立远程桥接。
 
 **验收：** 新增 `tests/mcp_process_integration_test.cpp`、`tests/automation_shutdown_test.cpp`；用子进程和标准句柄验证 GUI + 两个 stdio 并存、无重复托盘/热键、一个 EOF 不影响另一个连接、禁用/重启后旧 ID 失效、慢读时退出不死锁。**里程碑 M1：本地 MCP → Pipe → 主进程 status 成功。**
+
+**完成记录：** `CommandLineToArgvW` 在 GUI 构造前完成分流，未知参数退出码为 2；stdio 通过 `PipeAutomationClient` 连接一次，不可达时仍提供握手、目录和明确的 status 原因。`AutomationSettings` 在 `HKCU\Software\QingYing\Automation` 保存 DWORD `Enabled`，缺失默认关闭。新增 `AutomationRuntime` 集中管理监听、禁用、定时 drain 与幂等 shutdown；`PipeServer::stopAccepting` 先撤销准入并发出取消，再由业务回收和 `stop` 收取 I/O 完成，托盘 HWND 最后销毁。
+
+**验证记录：** 2026-09-08 Release 构建成功，新增 8 项测试，专项 8/8、完整回归 679/679 通过。隔离 GUI + 两个 stdio 子进程验证真实 status、开关持久化、EOF 独立、重启、菜单退出/会话结束及填满 stdout 后的限时退出；运行时测试验证 generation 更新、旧操作/结果句柄失效、重启 epoch 隔离、pending read 回收及重复 shutdown。测试夹具仅在测试目标编译 `--test-scope`，使用专用配置键、管道、互斥体和 Ctrl+Shift+F24，生产 EXE 拒绝该参数。**M1 已通过；具体产品客户端兼容性及跨登录会话验收仍归 F9-24。**
 
 ### F9-12：复用捕获服务并实现 crop_center Handler
 

@@ -21,6 +21,8 @@ class TrayController {
   void destroy();
 
   void setMessageFilter(MessageFilter filter);
+  void setAutomationToggle(std::function<bool(bool)> toggle) { automation_toggle_ = std::move(toggle); }
+  void setAutomationEnabled(bool enabled) { automation_enabled_ = enabled; }
 
   HWND hwnd() const { return hwnd_; }
 
@@ -41,6 +43,8 @@ class TrayController {
   bool icon_added_{false};
   UINT taskbar_created_msg_{0};
   MessageFilter message_filter_;
+  std::function<bool(bool)> automation_toggle_;
+  bool automation_enabled_{false};
 };
 
 }  // namespace qingying

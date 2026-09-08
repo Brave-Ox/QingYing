@@ -44,6 +44,14 @@ target_link_libraries(qingying_app_handlers
     qingying_workflow
 )
 
+add_library(qingying_app_runtime STATIC
+  automation_runtime.cpp
+  automation_settings.cpp
+  mcp_stdio_runner.cpp
+)
+target_include_directories(qingying_app_runtime PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(qingying_app_runtime PUBLIC qingying_automation qingying_ipc qingying_mcp PRIVATE advapi32)
+
 add_executable(qingying WIN32
   main.cpp
   application.cpp
@@ -75,6 +83,7 @@ target_link_libraries(qingying
     qingying_workflow
     qingying_app_handlers
     qingying_automation
+    qingying_app_runtime
 )
 
 if(WIN32)

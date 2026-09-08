@@ -36,6 +36,8 @@ class PipeServer final {
   ~PipeServer();
   bool start();
   void drain();
+  // Owner thread: revoke admission and signal cancellation without joining.
+  void stopAccepting() noexcept;
   void stop() noexcept;
   std::wstring name() const;
   std::uint32_t lastError() const noexcept;

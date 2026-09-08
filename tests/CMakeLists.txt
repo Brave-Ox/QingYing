@@ -1,6 +1,8 @@
 # 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
+  mcp_process_integration_test.cpp
+  automation_shutdown_test.cpp
   action_dispatcher_test.cpp
   action_handlers_test.cpp
   automation_contract_test.cpp
@@ -134,6 +136,7 @@ target_link_libraries(qingying_tests
     qingying_longshot
     qingying_workflow
     qingying_app_handlers
+    qingying_app_runtime
     GTest::gtest
     GTest::gtest_main
 )
@@ -144,6 +147,15 @@ if(MSVC)
 endif()
 
 include(GoogleTest)
+get_target_property(QINGYING_DESKTOP_SOURCES qingying SOURCES)
+list(TRANSFORM QINGYING_DESKTOP_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/src/app/" REGEX "^[^/].*\\.cpp$")
+add_executable(qingying_process_fixture WIN32 ${QINGYING_DESKTOP_SOURCES})
+target_compile_definitions(qingying_process_fixture PRIVATE QINGYING_PROCESS_TESTING)
+target_include_directories(qingying_process_fixture PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/res)
+get_target_property(QINGYING_DESKTOP_LIBRARIES qingying LINK_LIBRARIES)
+target_link_libraries(qingying_process_fixture PRIVATE ${QINGYING_DESKTOP_LIBRARIES})
+add_dependencies(qingying_tests qingying qingying_process_fixture)
+
 gtest_discover_tests(qingying_tests
   WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_tests>
   DISCOVERY_MODE PRE_TEST

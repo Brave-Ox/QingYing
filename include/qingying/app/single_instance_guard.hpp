@@ -7,7 +7,7 @@ namespace qingying {
 // Named mutex single-instance guard (Local\QingYing.SingleInstance).
 class SingleInstanceGuard {
  public:
-  SingleInstanceGuard();
+  explicit SingleInstanceGuard(const wchar_t* name = L"Local\\QingYing.SingleInstance");
   ~SingleInstanceGuard();
 
   SingleInstanceGuard(const SingleInstanceGuard&) = delete;

@@ -31,6 +31,7 @@ class AutomationEndpoint final {
   void execute(UiMessageToken ticket, const TrustedAutomationContext& context,
       const AutomationRequest& request, std::shared_ptr<OperationControl> control);
   StatusInfo status() const;
+  void setTransportEnabled(bool enabled);
   void tick();
   void shutdown();
 

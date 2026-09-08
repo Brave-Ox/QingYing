@@ -3,12 +3,13 @@
 #include <Windows.h>
 
 #include <memory>
+#include <string>
 
 namespace qingying {
 
 class Application {
  public:
-  explicit Application(HINSTANCE instance);
+  explicit Application(HINSTANCE instance, std::wstring test_namespace = {});
   ~Application();
 
   Application(const Application&) = delete;

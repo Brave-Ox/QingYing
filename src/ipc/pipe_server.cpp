@@ -277,7 +277,7 @@ void PipeServer::drain() {
     SetEvent(session->cleaned.get());
   }
 }
-void PipeServer::stop() noexcept {
+void PipeServer::stopAccepting() noexcept {
   auto& impl = *impl_;
   impl.checkThread();
   {
@@ -286,6 +286,10 @@ void PipeServer::stop() noexcept {
     for (auto& session : impl.shared->sessions) revoke(*impl.shared, *session);
     SetEvent(impl.stop_event.get());
   }
+}
+void PipeServer::stop() noexcept {
+  stopAccepting();
+  auto& impl = *impl_;
   for (auto& worker : impl.workers) if (worker.joinable()) worker.join();
   impl.workers.clear();
   drain();

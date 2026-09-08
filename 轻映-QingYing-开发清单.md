@@ -149,7 +149,7 @@
 - [ ] `CaptureWindow` 和 `CropCenter` 从桩升级为真实实现；
 - [ ] 本地口令表 → 类型安全 Action；
 - [ ] 明确交互式动作的异步工作流契约；
-- [ ] Named Pipe 生产接线：MCP Bridge ↔ 托盘主进程（传输与身份校验已完成，F9-11 接线）；
+- [x] F9-11 / Named Pipe 生产接线：同一 EXE 分流 GUI 与 --mcp-stdio，增加默认关闭的持久化托盘开关，接通真实 status 和显式退出回收；2026-09-08 新增 8 项测试，专项 8/8、完整 Release 679/679 通过，M1 已完成（详见 F9 方案及 MCP stdio profile）；
 - [ ] 实现 F9 Tool 集；
 - [ ] 失败返回明确错误，不自动操作屏幕或无限重试。
 

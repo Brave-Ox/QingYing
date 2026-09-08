@@ -353,7 +353,12 @@ LRESULT CALLBACK TrayController::WndProc(HWND hwnd, UINT msg, WPARAM wparam,
   }
 
   if (self != nullptr) {
-    return self->handleMessage(msg, wparam, lparam);
+    const auto result = self->handleMessage(msg, wparam, lparam);
+    if (msg == WM_NCDESTROY) {
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+      self->hwnd_ = nullptr;
+    }
+    return result;
   }
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -374,9 +379,12 @@ void TrayController::showContextMenu() {
   fillTrayMenuSeparator(separator);
   MENUITEMINFOW exit_item = {};
   fillTrayMenuItem(exit_item, IDM_TRAY_EXIT, false);
+  MENUITEMINFOW automation_item{};
+  fillTrayMenuItem(automation_item, TrayMenuAutomationCommandId, automation_enabled_);
   if (InsertMenuItemW(menu, 0, TRUE, &autostart_item) == FALSE ||
-      InsertMenuItemW(menu, 1, TRUE, &separator) == FALSE ||
-      InsertMenuItemW(menu, 2, TRUE, &exit_item) == FALSE)
+      InsertMenuItemW(menu, 1, TRUE, &automation_item) == FALSE ||
+      InsertMenuItemW(menu, 2, TRUE, &separator) == FALSE ||
+      InsertMenuItemW(menu, 3, TRUE, &exit_item) == FALSE)
   {
     DestroyMenu(menu);
     return;
@@ -460,8 +468,12 @@ void TrayController::onCommand(UINT id) {
       AutostartSettings::setEnabled(next);
       break;
     }
+    case TrayMenuAutomationCommandId:
+      if (automation_toggle_ && automation_toggle_(!automation_enabled_))
+        automation_enabled_ = !automation_enabled_;
+      break;
     case IDM_TRAY_EXIT:
-      DestroyWindow(hwnd_);
+      PostMessageW(hwnd_, WM_CLOSE, 0, 0);
       break;
     default:
       break;

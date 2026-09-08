@@ -6,14 +6,14 @@ namespace qingying {
 
 HotkeyManager::~HotkeyManager() = default;
 
-bool HotkeyManager::registerCaptureHotkey(HWND hwnd) {
+bool HotkeyManager::registerCaptureHotkey(HWND hwnd, UINT key) {
   if (hwnd == nullptr || registered_) {
     return false;
   }
 
   hotkey_id_ = HotkeyIds::kCapture;
   if (!RegisterHotKey(hwnd, hotkey_id_, HotkeyDefaults::kCaptureModifiers,
-                      HotkeyDefaults::kCaptureVirtualKey)) {
+                      key)) {
     return false;
   }
 

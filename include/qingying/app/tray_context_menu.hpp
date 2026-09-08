@@ -6,6 +6,8 @@ namespace qingying {
 
 inline constexpr UINT TrayMenuAutostartCommandId = 40001;
 inline constexpr UINT TrayMenuExitCommandId = 40002;
+inline constexpr UINT TrayMenuAutomationCommandId = 40003;
+inline constexpr wchar_t TrayMenuAutomationText[] = L"允许本机 Agent 接口";
 inline constexpr wchar_t TrayMenuAutostartText[] = L"开机自启";
 inline constexpr wchar_t TrayMenuExitText[] = L"退出";
 inline constexpr wchar_t TrayMenuFontFace[] = L"Microsoft YaHei UI";
@@ -40,6 +42,7 @@ enum class TrayMenuItemKind : ULONG_PTR
   Autostart = 1,
   Separator = 2,
   Exit = 3,
+  Automation = 4,
 };
 
 inline int trayMenuScalePx(int px, int dpi)
@@ -54,6 +57,7 @@ inline int trayMenuScalePx(int px, int dpi)
 
 inline const wchar_t* trayMenuLabelForId(UINT menu_id)
 {
+  if (menu_id == TrayMenuAutomationCommandId) return TrayMenuAutomationText;
   if (menu_id == TrayMenuAutostartCommandId)
   {
     return TrayMenuAutostartText;
@@ -67,6 +71,7 @@ inline const wchar_t* trayMenuLabelForId(UINT menu_id)
 
 inline TrayMenuItemKind trayMenuKindFromId(UINT menu_id)
 {
+  if (menu_id == TrayMenuAutomationCommandId) return TrayMenuItemKind::Automation;
   if (menu_id == TrayMenuAutostartCommandId)
   {
     return TrayMenuItemKind::Autostart;
@@ -82,6 +87,8 @@ inline const wchar_t* trayMenuLabelForKind(TrayMenuItemKind kind)
 {
   switch (kind)
   {
+    case TrayMenuItemKind::Automation:
+      return TrayMenuAutomationText;
     case TrayMenuItemKind::Autostart:
       return TrayMenuAutostartText;
     case TrayMenuItemKind::Exit:

@@ -2,12 +2,8 @@
 
 namespace qingying {
 
-namespace {
-constexpr wchar_t kMutexName[] = L"Local\\QingYing.SingleInstance";
-}
-
-SingleInstanceGuard::SingleInstanceGuard() {
-  mutex_ = CreateMutexW(nullptr, TRUE, kMutexName);
+SingleInstanceGuard::SingleInstanceGuard(const wchar_t* name) {
+  mutex_ = CreateMutexW(nullptr, TRUE, name);
   if (mutex_ == nullptr) {
     acquired_ = false;
     return;
