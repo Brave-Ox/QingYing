@@ -207,10 +207,11 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     }
     reply(responseWith(ErrorCode::kNotReady)); return;
   }
-  // CropCenter is a synchronous CaptureService handler and performs its own
-  // busy admission. Internal CaptureRegion keeps the established endpoint
-  // execution guard.
-  const bool handler_owns_interaction = type == ActionType::CropCenter;
+  // CropCenter performs its own desktop admission. Save only prepares a lease
+  // on the UI thread and then runs on the bounded export worker, so it must not
+  // hold the desktop interaction gate while encoding.
+  const bool handler_owns_interaction =
+      type == ActionType::CropCenter || type == ActionType::Save;
   auto guard = handler_owns_interaction
       ? InteractionGate::Guard{}
       : gate_.acquire(InteractionKind::Capture);

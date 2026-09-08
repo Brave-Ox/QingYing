@@ -3,6 +3,7 @@
 #include "qingying/app/capture_service.h"
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/capture_workflow.hpp"
+#include "qingying/app/export_executor.h"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/result_action_service.h"
 #include "qingying/capture/capture_engine.hpp"
@@ -26,6 +27,7 @@ class AutomationShutdownTest : public ::testing::Test {
   PinManager pins;
   InteractionGate gate;
   ResultActionService actions{store, exporter, pins, {}, &gate};
+  ExportExecutor export_executor{2};
   CaptureService capture_service{capture, store, pins, gate};
   CaptureWorkflow workflow{capture, capture_service, controller, store,
                            actions, pins, overlay, &gate};
@@ -39,7 +41,9 @@ class AutomationShutdownTest : public ::testing::Test {
       last_context = context;
       endpoint.execute(token, context, request, std::move(control));
     }};
-  AutomationEndpoint endpoint{dispatcher, workflow, store, registry, scheduler, gate, {}, {}};
+  AutomationEndpoint endpoint{dispatcher, workflow, store, registry, scheduler,
+      gate, {}, AutomationEndpoint::ExecutionPolicy{
+          {}, [this] { export_executor.shutdown(); }, false}};
   ipc::PipeOptions options = [] {
     ipc::PipeOptions value;
     value.test_suffix = L"shutdown_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(GetTickCount64());
@@ -112,6 +116,7 @@ TEST_F(AutomationShutdownTest, DisableReenableChangesGenerationAndShutdownCollec
   EXPECT_EQ(response.wait_for(std::chrono::seconds(3)), std::future_status::ready);
   EXPECT_FALSE(runtime.enable());
   EXPECT_FALSE(endpoint.connectAuthenticated());
+  EXPECT_TRUE(export_executor.stopping());
 }
 TEST_F(AutomationShutdownTest, ShutdownInvalidatesScopesAndOpaqueHandlesBeforeDestruction) {
   auto context = endpoint.connectAuthenticated(); ASSERT_TRUE(context);
@@ -123,6 +128,7 @@ TEST_F(AutomationShutdownTest, ShutdownInvalidatesScopesAndOpaqueHandlesBeforeDe
   EXPECT_FALSE(registry.get(*context, operation.handle));
   EXPECT_FALSE(registry.resolveResult(*context, *handle));
   EXPECT_EQ(scheduler.queueUsage().queued, 0u);
+  EXPECT_TRUE(export_executor.stopping());
 }
 TEST(AutomationSettingsTest, DefaultOffAndPersistsOnlyIsolatedKey) {
   const auto name = L"settings_" + std::to_wstring(GetCurrentProcessId());

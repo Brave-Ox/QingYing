@@ -831,17 +831,21 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-14：接入持 lease 的有界异步导出
 
-**状态：未开始；前置：F9-02、F9-04、F9-05、F9-06、F9-07、F9-13。** 建议提交：`feat(f9-14): execute external saves on a bounded export worker`。
+**状态：验收完成（2026-09-08）；前置：F9-02、F9-04、F9-05、F9-06、F9-07、F9-13。** 建议提交：`feat(f9-14): execute external saves on a bounded export worker`。
 
 **文件范围：** 新增 `include/qingying/app/export_executor.h`、`src/app/export_executor.cpp`、`src/app/async_save_handler.cpp`；修改 ResultActionService、`src/app/action_handlers.cpp`、`src/app/application.cpp`、`src/app/CMakeLists.txt`。
 
-- [ ] 拆分 prepareSave / executeSave：UI 校验可信 scope、路径、幂等键并 acquire lease，worker 只拿不可变图和保存任务，不再解析 Store。
-- [ ] 注入单个导出 worker 和有界队列；入队预留和失败退还原子化，任务持图仍计入 F9-04 的预算。
-- [ ] 外部 Save 使用 Dispatcher::submit 的异步入口；GUI 继续同步保存，两者复用 F9-13 的保存事务。
-- [ ] 提交前已有 operation 记录，completion 回 UI 更新唯一终态；编码期间 UI 可处理 status 和协议取消，MCP Save 只在实际完成后应答并返回 operation_id，不能伪造提前成功。
-- [ ] 处理提交前取消、已提交成功、重复 request_key 和超时；断连不重放，关闭时先 stop/join 再释放回调目标和 lease，worker 不等待 UI/管道。
+- [x] 拆分 prepareSave / executeSave：UI 校验可信 scope、路径、幂等键并 acquire lease，worker 只拿不可变图和保存任务，不再解析 Store。
+- [x] 注入单个导出 worker 和有界队列；入队预留和失败退还原子化，任务持图仍计入 F9-04 的预算。
+- [x] 外部 Save 使用 Dispatcher::submit 的异步入口；GUI 继续同步保存，两者复用 F9-13 的保存事务。
+- [x] 提交前已有 operation 记录，completion 回 UI 更新唯一终态；编码期间 UI 可处理 status 和协议取消，MCP Save 只在实际完成后应答并返回 operation_id，不能伪造提前成功。
+- [x] 处理提交前取消、已提交成功、重复 request_key 和超时；断连不重放，关闭时先 stop/join 再释放回调目标和 lease，worker 不等待 UI/管道。
 
 **验收：** 新增 `tests/export_executor_test.cpp`、`tests/async_save_handler_test.cpp`；扩展 shutdown 测试。用阻塞式 fake encoder 验证 UI 可查询/取消、队列上限、清 scope 后 lease 计费、已提交成功不倒退和完成只交付一次。
+
+**完成记录：** `ResultActionService` 将外部保存拆为 UI 线程上的校验、lease 获取和不可变任务准备，以及单导出 worker 上的文件事务执行；有界队列原子拒绝超额任务，排队任务和运行任务在结束前持续持有 lease。`Dispatcher::submit` 对 Save 使用异步 Handler，GUI 保存仍走同步入口；取消、截止时间、提交权竞争、队列拒绝和关闭均汇入唯一 completion。应用关闭先停止并 join 导出 worker，再销毁回调目标和结果 scope，worker 不等待 UI 或 IPC。公共 MCP save Tool 的 schema 与目录参数接线仍按计划留在 F9-15。
+
+**验证记录：** 2026-09-08 新增 6 项测试，导出执行器、异步保存、结果动作和关闭专项 12/12 通过，完整 Release 718/718 通过；阻塞式保存事务覆盖清 scope 后 lease 继续计费、提交前取消、排队超时、队列上限、提交成功不因迟到取消倒退、关闭拒绝排队任务并等待运行任务，以及每个请求只完成一次。
 
 ### F9-15：开放中心截图、保存和结果释放，交付首条实用链路
 

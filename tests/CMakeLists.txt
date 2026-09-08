@@ -3,6 +3,8 @@
 add_executable(qingying_tests
   mcp_process_integration_test.cpp
   automation_shutdown_test.cpp
+  export_executor_test.cpp
+  async_save_handler_test.cpp
   capture_service_test.cpp
   crop_center_handler_test.cpp
   action_dispatcher_test.cpp

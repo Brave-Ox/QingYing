@@ -2,6 +2,7 @@ add_library(qingying_workflow STATIC
   capture_preview.cpp
   capture_service.cpp
   capture_workflow.cpp
+  export_executor.cpp
   longshot_controller.cpp
   save_policy.cpp
   result_action_service.cpp
@@ -33,6 +34,7 @@ endif()
 
 add_library(qingying_app_handlers STATIC
   action_handlers.cpp
+  async_save_handler.cpp
 )
 
 target_include_directories(qingying_app_handlers

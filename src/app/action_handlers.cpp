@@ -146,7 +146,8 @@ class PinHandler final : public IActionHandler {
 void registerAppHandlers(ActionDispatcher& dispatcher,
                          CaptureService& capture_service,
                          ResultStore& results,
-                         ResultActionService& result_actions) {
+                         ResultActionService& result_actions,
+                         ExportExecutor* export_executor) {
   dispatcher.registerHandler(std::make_unique<StatusHandler>());
   dispatcher.registerHandler(
       std::make_unique<CaptureRegionHandler>(capture_service));
@@ -156,6 +157,9 @@ void registerAppHandlers(ActionDispatcher& dispatcher,
       std::make_unique<CopyHandler>(results, result_actions));
   dispatcher.registerHandler(
       std::make_unique<SaveHandler>(results, result_actions));
+  if (export_executor != nullptr) {
+    registerAsyncSaveHandler(dispatcher, result_actions, *export_executor);
+  }
   dispatcher.registerHandler(
       std::make_unique<PinHandler>(results, result_actions));
 }

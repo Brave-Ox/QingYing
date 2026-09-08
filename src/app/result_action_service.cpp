@@ -11,16 +11,29 @@
 #include <utility>
 
 namespace qingying {
+namespace {
+
+ActionResult savePrepared() {
+  ActionResult result;
+  result.ok = true;
+  result.error_code = ErrorCode::kOk;
+  result.message = "save prepared";
+  return result;
+}
+
+}  // namespace
 
 ResultActionService::ResultActionService(ResultStore& results,
                                          ExportService& export_service,
                                          PinManager& pin_manager, SaveDialog save_dialog,
                                          InteractionGate* gate,
-                                         SavePolicy* save_policy)
+                                         SavePolicy* save_policy,
+                                         SaveTransaction save_transaction)
     : results_(results),
       export_service_(export_service),
       pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)),
-      gate_(gate ? *gate : local_gate_), save_policy_(save_policy) {}
+      gate_(gate ? *gate : local_gate_), save_policy_(save_policy),
+      save_transaction_(std::move(save_transaction)) {}
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
@@ -63,11 +76,31 @@ ActionResult ResultActionService::save(
     CommitAuthorization authorize_commit) {
   auto guard = gate_.acquire(InteractionKind::SaveDialog, owner);
   if (!guard) return unavailable();
+  PreparedSave task;
+  auto prepared = prepareSave(scope, selection, path,
+                              std::move(authorize_commit), &task);
+  return prepared.ok ? executeSave(std::move(task)) : prepared;
+}
+
+ActionResult ResultActionService::prepareSave(
+    ResultScopeId scope, const ResultSelection& selection,
+    const std::wstring& path, CommitAuthorization authorize_commit,
+    PreparedSave* output) const {
+  if (output == nullptr) {
+    ActionResult result;
+    result.error_code = ErrorCode::kInvalidArgument;
+    result.message = "prepared save output is required";
+    return result;
+  }
+  *output = {};
   const auto lease = results_.acquire(scope, selection);
   if (!lease) return noResult("save");
   if (scope == kGuiResultScopeId) {
-    return saveImage(*lease.image(), lease.metadata().result_id, path, true,
-                     std::move(authorize_commit));
+    output->lease = lease;
+    output->absolute_path = path;
+    output->overwrite = true;
+    output->authorize_commit = std::move(authorize_commit);
+    return savePrepared();
   }
   if (save_policy_ == nullptr) {
     ActionResult result;
@@ -78,8 +111,27 @@ ActionResult ResultActionService::save(
   ValidatedSavePath validated;
   auto validation = save_policy_->validateFullPath(path, false, &validated);
   if (!validation.ok) return validation;
-  return saveImage(*lease.image(), lease.metadata().result_id, validated.absolute_path,
-                   validated.overwrite, std::move(authorize_commit));
+  output->lease = lease;
+  output->absolute_path = std::move(validated.absolute_path);
+  output->overwrite = validated.overwrite;
+  output->authorize_commit = std::move(authorize_commit);
+  return savePrepared();
+}
+
+ActionResult ResultActionService::executeSave(PreparedSave task) {
+  if (!task) {
+    ActionResult result;
+    result.error_code = ErrorCode::kInvalidArgument;
+    result.message = "invalid prepared save";
+    return result;
+  }
+  if (save_transaction_) {
+    return save_transaction_(*task.lease.image(),
+        task.lease.metadata().result_id, task.absolute_path, task.overwrite,
+        std::move(task.authorize_commit));
+  }
+  return saveImage(*task.lease.image(), task.lease.metadata().result_id,
+      task.absolute_path, task.overwrite, std::move(task.authorize_commit));
 }
 ActionResult ResultActionService::save(
     ResultScopeId scope, const ResultSelection& selection,

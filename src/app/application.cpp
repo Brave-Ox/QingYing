@@ -7,6 +7,7 @@
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/capture_service.h"
+#include "qingying/app/export_executor.h"
 #include "qingying/app/hotkey_manager.hpp"
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/result_action_service.h"
@@ -108,6 +109,7 @@ struct Application::Impl {
         save_policy_(makeAllowedSaveDirectories(test_namespace_)),
         result_actions_(result_store_, export_service_, pin_manager_, {},
                         &interaction_gate_, &save_policy_),
+        export_executor_(AutomationLimits{}.max_queued_exports),
         capture_service_(capture_, result_store_, pin_manager_, interaction_gate_),
         longshot_controller_(longshot_, overlay_),
         capture_workflow_(capture_, capture_service_, longshot_controller_,
@@ -124,7 +126,9 @@ struct Application::Impl {
               automation_endpoint_.execute(ticket, context, request, std::move(control));
             }),
         automation_endpoint_(dispatcher_, capture_workflow_, result_store_,
-            operation_registry_, scheduler_, interaction_gate_, {}, {}),
+            operation_registry_, scheduler_, interaction_gate_, {},
+            AutomationEndpoint::ExecutionPolicy{
+                {}, [this] { export_executor_.shutdown(); }, false}),
         automation_runtime_(automation_endpoint_, scheduler_, [this] {
           ipc::PipeOptions options;
           options.test_suffix = test_namespace_;
@@ -148,7 +152,7 @@ struct Application::Impl {
 
   void registerHandlers() {
     registerAppHandlers(dispatcher_, capture_service_, result_store_,
-                        result_actions_);
+                        result_actions_, &export_executor_);
     result_actions_.bindPinWindowActions();
   }
 
@@ -292,6 +296,7 @@ struct Application::Impl {
   PinManager pin_manager_;
   InteractionGate interaction_gate_;
   ResultActionService result_actions_;
+  ExportExecutor export_executor_;
   CaptureService capture_service_;
   SelectionOverlay overlay_;
   LongShotController longshot_controller_;

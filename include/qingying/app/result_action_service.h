@@ -23,10 +23,24 @@ class ResultActionService final {
  public:
   using SaveDialog = std::function<std::optional<std::wstring>(HWND)>;
   using CommitAuthorization = std::function<bool()>;
+  using SaveTransaction = std::function<ActionResult(
+      const Image&, ResultId, const std::wstring&, bool,
+      CommitAuthorization)>;
+  struct PreparedSave {
+    ResultLease lease;
+    std::wstring absolute_path;
+    bool overwrite{false};
+    CommitAuthorization authorize_commit;
+
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(lease) && !absolute_path.empty();
+    }
+  };
   ResultActionService(ResultStore& results, ExportService& export_service,
                       PinManager& pin_manager, SaveDialog save_dialog = {},
                       InteractionGate* gate = nullptr,
-                      SavePolicy* save_policy = nullptr);
+                      SavePolicy* save_policy = nullptr,
+                      SaveTransaction save_transaction = {});
 
   void setOwnerWindow(HWND owner_window) noexcept;
   void bindPinWindowActions();
@@ -47,6 +61,12 @@ class ResultActionService final {
                    const InteractionGate::Guard* owner = nullptr);
   // Pin owns this image independently of ResultStore; also guards its modal UI.
   ActionResult savePinImage(const Image& image);
+  ActionResult prepareSave(ResultScopeId scope,
+                           const ResultSelection& selection,
+                           const std::wstring& path,
+                           CommitAuthorization authorize_commit,
+                           PreparedSave* output) const;
+  ActionResult executeSave(PreparedSave task);
 
  private:
   ActionResult copyImage(const Image& image);
@@ -69,6 +89,7 @@ class ResultActionService final {
   InteractionGate local_gate_;
   InteractionGate& gate_;
   SavePolicy* save_policy_{nullptr};
+  SaveTransaction save_transaction_;
 };
 
 }  // namespace qingying
