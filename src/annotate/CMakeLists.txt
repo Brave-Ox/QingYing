@@ -27,6 +27,6 @@ target_link_libraries(qingying_annotate
 
 if(WIN32)
   target_link_libraries(qingying_annotate
-    PRIVATE gdi32 user32 comctl32
+    PRIVATE gdi32 user32 comctl32 gdiplus
   )
 endif()

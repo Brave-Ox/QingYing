@@ -129,6 +129,66 @@ int countChangedTextFramePixels(std::uint32_t background)
   return changed;
 }
 
+int countTextChromeBorderBlendedPixels()
+{
+  constexpr int SurfaceWidth = 140;
+  constexpr int SurfaceHeight = 120;
+  constexpr std::uint32_t Background = 0xFF808080u;
+  constexpr std::uint32_t OuterBorder = 0xFF24272Cu;
+  constexpr std::uint32_t InnerBorder = 0xFFFFFFFFu;
+  constexpr PointF Corners[4]{PointF{20.25f, 20.25f},
+                              PointF{110.75f, 58.75f},
+                              PointF{92.75f, 101.25f},
+                              PointF{2.25f, 62.75f}};
+
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = SurfaceWidth;
+  info.bmiHeader.biHeight = -SurfaceHeight;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+  void* raw_bits = nullptr;
+  const GdiObject bitmap(CreateDIBSection(nullptr, &info, DIB_RGB_COLORS,
+                                          &raw_bits, nullptr, 0));
+  if (!bitmap || raw_bits == nullptr)
+  {
+    return -1;
+  }
+  const std::unique_ptr<HDC__, TestHdcDeleter> hdc(
+      CreateCompatibleDC(nullptr));
+  if (hdc == nullptr)
+  {
+    return -1;
+  }
+  const HGDIOBJ old_bitmap = SelectObject(hdc.get(), bitmap.get());
+  if (old_bitmap == nullptr || old_bitmap == HGDI_ERROR)
+  {
+    return -1;
+  }
+
+  std::uint32_t* pixels = static_cast<std::uint32_t*>(raw_bits);
+  std::fill_n(pixels, SurfaceWidth * SurfaceHeight, Background);
+  drawTextChromeBorder(hdc.get(), Corners);
+  (void)SelectObject(hdc.get(), old_bitmap);
+
+  int blended = 0;
+  for (int y = 0; y < SurfaceHeight; ++y)
+  {
+    for (int x = 0; x < SurfaceWidth; ++x)
+    {
+      const std::uint32_t pixel = pixels[static_cast<std::size_t>(y) *
+                                             SurfaceWidth +
+                                         static_cast<std::size_t>(x)];
+      if (pixel != Background && pixel != OuterBorder && pixel != InnerBorder)
+      {
+        ++blended;
+      }
+    }
+  }
+  return blended;
+}
+
 }  // namespace
 
 TEST(AnnotationOverlayTest, NewOverlayIsNotVisible)
@@ -1124,6 +1184,11 @@ TEST(AnnotationOverlayTest,
 
   EXPECT_GT(countChangedTextFramePixels(White), 0);
   EXPECT_GT(countChangedTextFramePixels(Black), 0);
+}
+
+TEST(AnnotationOverlayTest, TextSelectionBorderAntialiasesRotatedEdges)
+{
+  EXPECT_GE(countTextChromeBorderBlendedPixels(), 1100);
 }
 
 TEST(AnnotationOverlayTest, InlineCommitGuardRejectsReentrantAcquire)

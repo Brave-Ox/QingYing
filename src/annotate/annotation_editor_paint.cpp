@@ -6,6 +6,7 @@
 
 #include "annotate/annotation_editor_paint.h"
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -13,9 +14,12 @@
 #include <utility>
 
 #include <commctrl.h>
+#include <gdiplus.h>
+#include <objidl.h>
 
 #include "annotate/annotation_editor_chrome.h"
 #include "annotate/annotation_editor_inline_text.h"
+#include "annotate/annotation_text_rotate_icon_png.h"
 
 namespace qingying {
 
@@ -34,11 +38,194 @@ inline constexpr float TextRotateGlyphStartDegrees = 225.0f;
 inline constexpr float TextRotateGlyphStepDegrees = -15.0f;
 inline constexpr float TextRotateArrowBackPx = 3.0f;
 inline constexpr float TextRotateArrowHalfWidthPx = 2.0f;
+inline constexpr int TextRotateGlyphInsetPx = 1;
+
+Gdiplus::Color toGdiplusColor(COLORREF color)
+{
+  return Gdiplus::Color(255, GetRValue(color), GetGValue(color),
+                        GetBValue(color));
+}
+
+class TextChromeGdiplusSession
+{
+ public:
+  TextChromeGdiplusSession()
+  {
+    Gdiplus::GdiplusStartupInput input;
+    m_ok = (Gdiplus::GdiplusStartup(&m_token, &input, nullptr) == Gdiplus::Ok);
+  }
+
+  ~TextChromeGdiplusSession()
+  {
+    if (m_token != 0)
+    {
+      Gdiplus::GdiplusShutdown(m_token);
+    }
+  }
+
+  TextChromeGdiplusSession(const TextChromeGdiplusSession&) = delete;
+  TextChromeGdiplusSession& operator=(const TextChromeGdiplusSession&) =
+      delete;
+
+  bool ok() const
+  {
+    return m_ok;
+  }
+
+ private:
+  ULONG_PTR m_token{0};
+  bool m_ok{false};
+};
+
+bool ensureTextChromeGdiplus()
+{
+  static TextChromeGdiplusSession session;
+  return session.ok();
+}
+
+void configureTextChromeGraphics(Gdiplus::Graphics& graphics)
+{
+  graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+  graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+}
+
+void addTextChromeRoundRectPath(Gdiplus::GraphicsPath& path,
+                                const Gdiplus::RectF& bounds, float radius)
+{
+  const float diameter = (std::min)(radius * 2.0f,
+                                    (std::min)(bounds.Width, bounds.Height));
+  path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180.0f, 90.0f);
+  path.AddArc(bounds.GetRight() - diameter, bounds.Y, diameter, diameter,
+              270.0f, 90.0f);
+  path.AddArc(bounds.GetRight() - diameter, bounds.GetBottom() - diameter,
+              diameter, diameter, 0.0f, 90.0f);
+  path.AddArc(bounds.X, bounds.GetBottom() - diameter, diameter, diameter,
+              90.0f, 90.0f);
+  path.CloseFigure();
+}
+
+struct ComStreamReleaser
+{
+  void operator()(IStream* stream) const noexcept
+  {
+    if (stream != nullptr)
+    {
+      (void)stream->Release();
+    }
+  }
+};
+
+class TextRotatePngCache
+{
+ public:
+  TextRotatePngCache()
+  {
+    const HGLOBAL stream_data = GlobalAlloc(GMEM_MOVEABLE,
+                                            TextRotateIconPngSize);
+    if (stream_data == nullptr)
+    {
+      return;
+    }
+    void* destination = GlobalLock(stream_data);
+    if (destination == nullptr)
+    {
+      (void)GlobalFree(stream_data);
+      return;
+    }
+    std::memcpy(destination, TextRotateIconPng, TextRotateIconPngSize);
+    (void)GlobalUnlock(stream_data);
+
+    IStream* raw_stream = nullptr;
+    if (FAILED(CreateStreamOnHGlobal(stream_data, TRUE, &raw_stream)))
+    {
+      (void)GlobalFree(stream_data);
+      return;
+    }
+    m_stream.reset(raw_stream);
+    m_image = std::make_unique<Gdiplus::Bitmap>(m_stream.get(), FALSE);
+    if (m_image->GetLastStatus() != Gdiplus::Ok)
+    {
+      m_image.reset();
+    }
+  }
+
+  TextRotatePngCache(const TextRotatePngCache&) = delete;
+  TextRotatePngCache& operator=(const TextRotatePngCache&) = delete;
+
+  Gdiplus::Bitmap* image() const
+  {
+    return m_image.get();
+  }
+
+ private:
+  std::unique_ptr<IStream, ComStreamReleaser> m_stream;
+  std::unique_ptr<Gdiplus::Bitmap> m_image;
+};
+
+bool drawTextRotationPng(Gdiplus::Graphics& graphics,
+                         const AnnotationEditorRect& bounds)
+{
+  static TextRotatePngCache cache;
+  Gdiplus::Bitmap* const image = cache.image();
+  if (image == nullptr)
+  {
+    return false;
+  }
+
+  const int width = bounds.right - bounds.left + 1;
+  const int height = bounds.bottom - bounds.top + 1;
+  const int glyph_width = width - TextRotateGlyphInsetPx * 2;
+  const int glyph_height = height - TextRotateGlyphInsetPx * 2;
+  if (glyph_width <= 0 || glyph_height <= 0)
+  {
+    return false;
+  }
+  graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+  const Gdiplus::Rect destination_rect(
+      bounds.left + TextRotateGlyphInsetPx, bounds.top + TextRotateGlyphInsetPx,
+      glyph_width, glyph_height);
+  return graphics.DrawImage(image, destination_rect) == Gdiplus::Ok;
+}
+
+bool drawTextRotationButtonAntialiased(
+    HDC hdc, const AnnotationEditorTextChrome& chrome)
+{
+  if (hdc == nullptr || !ensureTextChromeGdiplus())
+  {
+    return false;
+  }
+  const AnnotationEditorRect& bounds = chrome.rotation_handle_bounds;
+  const float width = static_cast<float>(bounds.right - bounds.left + 1);
+  const float height = static_cast<float>(bounds.bottom - bounds.top + 1);
+  if (width <= 0.0f || height <= 0.0f)
+  {
+    return false;
+  }
+
+  Gdiplus::Graphics graphics(hdc);
+  configureTextChromeGraphics(graphics);
+  const Gdiplus::RectF button_bounds(static_cast<float>(bounds.left) + 0.5f,
+                                     static_cast<float>(bounds.top) + 0.5f,
+                                     width - 1.0f, height - 1.0f);
+  Gdiplus::GraphicsPath path;
+  addTextChromeRoundRectPath(path, button_bounds,
+                             static_cast<float>(TextRotateButtonCornerRadiusPx));
+  const Gdiplus::SolidBrush fill(toGdiplusColor(TextRotateButtonFillColor));
+  Gdiplus::Pen outline(toGdiplusColor(TextChromeInnerColor), 1.0f);
+  graphics.FillPath(&fill, &path);
+  graphics.DrawPath(&outline, &path);
+  return drawTextRotationPng(graphics, bounds);
+}
 
 void drawTextRotationButton(HDC hdc,
                             const AnnotationEditorTextChrome& chrome)
 {
   if (hdc == nullptr)
+  {
+    return;
+  }
+  if (drawTextRotationButtonAntialiased(hdc, chrome))
   {
     return;
   }
@@ -260,6 +447,28 @@ void drawTextChromeBorder(HDC hdc, const PointF (&corners)[4])
 {
   if (hdc == nullptr)
   {
+    return;
+  }
+
+  if (ensureTextChromeGdiplus())
+  {
+    Gdiplus::Graphics graphics(hdc);
+    configureTextChromeGraphics(graphics);
+    Gdiplus::PointF points[5]{};
+    for (int index = 0; index < 4; ++index)
+    {
+      points[index] = Gdiplus::PointF(corners[index].x, corners[index].y);
+    }
+    points[4] = points[0];
+
+    Gdiplus::Pen outer(toGdiplusColor(TextChromeOuterColor),
+                        static_cast<Gdiplus::REAL>(TextChromeOuterWidthPx));
+    outer.SetLineJoin(Gdiplus::LineJoinRound);
+    graphics.DrawLines(&outer, points, 5);
+    Gdiplus::Pen inner(toGdiplusColor(TextChromeInnerColor),
+                        static_cast<Gdiplus::REAL>(TextChromeInnerWidthPx));
+    inner.SetLineJoin(Gdiplus::LineJoinRound);
+    graphics.DrawLines(&inner, points, 5);
     return;
   }
 
