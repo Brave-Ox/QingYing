@@ -833,13 +833,6 @@ void paintInlineEditFrame(HDC hdc,
 
   const RECT& rect = snapshot.inline_edit_rect;
   const int border = AnnotationEditorInlineEditBorderPx;
-  const GdiObject pen(CreatePen(PS_SOLID, border, kInlineEditBorderColor));
-  if (!pen)
-  {
-    return;
-  }
-  const SelectGuard selected_pen(hdc, pen.get());
-  const SelectGuard selected_brush(hdc, GetStockObject(NULL_BRUSH));
   const int edit_layout_height = static_cast<int>(
       rect.bottom - rect.top - AnnotationEditorInlineEditHeightPad);
   const float layout_height =
@@ -856,16 +849,13 @@ void paintInlineEditFrame(HDC hdc,
              static_cast<float>(rect.bottom + border)},
       PointF{static_cast<float>(rect.left - border),
              static_cast<float>(rect.bottom + border)}};
-  POINT rotated[5]{};
+  PointF rotated[4]{};
   for (int index = 0; index < 4; ++index)
   {
-    const PointF point = annotationEditorRotatePoint(
+    rotated[index] = annotationEditorRotatePoint(
         frame_points[index], center, snapshot.text_rotation_degrees);
-    rotated[index].x = static_cast<LONG>(std::lround(point.x));
-    rotated[index].y = static_cast<LONG>(std::lround(point.y));
   }
-  rotated[4] = rotated[0];
-  (void)Polyline(hdc, rotated, 5);
+  drawTextChromeBorder(hdc, rotated);
 }
 
 LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,

@@ -92,11 +92,9 @@ inline constexpr COLORREF kFrameBorderColor = RGB(255, 128, 0);
 inline constexpr COLORREF kHandleFillColor = RGB(255, 255, 255);
 inline constexpr COLORREF kSizeLabelFillColor = RGB(60, 64, 70);
 inline constexpr COLORREF kSizeLabelTextColor = RGB(255, 255, 255);
-inline constexpr COLORREF kInlineEditBorderColor = RGB(255, 255, 255);
 static_assert(static_cast<COLORREF>(AnnotationEditorInlineEditColorKeyRgb) ==
                   kToolbarColorKey,
               "inline edit color-key must match toolbar punch-through key");
-inline constexpr COLORREF kTextChromeBorderColor = RGB(0, 0, 0);
 inline constexpr COLORREF kTextDeleteFillColor = RGB(220, 56, 48);
 inline constexpr COLORREF kTextDeleteGlyphColor = RGB(255, 255, 255);
 inline constexpr int kTextDeleteGlyphWidthPx = 2;

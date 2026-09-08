@@ -1,6 +1,7 @@
 ﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include "annotate/annotation_editor_paint.h"
@@ -17,6 +18,95 @@
 #include "annotate/annotation_editor_inline_text.h"
 
 namespace qingying {
+
+namespace {
+
+inline constexpr COLORREF TextChromeOuterColor = RGB(36, 39, 44);
+inline constexpr COLORREF TextChromeInnerColor = RGB(255, 255, 255);
+inline constexpr COLORREF TextRotateButtonFillColor = RGB(45, 105, 235);
+inline constexpr int TextChromeOuterWidthPx = 3;
+inline constexpr int TextChromeInnerWidthPx = 1;
+inline constexpr int TextRotateButtonCornerRadiusPx = 5;
+inline constexpr int TextRotateGlyphWidthPx = 2;
+inline constexpr int TextRotateGlyphPointCount = 20;
+inline constexpr float TextRotateGlyphRadiusPx = 5.0f;
+inline constexpr float TextRotateGlyphStartDegrees = 225.0f;
+inline constexpr float TextRotateGlyphStepDegrees = -15.0f;
+inline constexpr float TextRotateArrowBackPx = 3.0f;
+inline constexpr float TextRotateArrowHalfWidthPx = 2.0f;
+
+void drawTextRotationButton(HDC hdc,
+                            const AnnotationEditorTextChrome& chrome)
+{
+  if (hdc == nullptr)
+  {
+    return;
+  }
+
+  const AnnotationEditorRect& bounds = chrome.rotation_handle_bounds;
+  const GdiObject outline_pen(
+      CreatePen(PS_SOLID, TextChromeInnerWidthPx, TextChromeInnerColor));
+  const GdiObject fill(CreateSolidBrush(TextRotateButtonFillColor));
+  if (outline_pen && fill)
+  {
+    const SelectGuard selected_pen(hdc, outline_pen.get());
+    const SelectGuard selected_brush(hdc, fill.get());
+    (void)RoundRect(hdc, bounds.left, bounds.top, bounds.right + 1,
+                    bounds.bottom + 1, TextRotateButtonCornerRadiusPx,
+                    TextRotateButtonCornerRadiusPx);
+  }
+
+  const GdiObject glyph_pen(
+      CreatePen(PS_SOLID, TextRotateGlyphWidthPx, TextChromeInnerColor));
+  if (!glyph_pen)
+  {
+    return;
+  }
+  const SelectGuard selected_glyph(hdc, glyph_pen.get());
+  const float center_x = chrome.rotation_handle.x;
+  const float center_y = chrome.rotation_handle.y;
+  std::array<POINT, TextRotateGlyphPointCount> arc{};
+  for (int index = 0; index < TextRotateGlyphPointCount; ++index)
+  {
+    const float degrees =
+        TextRotateGlyphStartDegrees + TextRotateGlyphStepDegrees * index;
+    const double radians =
+        static_cast<double>(degrees) * AnnotationEditorPi / 180.0;
+    arc.at(static_cast<std::size_t>(index)).x = static_cast<LONG>(
+        std::lround(center_x + TextRotateGlyphRadiusPx * std::cos(radians)));
+    arc.at(static_cast<std::size_t>(index)).y = static_cast<LONG>(
+        std::lround(center_y + TextRotateGlyphRadiusPx * std::sin(radians)));
+  }
+  (void)Polyline(hdc, arc.data(), static_cast<int>(arc.size()));
+
+  const POINT& tip = arc.back();
+  const double tip_radians =
+      static_cast<double>(TextRotateGlyphStartDegrees +
+                          TextRotateGlyphStepDegrees *
+                              (TextRotateGlyphPointCount - 1)) *
+      AnnotationEditorPi / 180.0;
+  const float direction_x = static_cast<float>(std::sin(tip_radians));
+  const float direction_y = static_cast<float>(-std::cos(tip_radians));
+  const float normal_x = -direction_y;
+  const float normal_y = direction_x;
+  const float back_x = static_cast<float>(tip.x) -
+                       direction_x * TextRotateArrowBackPx;
+  const float back_y = static_cast<float>(tip.y) -
+                       direction_y * TextRotateArrowBackPx;
+  POINT arrow[3]{
+      POINT{static_cast<LONG>(std::lround(
+                back_x + normal_x * TextRotateArrowHalfWidthPx)),
+            static_cast<LONG>(std::lround(
+                back_y + normal_y * TextRotateArrowHalfWidthPx))},
+      tip,
+      POINT{static_cast<LONG>(std::lround(
+                back_x - normal_x * TextRotateArrowHalfWidthPx)),
+            static_cast<LONG>(std::lround(
+                back_y - normal_y * TextRotateArrowHalfWidthPx))}};
+  (void)Polyline(hdc, arrow, 3);
+}
+
+}  // namespace
 
 AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
     const AnnotationEditorHost& data)
@@ -164,6 +254,37 @@ void blitImage(HDC hdc, const Image& image, int dest_x, int dest_y)
                           static_cast<DWORD>(image.height), 0, 0, 0,
                           static_cast<UINT>(image.height),
                           image.pixels.data(), &bmi, DIB_RGB_COLORS);
+}
+
+void drawTextChromeBorder(HDC hdc, const PointF (&corners)[4])
+{
+  if (hdc == nullptr)
+  {
+    return;
+  }
+
+  POINT points[5]{};
+  for (int index = 0; index < 4; ++index)
+  {
+    points[index].x = static_cast<LONG>(std::lround(corners[index].x));
+    points[index].y = static_cast<LONG>(std::lround(corners[index].y));
+  }
+  points[4] = points[0];
+
+  const GdiObject outer_pen(
+      CreatePen(PS_SOLID, TextChromeOuterWidthPx, TextChromeOuterColor));
+  if (outer_pen)
+  {
+    const SelectGuard selected_pen(hdc, outer_pen.get());
+    (void)Polyline(hdc, points, 5);
+  }
+  const GdiObject inner_pen(
+      CreatePen(PS_SOLID, TextChromeInnerWidthPx, TextChromeInnerColor));
+  if (inner_pen)
+  {
+    const SelectGuard selected_pen(hdc, inner_pen.get());
+    (void)Polyline(hdc, points, 5);
+  }
 }
 
 void paintEditorFrame(HDC hdc, const AnnotationEditorPaintSnapshot& snapshot)
@@ -408,42 +529,8 @@ void drawTextSelectionFrame(HDC hdc,
   const AnnotationEditorTextChrome chrome =
       makeTextChrome(snapshot, annotation, dragging);
 
-  const GdiObject pen(CreatePen(PS_SOLID, AnnotationEditorInlineEditBorderPx,
-                                kTextChromeBorderColor));
-  if (pen)
-  {
-    const SelectGuard selected_pen(hdc, pen.get());
-    const SelectGuard selected_brush(hdc, GetStockObject(NULL_BRUSH));
-    POINT corners[5]{};
-    for (int index = 0; index < 4; ++index)
-    {
-      corners[index].x =
-          static_cast<LONG>(std::lround(chrome.corners[index].x));
-      corners[index].y =
-          static_cast<LONG>(std::lround(chrome.corners[index].y));
-    }
-    corners[4] = corners[0];
-    (void)Polyline(hdc, corners, 5);
-    MoveToEx(
-        hdc,
-        static_cast<int>(std::lround(chrome.rotation_connector_start.x)),
-        static_cast<int>(std::lround(chrome.rotation_connector_start.y)),
-        nullptr);
-    (void)LineTo(
-        hdc, static_cast<int>(
-                 std::lround(chrome.rotation_connector_end.x)),
-        static_cast<int>(std::lround(chrome.rotation_connector_end.y)));
-
-    const AnnotationEditorRect& rotate_bounds =
-        chrome.rotation_handle_bounds;
-    const GdiObject rotate_fill(CreateSolidBrush(RGB(255, 255, 255)));
-    if (rotate_fill)
-    {
-      const SelectGuard selected_fill(hdc, rotate_fill.get());
-      (void)Ellipse(hdc, rotate_bounds.left, rotate_bounds.top,
-                    rotate_bounds.right, rotate_bounds.bottom);
-    }
-  }
+  drawTextChromeBorder(hdc, chrome.corners);
+  drawTextRotationButton(hdc, chrome);
 
   RECT delete_rect{chrome.delete_button.left, chrome.delete_button.top,
                    chrome.delete_button.right, chrome.delete_button.bottom};

@@ -101,8 +101,7 @@ inline constexpr std::uint32_t AnnotationEditorInlineEditColorKeyRgb =
     255u | (255u << 16);
 inline constexpr int AnnotationEditorTextChromePadPx = 4;
 inline constexpr int AnnotationEditorTextDeleteButtonPx = 16;
-inline constexpr int AnnotationEditorTextRotationHandleRadiusPx = 6;
-inline constexpr float AnnotationEditorTextRotationHandleOffsetPx = 24.0f;
+inline constexpr int AnnotationEditorTextRotationHandleRadiusPx = 9;
 inline constexpr float AnnotationEditorRotationSnapDegrees = 15.0f;
 inline constexpr double AnnotationEditorPi = 3.14159265358979323846;
 
@@ -976,8 +975,6 @@ struct AnnotationEditorTextChrome
   PointF center{};
   PointF delete_center{};
   PointF rotation_handle{};
-  PointF rotation_connector_start{};
-  PointF rotation_connector_end{};
   float rotation_degrees{0.0f};
 };
 
@@ -1260,20 +1257,7 @@ inline AnnotationEditorTextChrome annotationEditorTextChrome(
   chrome.delete_button.bottom =
       chrome.delete_button.top + AnnotationEditorTextDeleteButtonPx;
 
-  const PointF& top_left = chrome.corners[0];
-  const float direction_x = top_left.x - chrome.center.x;
-  const float direction_y = top_left.y - chrome.center.y;
-  const float direction_length =
-      std::sqrt(direction_x * direction_x + direction_y * direction_y);
-  const float scale =
-      direction_length > 0.0f
-          ? AnnotationEditorTextRotationHandleOffsetPx / direction_length
-          : 0.0f;
-  chrome.rotation_handle =
-      PointF{top_left.x + direction_x * scale,
-             top_left.y + direction_y * scale};
-  chrome.rotation_connector_start = top_left;
-  chrome.rotation_connector_end = chrome.rotation_handle;
+  chrome.rotation_handle = chrome.corners[0];
   chrome.rotation_handle_bounds.left = static_cast<int>(std::lround(
       chrome.rotation_handle.x - AnnotationEditorTextRotationHandleRadiusPx));
   chrome.rotation_handle_bounds.top = static_cast<int>(std::lround(

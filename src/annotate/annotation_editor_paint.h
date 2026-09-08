@@ -79,6 +79,7 @@ struct AnnotationEditorPaintSnapshot
 AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
     const AnnotationEditorHost& data);
 void blitImage(HDC hdc, const Image& image, int dest_x, int dest_y);
+void drawTextChromeBorder(HDC hdc, const PointF (&corners)[4]);
 void drawTextSelectionFrame(HDC hdc,
                             const AnnotationEditorPaintSnapshot& snapshot);
 void paintEditor(const AnnotationEditorPaintSnapshot& snapshot, HDC hdc,

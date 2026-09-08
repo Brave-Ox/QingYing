@@ -2,16 +2,30 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 
 #include "qingying/annotate/annotation_document.hpp"
 #include "qingying/annotate/annotation_editor_layout.hpp"
 
 #include "annotate/annotation_editor_chrome.h"
 #include "annotate/annotation_editor_host.hpp"
+#include "annotate/annotation_editor_paint.h"
 
 namespace qingying {
 namespace {
+
+struct TestHdcDeleter
+{
+  void operator()(HDC hdc) const noexcept
+  {
+    if (hdc != nullptr)
+    {
+      (void)DeleteDC(hdc);
+    }
+  }
+};
 
 constexpr int kCanvasWidth = 320;
 constexpr int kCanvasHeight = 200;
@@ -42,6 +56,77 @@ Image makeStripedCanvas()
     }
   }
   return image;
+}
+
+int countChangedTextFramePixels(std::uint32_t background)
+{
+  constexpr int SurfaceWidth = 160;
+  constexpr int SurfaceHeight = 100;
+  constexpr int SampleLeft = 50;
+  constexpr int SampleRight = 90;
+  constexpr int SampleTop = 33;
+  constexpr int SampleBottom = 40;
+
+  Annotation annotation;
+  annotation.type = AnnotationType::Text;
+  annotation.start = PointF{30.0f, 40.0f};
+  annotation.bounds = RectF{30.0f, 40.0f, 80.0f, 20.0f};
+  annotation.text = L"Frame";
+  annotation.text_wrap_width = 80.0f;
+
+  AnnotationEditorPaintSnapshot snapshot;
+  snapshot.overlay = GetDesktopWindow();
+  snapshot.selected_text_index = 0;
+  if (!snapshot.document.add(annotation))
+  {
+    return -1;
+  }
+
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = SurfaceWidth;
+  info.bmiHeader.biHeight = -SurfaceHeight;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+  void* raw_bits = nullptr;
+  const GdiObject bitmap(CreateDIBSection(nullptr, &info, DIB_RGB_COLORS,
+                                          &raw_bits, nullptr, 0));
+  if (!bitmap || raw_bits == nullptr)
+  {
+    return -1;
+  }
+  const std::unique_ptr<HDC__, TestHdcDeleter> hdc(
+      CreateCompatibleDC(nullptr));
+  if (hdc == nullptr)
+  {
+    return -1;
+  }
+
+  const HGDIOBJ old_bitmap = SelectObject(hdc.get(), bitmap.get());
+  if (old_bitmap == nullptr || old_bitmap == HGDI_ERROR)
+  {
+    return -1;
+  }
+  std::uint32_t* pixels = static_cast<std::uint32_t*>(raw_bits);
+  std::fill_n(pixels, SurfaceWidth * SurfaceHeight, background);
+  drawTextSelectionFrame(hdc.get(), snapshot);
+  (void)SelectObject(hdc.get(), old_bitmap);
+
+  int changed = 0;
+  for (int y = SampleTop; y < SampleBottom; ++y)
+  {
+    for (int x = SampleLeft; x < SampleRight; ++x)
+    {
+      const std::size_t index = static_cast<std::size_t>(y) * SurfaceWidth +
+                                static_cast<std::size_t>(x);
+      if (pixels[index] != background)
+      {
+        ++changed;
+      }
+    }
+  }
+  return changed;
 }
 
 }  // namespace
@@ -965,10 +1050,11 @@ TEST(AnnotationOverlayTest, TextChromeHitTestPrefersDeleteOverBody)
       (chrome.delete_button.top + chrome.delete_button.bottom) / 2;
   EXPECT_EQ(annotationEditorHitTextChrome(chrome, delete_x, delete_y),
             AnnotationEditorTextHit::Delete);
-  EXPECT_EQ(annotationEditorHitTextChrome(chrome, chrome.frame.left + 2,
-                                          chrome.frame.top + 2),
+  EXPECT_EQ(annotationEditorHitTextChrome(
+                chrome, static_cast<int>(std::lround(chrome.center.x)),
+                static_cast<int>(std::lround(chrome.center.y))),
             AnnotationEditorTextHit::Body);
-  EXPECT_EQ(annotationEditorHitTextChrome(chrome, 0, 0),
+  EXPECT_EQ(annotationEditorHitTextChrome(chrome, -20, -20),
             AnnotationEditorTextHit::None);
 }
 
@@ -1015,6 +1101,29 @@ TEST(AnnotationOverlayTest, RotatedTextChromeHitsControlsAndBody)
             AnnotationEditorTextHit::Body);
   EXPECT_EQ(annotationEditorHitTextChrome(chrome, 0, 0),
             AnnotationEditorTextHit::None);
+}
+
+TEST(AnnotationOverlayTest, TextRotationHandleOccupiesRotatedTopLeftCorner)
+{
+  const AnnotationEditorTextChrome chrome =
+      annotationEditorTextChrome(0, 0, 20, 30, 100, 40, 30.0f);
+
+  EXPECT_NEAR(chrome.rotation_handle.x, chrome.corners[0].x, 0.001f);
+  EXPECT_NEAR(chrome.rotation_handle.y, chrome.corners[0].y, 0.001f);
+  EXPECT_EQ(annotationEditorHitTextChrome(
+                chrome, static_cast<int>(std::lround(chrome.corners[0].x)),
+                static_cast<int>(std::lround(chrome.corners[0].y))),
+            AnnotationEditorTextHit::Rotate);
+}
+
+TEST(AnnotationOverlayTest,
+     TextSelectionBorderRemainsVisibleOnLightAndDarkBackgrounds)
+{
+  constexpr std::uint32_t White = 0x00FFFFFFu;
+  constexpr std::uint32_t Black = 0x00000000u;
+
+  EXPECT_GT(countChangedTextFramePixels(White), 0);
+  EXPECT_GT(countChangedTextFramePixels(Black), 0);
 }
 
 TEST(AnnotationOverlayTest, InlineCommitGuardRejectsReentrantAcquire)
