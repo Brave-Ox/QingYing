@@ -3,20 +3,73 @@
 using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
-TEST(McpToolCatalogTest, OnlyFourRegisteredToolsAndDescriptorsMatchDecoders) {
-  ASSERT_EQ(tools().size(), 4);
+TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
+  ASSERT_EQ(tools().size(), 6);
   for (const auto& tool : tools()) {
     const auto descriptor = tool.descriptor({});
     EXPECT_EQ(descriptor["name"], tool.name);
     EXPECT_FALSE(descriptor["inputSchema"]["additionalProperties"].get<bool>());
-    Json arguments = Json::object();
+    Json arguments = tool.kind == ToolKind::CropCenter
+        ? Json{{"width", 32}, {"height", 24}}
+        : tool.kind == ToolKind::Save
+            ? Json{{"result_id", "opaque_123"}, {"path", "C:\\shots"},
+                   {"name", "capture.png"}}
+            : Json::object();
     if (*tool.argument) arguments[tool.argument] = "opaque_123";
     auto request = tool.decode(arguments, 1, {});
     EXPECT_TRUE(validateAutomationRequest(request).valid);
     arguments["extra"] = 1;
     EXPECT_THROW(tool.decode(arguments, 1, {}), std::invalid_argument);
   }
-  EXPECT_EQ(findTool("save"), nullptr);
+  EXPECT_NE(findTool("crop_center"), nullptr);
+  EXPECT_NE(findTool("save"), nullptr);
+  EXPECT_EQ(findTool("capture_region"), nullptr);
+  EXPECT_EQ(findTool("capture_window"), nullptr);
+  EXPECT_EQ(findTool("copy"), nullptr);
+  EXPECT_EQ(findTool("pin"), nullptr);
+  EXPECT_EQ(findTool("longshot_select"), nullptr);
+}
+
+TEST(McpToolCatalogTest, SaveRequiresOpaqueResultDirectoryAndPngName) {
+  const auto* save = findTool("save"); ASSERT_NE(save, nullptr);
+  const auto descriptor = save->descriptor({})["inputSchema"];
+  EXPECT_EQ(descriptor["required"], (Json{"result_id", "path", "name"}));
+  auto request = save->decode({{"result_id", "owned"}, {"path", "C:\\shots"},
+      {"name", "截图.png"}, {"overwrite", true}, {"request_key", "same-save"}}, 7, {});
+  const auto& execute = std::get<ExecuteActionRequest>(request.payload);
+  const auto& payload = std::get<SaveRequest>(execute.payload);
+  EXPECT_EQ(payload.result.kind, ResultSelectionKind::Current);
+  EXPECT_EQ(execute.result_handle->value, "owned");
+  EXPECT_EQ(payload.path, L"C:\\shots\\截图.png");
+  EXPECT_TRUE(payload.overwrite);
+  EXPECT_EQ(execute.request_key, "same-save");
+  EXPECT_THROW(save->decode({{"path", "C:\\shots"}, {"name", "x.png"}}, 1, {}),
+               std::invalid_argument);
+  EXPECT_THROW(save->decode({{"result_id", "owned"}, {"path", "C:\\shots"},
+      {"name", "x.png"}, {"extra", true}}, 1, {}), std::invalid_argument);
+}
+
+TEST(McpToolCatalogTest, CaptureAndSaveOutputsExposeOnlyOpaqueIds) {
+  AutomationResponse capture;
+  capture.result.ok = true; capture.result.error_code = ErrorCode::kOk;
+  capture.result.request_id = 1; capture.result.operation_id = 2;
+  capture.result.output = CapturedResult{17, 10, 8, {1, 2, 10, 8}};
+  capture.result_handle = ResultHandle{"result-owned"};
+  capture.operation_handle = OperationHandle{"capture-operation"};
+  auto output = findTool("crop_center")->encode(capture,
+      {{"width", 10}, {"height", 8}}, {});
+  EXPECT_EQ(output["structuredContent"]["result_id"], "result-owned");
+  EXPECT_EQ(output["structuredContent"]["operation_id"], "capture-operation");
+  EXPECT_EQ(output.dump().find("\"result_id\":17"), std::string::npos);
+
+  AutomationResponse saved;
+  saved.result.ok = true; saved.result.error_code = ErrorCode::kOk;
+  saved.result.request_id = 3; saved.result.operation_id = 4;
+  saved.result.output = SavedResult{17, L"C:\\shots\\x.png"};
+  saved.operation_handle = OperationHandle{"save-operation"};
+  output = findTool("save")->encode(saved, {{"result_id", "result-owned"}}, {});
+  EXPECT_EQ(output["structuredContent"]["result_id"], "result-owned");
+  EXPECT_EQ(output["structuredContent"]["operation_id"], "save-operation");
 }
 TEST(McpToolCatalogTest, HandleSchemaAndDecoderShareExactLengthAndAlphabet) {
   AutomationLimits limits; limits.max_opaque_handle_bytes = 4;

@@ -241,6 +241,7 @@ struct CopyRequest {
 struct SaveRequest {
   ResultSelection result{};
   std::wstring path;
+  bool overwrite{false};
 };
 
 struct PinRequest {

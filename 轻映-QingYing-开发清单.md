@@ -153,6 +153,7 @@
 - [x] F9-12：提取 UI 线程共享 CaptureService，统一交互占用、预算预检、Pin 排除、单次区域捕获和 scoped 结果发布；实现主显示器中心截图 Handler 与 checked arithmetic，2026-09-08 新增 11 项测试，专项 36/36、完整 Release 700/700 通过；MCP Tool 映射留到 F9-15（详见 F9 方案完成记录）；
 - [x] F9-13：新增本地允许目录 SavePolicy 和同目录 PNG 文件事务，拒绝 UNC/设备路径/ADS/保留名/越界/reparse，默认不覆盖并在编码后取得 OperationControl 提交权再原子提交；失败与取消清理临时文件，GUI 保留确认覆盖行为；2026-09-08 新增 8 项测试，完整 Release 708/708 通过，公共 save Tool 参数接线留到 F9-15（详见 F9 方案完成记录）；
 - [x] F9-14：拆分保存准备与执行，新增持 lease 的单 worker 有界导出队列，外部 Save 通过异步 Handler 完成，覆盖取消、超时、提交竞争、队列拒绝和关闭 join；2026-09-08 新增 6 项测试，专项 12/12、完整 Release 718/718 通过，公共 save Tool schema 接线留到 F9-15（详见 F9 方案完成记录）；
+- [x] F9-15：公开 crop_center/save 并接通不透明结果与操作句柄、允许目录保存、overwrite/request_key、真实 release 和操作查询控制；隔离进程完成 crop_center→save→release_result 且结果预算归零，2026-09-08 新增 4 项测试，专项 57/57、完整 Release 722/722 通过，M2 已完成（详见 F9 方案完成记录）；
 - [ ] 实现 F9 Tool 集；
 - [ ] 失败返回明确错误，不自动操作屏幕或无限重试。
 

@@ -106,7 +106,8 @@ class AsyncSaveHandler final : public IAsyncActionHandler {
 
     ResultActionService::PreparedSave task;
     auto prepared = actions_.prepareSave(request.context.result_scope,
-        payload->result, payload->path, std::move(authorize), &task);
+        payload->result, payload->path, std::move(authorize), &task,
+        payload->overwrite);
     if (!prepared.ok) {
       completion(std::move(prepared));
       return;

@@ -39,6 +39,7 @@ class AutomationEndpoint final {
   struct Execution {
     TrustedAutomationContext context;
     OperationId operation_id;
+    OperationHandle operation_handle;
     RequestId request_id;
     InteractionGate::Guard guard;
     std::optional<ActionResult> outcome;

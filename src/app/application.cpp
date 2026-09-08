@@ -75,23 +75,6 @@ qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
   return profiles;
 }
 
-std::vector<std::wstring> makeAllowedSaveDirectories(
-    const std::wstring& test_namespace) {
-  if (!test_namespace.empty()) {
-    wchar_t temporary[MAX_PATH] = {};
-    const DWORD length = GetTempPathW(MAX_PATH, temporary);
-    if (length != 0 && length < MAX_PATH) return {temporary};
-  }
-  PWSTR pictures = nullptr;
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT,
-                                     nullptr, &pictures)) && pictures) {
-    std::wstring path(pictures);
-    CoTaskMemFree(pictures);
-    return {std::move(path)};
-  }
-  return {};
-}
-
 }  // namespace
 
 namespace qingying {
@@ -106,7 +89,7 @@ struct Application::Impl {
         longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
-        save_policy_(makeAllowedSaveDirectories(test_namespace_)),
+        save_policy_(automation_settings_.allowedSaveDirectories()),
         result_actions_(result_store_, export_service_, pin_manager_, {},
                         &interaction_gate_, &save_policy_),
         export_executor_(AutomationLimits{}.max_queued_exports),
@@ -128,7 +111,8 @@ struct Application::Impl {
         automation_endpoint_(dispatcher_, capture_workflow_, result_store_,
             operation_registry_, scheduler_, interaction_gate_, {},
             AutomationEndpoint::ExecutionPolicy{
-                {}, [this] { export_executor_.shutdown(); }, false}),
+                {ActionType::CropCenter, ActionType::Save},
+                [this] { export_executor_.shutdown(); }, false}),
         automation_runtime_(automation_endpoint_, scheduler_, [this] {
           ipc::PipeOptions options;
           options.test_suffix = test_namespace_;

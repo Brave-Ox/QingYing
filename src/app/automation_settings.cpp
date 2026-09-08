@@ -1,5 +1,6 @@
 ﻿#include "qingying/app/automation_settings.h"
 #include <Windows.h>
+#include <ShlObj.h>
 #include <stdexcept>
 namespace qingying {
 AutomationSettings::AutomationSettings(std::wstring test_namespace)
@@ -9,6 +10,7 @@ AutomationSettings::AutomationSettings(std::wstring test_namespace)
         L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != std::wstring::npos)
       throw std::invalid_argument("automation test namespace");
     key_ += L"\\Tests\\" + test_namespace;
+    testing_ = true;
   }
 }
 bool AutomationSettings::enabled() const {
@@ -25,5 +27,20 @@ bool AutomationSettings::setEnabled(bool enabled) const {
       reinterpret_cast<const BYTE*>(&value), sizeof(value));
   RegCloseKey(key);
   return code == ERROR_SUCCESS;
+}
+std::vector<std::wstring> AutomationSettings::allowedSaveDirectories() const {
+  if (testing_) {
+    wchar_t temporary[MAX_PATH]{};
+    const DWORD length = GetTempPathW(MAX_PATH, temporary);
+    return length != 0 && length < MAX_PATH
+        ? std::vector<std::wstring>{temporary} : std::vector<std::wstring>{};
+  }
+  PWSTR pictures = nullptr;
+  if (FAILED(SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT,
+                                  nullptr, &pictures)) || !pictures)
+    return {};
+  std::wstring path(pictures);
+  CoTaskMemFree(pictures);
+  return {std::move(path)};
 }
 }  // namespace qingying

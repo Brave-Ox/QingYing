@@ -2,6 +2,7 @@
 
 #include "qingying/app/result_store.h"
 #include "qingying/capture/capture_engine.hpp"
+#include "qingying/automation/automation_contract.h"
 #include "qingying/pin/pin_manager.hpp"
 
 #include <Windows.h>
@@ -127,6 +128,12 @@ ActionResult CaptureService::capture(
   if (!result.ok) {
     result.output = std::monostate{};
     return result;
+  }
+
+  if (request.operation_control && !request.operation_control->tryCommit()) {
+    return failure(request.timedOut() ? ErrorCode::kTimeout
+                                     : ErrorCode::kCancelled,
+                   "capture cancelled before publication");
   }
 
   const ResultId id = results_.publish(request.context.result_scope,

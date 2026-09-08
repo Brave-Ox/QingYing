@@ -350,11 +350,20 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
     else if constexpr (std::is_same_v<T, CropCenterRequest>)
       return {{"action", "crop_center"}, {"width", value.width}, {"height", value.height}};
     else {
-      require(value.result.kind == ResultSelectionKind::Explicit);
+      require(value.result.kind == ResultSelectionKind::Explicit ||
+              (std::is_same_v<T, SaveRequest> && execute.result_handle &&
+               value.result.kind == ResultSelectionKind::Current));
       if constexpr (std::is_same_v<T, SaveRequest>) {
         path(value.path, limits);
-        return {{"action", "save"}, {"result_id", value.result.result_id},
-                {"path", utf8(value.path, limits.max_path_utf16_units)}};
+        Json save{{"action", "save"},
+                  {"path", utf8(value.path, limits.max_path_utf16_units)},
+                  {"overwrite", value.overwrite}};
+        if (execute.result_handle)
+          save["result_handle"] = textJson(execute.result_handle->value,
+              limits.max_opaque_handle_bytes, false);
+        else
+          save["result_id"] = value.result.result_id;
+        return save;
       } else return {{"action", std::is_same_v<T, CopyRequest> ? "copy" : "pin"},
                     {"result_id", value.result.result_id}};
     }
@@ -377,15 +386,31 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
     result.payload = CropCenterRequest{integer(value.at("width")), integer(value.at("height"))};
   } else if (name == "copy" || name == "pin" || name == "save") {
     const bool save = name == "save";
-    if (save) fields(value, {"action", "result_id", "path"}, {"request_key"});
+    if (save) {
+      fields(value, {"action", "path"},
+             {"request_key", "result_id", "result_handle", "overwrite"});
+      require(value.contains("result_id") != value.contains("result_handle"));
+    }
     else fields(value, {"action", "result_id"}, {"request_key"});
-    const auto selection = ResultSelection::specific(id(value.at("result_id")));
     if (save) {
       auto full_path = wide(value.at("path"), limits.max_path_utf16_units);
       path(full_path, limits);
-      result.payload = SaveRequest{selection, std::move(full_path)};
-    } else if (name == "copy") result.payload = CopyRequest{selection};
-    else result.payload = PinRequest{selection};
+      const bool overwrite = value.contains("overwrite")
+          ? boolean(value.at("overwrite")) : false;
+      if (value.contains("result_handle")) {
+        result.payload = SaveRequest{ResultSelection::current(),
+                                     std::move(full_path), overwrite};
+        result.result_handle = ResultHandle{string(value.at("result_handle"),
+            limits.max_opaque_handle_bytes, false)};
+      } else {
+        result.payload = SaveRequest{ResultSelection::specific(
+            id(value.at("result_id"))), std::move(full_path), overwrite};
+      }
+    } else {
+      const auto selection = ResultSelection::specific(id(value.at("result_id")));
+      if (name == "copy") result.payload = CopyRequest{selection};
+      else result.payload = PinRequest{selection};
+    }
     if (value.contains("request_key")) result.request_key = string(value.at("request_key"), limits.max_request_key_bytes, false);
   } else throw Failure{WireError::InvalidMessage};
   return result;
@@ -715,7 +740,15 @@ Json messageJson(const WireMessage& message, const AutomationLimits& limits, Wir
       Json result{{"type", "response"}, {"rpc_id", rpcJson(value.rpc_id, limits)},
           {"result", resultJson(value.response.result, limits, now)},
           {"control", controlJson(value.response.control, limits, now)}};
-      putHandles(result, value, limits); return result;
+      const auto& result_handle = value.result_handle
+          ? value.result_handle : value.response.result_handle;
+      const auto& operation_handle = value.operation_handle
+          ? value.operation_handle : value.response.operation_handle;
+      if (result_handle) result["result_handle"] = textJson(
+          result_handle->value, limits.max_opaque_handle_bytes, false);
+      if (operation_handle) result["operation_handle"] = textJson(
+          operation_handle->value, limits.max_opaque_handle_bytes, false);
+      return result;
     } else {
       require(value.kind == EventKind::Progress || value.kind == EventKind::Completion);
       Json result{{"type", value.kind == EventKind::Progress ? "operation_progress" : "operation_completed"},
@@ -759,6 +792,8 @@ WireMessage readMessage(const Json& value, const AutomationLimits& limits, WireC
       }
     }, result.response.control);
     readHandles(value, result, limits);
+    result.response.result_handle = result.result_handle;
+    result.response.operation_handle = result.operation_handle;
     return result;
   }
   if (type == "operation_progress" || type == "operation_completed") {

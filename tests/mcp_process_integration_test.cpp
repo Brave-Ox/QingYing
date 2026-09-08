@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <chrono>
 #include <functional>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
@@ -120,6 +121,11 @@ class Child {
         {"params", {{"name", "status"}, {"arguments", Json::object()}}}})) return {};
     return read();
   }
+  Json tool(int id, const char* name, Json arguments) {
+    if (!send({{"jsonrpc", "2.0"}, {"id", id}, {"method", "tools/call"},
+        {"params", {{"name", name}, {"arguments", std::move(arguments)}}}})) return {};
+    return read();
+  }
   void eof() { closeHandle(input); }
   DWORD outputBytes() const {
     DWORD bytes{}; PeekNamedPipe(output, nullptr, 0, nullptr, &bytes, nullptr); return bytes;
@@ -213,6 +219,42 @@ TEST_F(McpProcessIntegrationTest, SlowStdoutDoesNotPreventGuiShutdown) {
   ASSERT_TRUE(gui.message(WM_COMMAND, TrayMenuExitCommandId));
   ASSERT_TRUE(gui.exited());
   bridge.eof(); ASSERT_TRUE(bridge.exited()); EXPECT_EQ(bridge.exitCode(), 4u);
+}
+TEST_F(McpProcessIntegrationTest, CropSaveReleaseRunsThroughTheRealLocalPipe) {
+  ASSERT_TRUE(settings.setEnabled(true));
+  Child gui; ASSERT_TRUE(gui.start(args()));
+  ASSERT_TRUE(until([&] { return gui.hwnd() != nullptr; }));
+  Child bridge; ASSERT_TRUE(bridge.start(args(true))); bridge.initialize();
+
+  const auto listed = bridge.tool(2, "status", Json::object());
+  ASSERT_NE(listed.dump().find("crop_center"), std::string::npos) << listed;
+  ASSERT_NE(listed.dump().find("save"), std::string::npos) << listed;
+  const auto captured = bridge.tool(3, "crop_center", {{"width", 16}, {"height", 12}});
+  ASSERT_FALSE(captured.empty()) << captured;
+  ASSERT_FALSE(captured["result"]["isError"].get<bool>()) << captured;
+  const auto result_id = captured["result"]["structuredContent"]["result_id"];
+  ASSERT_TRUE(result_id.is_string());
+
+  wchar_t temporary[MAX_PATH]{};
+  ASSERT_NE(GetTempPathW(MAX_PATH, temporary), 0u);
+  const std::string directory = std::filesystem::path(temporary).u8string();
+  const std::string filename = "qingying-f9-15-" +
+      std::to_string(GetCurrentProcessId()) + ".png";
+  const auto saved = bridge.tool(4, "save", {{"result_id", result_id},
+      {"path", directory}, {"name", filename}, {"overwrite", true},
+      {"request_key", "process-save"}});
+  ASSERT_FALSE(saved["result"]["isError"].get<bool>()) << saved;
+  const auto saved_path = std::filesystem::u8path(
+      saved["result"]["structuredContent"]["absolute_path"].get<std::string>());
+  EXPECT_TRUE(std::filesystem::exists(saved_path));
+
+  const auto released = bridge.tool(5, "release_result", {{"result_id", result_id}});
+  EXPECT_FALSE(released["result"]["isError"].get<bool>()) << released;
+  const auto status = bridge.status();
+  EXPECT_EQ(status["result"]["structuredContent"]["resources"]["result_bytes"], 0);
+  std::error_code ignored;
+  std::filesystem::remove(saved_path, ignored);
+  ASSERT_TRUE(gui.message(WM_CLOSE)); ASSERT_TRUE(gui.exited());
 }
 }  // namespace
 }  // namespace qingying

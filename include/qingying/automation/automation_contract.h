@@ -139,6 +139,9 @@ struct ExecuteActionRequest {
   // Only Save/Copy/Pin accept this connection-local idempotency key. The key
   // does not authorize replay after reconnect or application restart.
   std::optional<std::string> request_key;
+  // Public result consumers carry an opaque handle until the authenticated
+  // endpoint resolves it to the connection-owned numeric ResultId.
+  std::optional<ResultHandle> result_handle;
 };
 
 struct BeginLongShotRequest {};
@@ -223,6 +226,8 @@ struct AutomationResponse {
   // A failed operation's outcome belongs inside the snapshot: result.ok stays
   // true when get_operation successfully found that operation.
   AutomationControlOutput control;
+  std::optional<ResultHandle> result_handle;
+  std::optional<OperationHandle> operation_handle;
 };
 
 using AutomationCompletion = std::function<void(AutomationResponse)>;
@@ -283,6 +288,16 @@ inline ActionValidationResult validateAutomationRequest(
           const bool consumes_result = type == ActionType::Save ||
                                        type == ActionType::Copy ||
                                        type == ActionType::Pin;
+          if (payload.result_handle) {
+            const bool handle_target = type == ActionType::Save &&
+                payload.result_handle->valid() &&
+                payload.result_handle->value.size() <= limits.max_opaque_handle_bytes;
+            const auto* save = std::get_if<SaveRequest>(&payload.payload);
+            if (!handle_target || save == nullptr ||
+                save->result.kind != ResultSelectionKind::Current) {
+              return {false, "invalid result handle or simultaneous numeric target"};
+            }
+          }
           if (payload.request_key &&
               (!consumes_result || payload.request_key->empty() ||
                payload.request_key->find('\0') != std::string::npos)) {
@@ -299,7 +314,7 @@ inline ActionValidationResult validateAutomationRequest(
                   return true;
                 }
               }, payload.payload);
-          if (!explicit_selection) {
+          if (!explicit_selection && !payload.result_handle) {
             return {false, "automation consumption requires an explicit result"};
           }
           // Validate the unchanged ActionPayload before the endpoint allocates

@@ -65,7 +65,8 @@ class ResultActionService final {
                            const ResultSelection& selection,
                            const std::wstring& path,
                            CommitAuthorization authorize_commit,
-                           PreparedSave* output) const;
+                           PreparedSave* output,
+                           bool overwrite = false) const;
   ActionResult executeSave(PreparedSave task);
 
  private:

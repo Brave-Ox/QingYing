@@ -2,6 +2,7 @@
 
 add_executable(qingying_tests
   mcp_process_integration_test.cpp
+  mcp_result_lifecycle_integration_test.cpp
   automation_shutdown_test.cpp
   export_executor_test.cpp
   async_save_handler_test.cpp

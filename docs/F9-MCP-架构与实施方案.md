@@ -849,17 +849,21 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-15：开放中心截图、保存和结果释放，交付首条实用链路
 
-**状态：未开始；前置：F9-11、F9-12、F9-14。** 建议提交：`feat(f9-15): expose center capture and save tools end to end`。
+**状态：验收完成（2026-09-08）；前置：F9-11、F9-12、F9-14。** 建议提交：`feat(f9-15): expose center capture and save tools end to end`。
 
 **文件范围：** 修改 `src/mcp/tool_catalog.cpp`、`src/automation/automation_endpoint.cpp`、`src/app/automation_settings.cpp` 和 codec；扩展进程集成测试。
 
-- [ ] 同提交登记 crop_center/save 的 schema、参数解析、类型化输出、错误映射及 capability；release_result/get_operation/cancel_operation 使用已有真实应用实现。
-- [ ] Save 接受明确 result_id、path/name、overwrite、request_key；不允许把缺省 result_id 解释为 GUI current，不弹文件对话框。
-- [ ] 打通中心截图 → 不透明 result_id → 实际保存响应 → release_result；保存期间原 RPC 的协议取消通知可请求取消，status 保持可响应；有 operation_id 后才通过 get_operation/cancel_operation 查询或控制，不能假定客户端提前知道该 ID。
-- [ ] 查询操作时返回真实终态，查询 failed operation 本身仍是成功查询；结果到期不改变操作成功事实。
-- [ ] 除已实现的控制工具与 crop_center/save 外，window/copy/pin/longshot 仍不出现在 tools/list；内部 CaptureRegion 不作为首发公共工具。
+- [x] 同提交登记 crop_center/save 的 schema、参数解析、类型化输出、错误映射及 capability；release_result/get_operation/cancel_operation 使用已有真实应用实现。
+- [x] Save 接受明确 result_id、path/name、overwrite、request_key；不允许把缺省 result_id 解释为 GUI current，不弹文件对话框。
+- [x] 打通中心截图 → 不透明 result_id → 实际保存响应 → release_result；保存期间原 RPC 的协议取消通知可请求取消，status 保持可响应；有 operation_id 后才通过 get_operation/cancel_operation 查询或控制，不能假定客户端提前知道该 ID。
+- [x] 查询操作时返回真实终态，查询 failed operation 本身仍是成功查询；结果到期不改变操作成功事实。
+- [x] 除已实现的控制工具与 crop_center/save 外，window/copy/pin/longshot 仍不出现在 tools/list；内部 CaptureRegion 不作为首发公共工具。
 
 **验收：** 扩展 `tests/mcp_process_integration_test.cpp`，新增 `tests/mcp_result_lifecycle_integration_test.cpp`。fake capture/export 做确定性协议链路，另记录本机真实截图保存；覆盖 A 截图→B 截图→A 保存、GUI 清理不影响 A、释放后拒绝新消费，以及 Save 已进入 Pipe 但 UI 尚未建立 operation 时收到原 RPC 取消通知。**里程碑 M2：本地 MCP → crop_center → save → release_result，结果像素预算回落。**
+
+**完成记录：** 工具目录现公开 status、crop_center、save、get_operation、cancel_operation、release_result 六项；中心截图和保存响应携带由可信连接绑定的不透明结果/操作句柄，私有数字 ID 不进入 MCP 输出。Save 将 path/name 在 bridge 合成后交由应用层允许目录策略复核，overwrite 和 request_key 进入保存事务与幂等指纹；端点只在认证连接内解析结果句柄。中心截图在发布结果前取得提交权，原 RPC 取消仍可在 operation 分配前通过私有 RequestId 路由。生产 ready actions 仅增加 CropCenter 和 Save，其余动作继续隐藏；隔离进程已完成真实本机截图、PNG 保存、结果释放及预算归零链路，M2 达成。
+
+**验证记录：** 2026-09-08 新增 4 项测试，F9-15 专项 57/57 通过；完整 Release 722/722 通过。覆盖六项公开目录及 schema/decoder 一致性、path/name/overwrite/request_key、类型化不透明输出、跨连接 A/B 结果隔离、释放后拒绝新消费、原 RPC 的 operation 前取消，以及真实本机 Named Pipe 上的 crop_center → PNG save → release_result 与结果预算归零。
 
 ### F9-16：拆出共享窗口发现与 WindowResolver
 

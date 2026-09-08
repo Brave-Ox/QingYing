@@ -85,7 +85,7 @@ ActionResult ResultActionService::save(
 ActionResult ResultActionService::prepareSave(
     ResultScopeId scope, const ResultSelection& selection,
     const std::wstring& path, CommitAuthorization authorize_commit,
-    PreparedSave* output) const {
+    PreparedSave* output, bool overwrite) const {
   if (output == nullptr) {
     ActionResult result;
     result.error_code = ErrorCode::kInvalidArgument;
@@ -109,7 +109,7 @@ ActionResult ResultActionService::prepareSave(
     return result;
   }
   ValidatedSavePath validated;
-  auto validation = save_policy_->validateFullPath(path, false, &validated);
+  auto validation = save_policy_->validateFullPath(path, overwrite, &validated);
   if (!validation.ok) return validation;
   output->lease = lease;
   output->absolute_path = std::move(validated.absolute_path);

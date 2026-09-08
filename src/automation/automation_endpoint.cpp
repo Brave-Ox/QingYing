@@ -174,7 +174,19 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     }
     reply(std::move(response)); return;
   }
-  const auto* action = std::get_if<ExecuteActionRequest>(&request.payload);
+  AutomationRequest resolved_request = request;
+  auto* action = std::get_if<ExecuteActionRequest>(&resolved_request.payload);
+  if (action && action->result_handle) {
+    const auto resolved = registry_.resolveResult(context, *action->result_handle);
+    if (!resolved) { reply(responseWith(ErrorCode::kResultNotFound)); return; }
+    auto* save = std::get_if<SaveRequest>(&action->payload);
+    if (!save) { reply(responseWith(ErrorCode::kInvalidArgument)); return; }
+    save->result = ResultSelection::specific(*resolved);
+    action->result_handle.reset();
+    if (!validateAutomationRequest(resolved_request, limits_).valid) {
+      reply(responseWith(ErrorCode::kInvalidArgument)); return;
+    }
+  }
   const auto type = action ? actionType(action->payload) : ActionType::LongShotRegion;
   if (type == ActionType::Status) {
     auto response = responseWith(ErrorCode::kOk);
@@ -186,13 +198,16 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
   if (!ready) {
     reply(responseWith(gate_.busy() ? ErrorCode::kBusy : ErrorCode::kNotImplemented)); return;
   }
-  const auto submission = registry_.begin(context, request, std::move(control));
+  const auto submission = registry_.begin(context, resolved_request, std::move(control));
   if (!submission.ok()) { reply(responseWith(submission.error_code)); return; }
   if (submission.reused) {
     const auto snapshot = registry_.get(context, submission.operation_id);
     if (snapshot && snapshot->outcome) {
       auto response = responseWith(ErrorCode::kOk);
       response.result = *snapshot->outcome;
+      response.operation_handle = submission.handle;
+      if (const auto* captured = std::get_if<CapturedResult>(&response.result.output))
+        response.result_handle = registry_.bindResult(context, captured->result_id);
       reply(std::move(response)); return;
     }
     for (const auto& entry : executions_) {
@@ -216,7 +231,8 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
       ? InteractionGate::Guard{}
       : gate_.acquire(InteractionKind::Capture);
   auto execution = std::make_shared<Execution>(Execution{context,
-      submission.operation_id, request.request_id, std::move(guard), {}, {}});
+      submission.operation_id, submission.handle, request.request_id,
+      std::move(guard), {}, {}});
   executions_.emplace(ticket, execution);
   if (!handler_owns_interaction && !execution->guard) {
     reply(responseWith(ErrorCode::kBusy));
@@ -258,6 +274,10 @@ void AutomationEndpoint::settle(UiMessageToken ticket, AutomationResponse& respo
   const auto request_id = response.result.request_id;
   response.result = *execution->outcome;
   response.result.request_id = request_id;
+  response.operation_handle = execution->operation_handle;
+  if (const auto* captured = std::get_if<CapturedResult>(&response.result.output))
+    response.result_handle = registry_.bindResult(execution->context,
+                                                   captured->result_id);
 }
 void AutomationEndpoint::tick() {
   checkThread();

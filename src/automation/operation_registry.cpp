@@ -99,6 +99,7 @@ std::string canonical(const ExecuteActionRequest& request, std::uint64_t limit) 
                   std::is_same_v<T, PinRequest>) {
       value += std::to_string(action.result.result_id) + ":";
       if constexpr (std::is_same_v<T, SaveRequest>) {
+        value += action.overwrite ? "1:" : "0:";
         auto path = action.path;
         std::replace(path.begin(), path.end(), L'\\', L'/');
         path = std::filesystem::path(path).lexically_normal().generic_wstring();
