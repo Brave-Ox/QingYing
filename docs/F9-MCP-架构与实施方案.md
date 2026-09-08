@@ -867,16 +867,20 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-16：拆出共享窗口发现与 WindowResolver
 
-**状态：未开始；前置：F9-01、F9-12。** 建议提交：`feat(f9-16): resolve capture windows with shared discovery rules`。
+**状态：已完成；前置：F9-01、F9-12。** 建议提交：`feat(f9-16): resolve capture windows with shared discovery rules`。
 
 **文件范围：** 新增 `include/qingying/window/window_resolver.h`、`src/window/window_resolver.cpp`、`src/window/window_catalog.cpp`、`src/window/window_query_helpers.h`、`src/window/CMakeLists.txt`；修改 `src/window/window_detector.cpp`、`src/overlay/CMakeLists.txt`、`src/CMakeLists.txt`。
 
-- [ ] 将枚举、进程身份、过滤和 DWM 边框读取抽为共享 helper，GUI 的 detectAt 和新的 resolver 共用；此时已有两个消费者，可建立 qingying_window target，避免同一 cpp 编译两次。
-- [ ] 实现 contains/exact 和可选 PID，采用明确的不受区域设置影响的 Unicode 比较；候选排序稳定，不支持正则。
-- [ ] 0/1/多个匹配分别返回 NotFound/唯一候选/Ambiguous；候选有上限并注明截断，不透明窗口 token 不暴露 HWND。
-- [ ] MCP resolver 排除自身、隐藏/最小化、cloaked、无效或非完整可见边界；“完整边界位于虚拟桌面内”属于 MCP 捕获策略，不放进无条件共用过滤器，保留 F2 对部分越出桌面的窗口的既有点选行为。把捕获前身份/边界复核接口留给 F9-17。
+- [x] 将枚举、进程身份、过滤和 DWM 边框读取抽为共享 helper，GUI 的 detectAt 和新的 resolver 共用；此时已有两个消费者，可建立 qingying_window target，避免同一 cpp 编译两次。
+- [x] 实现 contains/exact 和可选 PID，采用明确的不受区域设置影响的 Unicode 比较；候选排序稳定，不支持正则。
+- [x] 0/1/多个匹配分别返回 NotFound/唯一候选/Ambiguous；候选有上限并注明截断，不透明窗口 token 不暴露 HWND。
+- [x] MCP resolver 排除自身、隐藏/最小化、cloaked、无效或非完整可见边界；“完整边界位于虚拟桌面内”属于 MCP 捕获策略，不放进无条件共用过滤器，保留 F2 对部分越出桌面的窗口的既有点选行为。把捕获前身份/边界复核接口留给 F9-17。
 
 **验收：** 新增 `tests/window_resolver_test.cpp`，回归 `tests/window_detector_test.cpp`；fake catalog 覆盖中文/大小写、0/1/多匹配、PID、排序/截断、DWM fallback、负坐标、窗口关闭/身份变化，保持 F2 点选过滤行为。
+
+**完成记录：** 新增 `qingying_window` 静态库，集中编译共享的窗口枚举、解析和点选检测实现，`qingying_overlay` 改为链接该目标，不再重复编译 `window_detector.cpp`。共享 helper 统一处理进程身份、自身/隐藏/最小化/tool/cloaked/桌面窗口过滤，以及 DWM 可见边界读取与 `GetWindowRect` 回退；GUI 点选继续采用与虚拟桌面相交策略，MCP catalog 单独要求窗口完整位于虚拟桌面内。`WindowResolver` 支持 invariant Unicode contains/exact、可选 PID、稳定候选排序、数量上限和截断标记；唯一匹配返回内部身份与不透明 token，0/多个匹配分别返回 WindowNotFound/WindowAmbiguous。预留 `revalidate` 接口，在 F9-17 捕获前复核窗口句柄、PID、标题和可见边界，拒绝窗口关闭、句柄复用或身份/位置变化。
+
+**验证记录：** 2026-09-08 新增 8 项测试，窗口专项及既有 WindowDetector 回归 12/12 通过；完整 Release 构建成功，730/730 通过。fake catalog 覆盖中文与大小写、contains/exact、可选 PID、0/1/多匹配、稳定排序、候选上限、catalog 截断、不透明 token、负坐标及关闭/身份/边界变化；共享 helper 覆盖无效 DWM 边界回退，并确认 F2 接受部分越出虚拟桌面的窗口而 MCP 完整可见策略拒绝该候选。源码保持 UTF-8 BOM + CRLF，CMake 和文档保持 UTF-8 无 BOM + CRLF。
 
 ### F9-17：实现 capture_window Handler 并开放窗口截图工具
 
