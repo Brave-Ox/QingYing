@@ -6,6 +6,7 @@
 
 #include "annotate/gdi_raii.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/annotate/annotation_font_catalog.hpp"
 #include "qingying/annotate/annotation_editor_layout.hpp"
 #include "qingying/annotate/annotation_editor_session.hpp"
 #include "qingying/annotate/annotation_interaction_controller.hpp"
@@ -178,15 +179,25 @@ struct AnnotationEditorChromeState
   RECT m_stroke_chip_rect{};
   RECT m_shape_rects[kGeometryShapeCount]{};
   RECT m_fill_rect{};
+  RECT m_bold_rect{};
+  RECT m_italic_rect{};
+  RECT m_font_face_rect{};
+  RECT m_font_menu_rect{};
   RECT m_arrow_style_chip_rect{};
   RECT m_line_style_chip_rect{};
   RECT m_style_menu_rect{};
   AnnotationEditorStyleMenu m_style_menu{AnnotationEditorStyleMenu::None};
+  AnnotationFontCatalog m_font_catalog;
+  int m_font_menu_scroll_offset{0};
+  bool m_font_menu_open{false};
   AnnotationTool m_last_geometry_tool{AnnotationTool::Rectangle};
   int m_toolbar_hover{-1};
   bool m_stroke_chip_hover{false};
   bool m_arrow_style_chip_hover{false};
   bool m_line_style_chip_hover{false};
+  bool m_bold_hover{false};
+  bool m_italic_hover{false};
+  bool m_font_face_hover{false};
   int m_toolbar_divider_x[AnnotationEditorDividerCount]{};
   HWND m_tooltip{nullptr};
   wchar_t m_tooltip_text[kTooltipSlotCount][kToolbarTooltipMaxChars]{};

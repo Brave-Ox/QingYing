@@ -700,6 +700,54 @@ TEST(AnnotationRendererTest, TextUsesRequestedFontSizeChangingMorePixels)
   EXPECT_NE(small_out.pixels, large_out.pixels);
 }
 
+TEST(AnnotationRendererTest, TextBoldStyleChangesRasterizedGlyphs)
+{
+  const AnnotationRenderer renderer;
+  Annotation normal_text;
+  normal_text.type = AnnotationType::Text;
+  normal_text.start = PointF{1.0f, 1.0f};
+  normal_text.text = L"Ab";
+  normal_text.style.color = ColorBgra{0, 0, 255, 255};
+  normal_text.style.font_size = 24;
+
+  AnnotationDocument normal_document;
+  ASSERT_TRUE(normal_document.add(normal_text));
+  Annotation bold_text = normal_text;
+  bold_text.style.bold = true;
+  AnnotationDocument bold_document;
+  ASSERT_TRUE(bold_document.add(bold_text));
+
+  Image normal_out;
+  Image bold_out;
+  ASSERT_TRUE(renderer.rasterize(makeCanvas(), normal_document, normal_out));
+  ASSERT_TRUE(renderer.rasterize(makeCanvas(), bold_document, bold_out));
+  EXPECT_NE(normal_out.pixels, bold_out.pixels);
+}
+
+TEST(AnnotationRendererTest, TextItalicStyleChangesRasterizedGlyphs)
+{
+  const AnnotationRenderer renderer;
+  Annotation normal_text;
+  normal_text.type = AnnotationType::Text;
+  normal_text.start = PointF{1.0f, 1.0f};
+  normal_text.text = L"Ab";
+  normal_text.style.color = ColorBgra{0, 0, 255, 255};
+  normal_text.style.font_size = 24;
+
+  AnnotationDocument normal_document;
+  ASSERT_TRUE(normal_document.add(normal_text));
+  Annotation italic_text = normal_text;
+  italic_text.style.italic = true;
+  AnnotationDocument italic_document;
+  ASSERT_TRUE(italic_document.add(italic_text));
+
+  Image normal_out;
+  Image italic_out;
+  ASSERT_TRUE(renderer.rasterize(makeCanvas(), normal_document, normal_out));
+  ASSERT_TRUE(renderer.rasterize(makeCanvas(), italic_document, italic_out));
+  EXPECT_NE(normal_out.pixels, italic_out.pixels);
+}
+
 TEST(AnnotationRendererTest, MosaicBrushPixelatesTouchedBlocks)
 {
   // 24x24 画布、块大小 12：左上块像素各不相同，画笔穿过后整块应变成均值色。

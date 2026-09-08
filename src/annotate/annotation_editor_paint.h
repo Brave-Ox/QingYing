@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "annotate/annotation_editor_host.hpp"
 #include "qingying/annotate/annotation_document.hpp"
@@ -32,14 +33,24 @@ struct AnnotationEditorPaintSnapshot
   RECT stroke_chip_rect{};
   RECT shape_rects[kGeometryShapeCount]{};
   RECT fill_rect{};
+  RECT bold_rect{};
+  RECT italic_rect{};
+  RECT font_face_rect{};
+  RECT font_menu_rect{};
   RECT arrow_style_chip_rect{};
   RECT line_style_chip_rect{};
   RECT style_menu_rect{};
   AnnotationEditorStyleMenu style_menu{AnnotationEditorStyleMenu::None};
+  std::vector<std::wstring> visible_font_faces;
+  int font_menu_scroll_offset{0};
+  bool font_menu_open{false};
   int toolbar_hover{-1};
   bool stroke_chip_hover{false};
   bool arrow_style_chip_hover{false};
   bool line_style_chip_hover{false};
+  bool bold_hover{false};
+  bool italic_hover{false};
+  bool font_face_hover{false};
   int toolbar_divider_x[AnnotationEditorDividerCount]{};
   RECT main_bar_rect{};
   RECT property_bar_rect{};

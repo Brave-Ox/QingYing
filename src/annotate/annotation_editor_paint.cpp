@@ -53,14 +53,37 @@ AnnotationEditorPaintSnapshot makeAnnotationEditorPaintSnapshot(
   std::copy(std::begin(chrome.m_shape_rects), std::end(chrome.m_shape_rects),
             std::begin(snapshot.shape_rects));
   snapshot.fill_rect = chrome.m_fill_rect;
+  snapshot.bold_rect = chrome.m_bold_rect;
+  snapshot.italic_rect = chrome.m_italic_rect;
+  snapshot.font_face_rect = chrome.m_font_face_rect;
+  snapshot.font_menu_rect = chrome.m_font_menu_rect;
   snapshot.arrow_style_chip_rect = chrome.m_arrow_style_chip_rect;
   snapshot.line_style_chip_rect = chrome.m_line_style_chip_rect;
   snapshot.style_menu_rect = chrome.m_style_menu_rect;
   snapshot.style_menu = chrome.m_style_menu;
+  snapshot.font_menu_scroll_offset = chrome.m_font_menu_scroll_offset;
+  snapshot.font_menu_open = chrome.m_font_menu_open;
+  if (chrome.m_font_menu_open && chrome.m_font_catalog.loaded())
+  {
+    const std::vector<std::wstring>& fonts =
+        chrome.m_font_catalog.cachedFonts();
+    const int begin = (std::max)(0, chrome.m_font_menu_scroll_offset);
+    const int end = (std::min)(
+        static_cast<int>(fonts.size()),
+        begin + AnnotationEditorFontMenuMaxVisibleItems);
+    for (int i = begin; i < end; ++i)
+    {
+      snapshot.visible_font_faces.push_back(
+          fonts.at(static_cast<std::size_t>(i)));
+    }
+  }
   snapshot.toolbar_hover = chrome.m_toolbar_hover;
   snapshot.stroke_chip_hover = chrome.m_stroke_chip_hover;
   snapshot.arrow_style_chip_hover = chrome.m_arrow_style_chip_hover;
   snapshot.line_style_chip_hover = chrome.m_line_style_chip_hover;
+  snapshot.bold_hover = chrome.m_bold_hover;
+  snapshot.italic_hover = chrome.m_italic_hover;
+  snapshot.font_face_hover = chrome.m_font_face_hover;
   std::copy(std::begin(chrome.m_toolbar_divider_x),
             std::end(chrome.m_toolbar_divider_x),
             std::begin(snapshot.toolbar_divider_x));

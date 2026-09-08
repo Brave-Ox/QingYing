@@ -14,6 +14,7 @@
 
 #include "annotate/annotation_editor_chrome.h"
 #include "annotate/annotation_editor_inline_text.h"
+#include "annotate/annotation_text_rasterizer.h"
 
 namespace qingying {
 
@@ -292,12 +293,8 @@ bool measureAnnotationText(HDC hdc, const Annotation& annotation, SIZE& out_size
     return false;
   }
 
-  const int font_px = (std::min)((std::max)(annotation.style.font_size, MinFontSize),
-                                 MaxFontSize);
-  const GdiObject font(CreateFontW(
-      -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
+  const GdiObject font(createAnnotationTextFont(
+      annotation.style, annotation.style.font_size));
   if (!font)
   {
     return false;
@@ -442,7 +439,7 @@ void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
   if (buffer[0] != L'\0')
   {
     updated.text.assign(buffer);
-    updated.style.font_size = data->core().m_controller.style().font_size;
+    updated.style = data->core().m_controller.style();
     fillTextHitBounds(data->window().m_overlay, updated);
     (void)data->core().m_session.engine().replaceAt(index, updated);
   }
@@ -530,8 +527,11 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     else if (msg == WM_MOUSEWHEEL)
     {
-      (void)handleSizeComboWheel(
-          data, static_cast<int>(static_cast<short>(HIWORD(wparam))));
+      if (data->window().m_overlay != nullptr)
+      {
+        (void)SendMessageW(data->window().m_overlay, WM_MOUSEWHEEL, wparam,
+                           lparam);
+      }
       return 0;
     }
     else if (msg == WM_KEYDOWN)
@@ -543,7 +543,7 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (wparam == VK_ESCAPE)
       {
-        cancelInlineText(data);
+        (void)handleEditorKeyDown(data->window().m_overlay, data, wparam);
         return 0;
       }
       if (isCtrlZKey(wparam))
@@ -712,16 +712,13 @@ void paintLiveInlineText(HDC hdc,
   const int font_px =
       (std::min)((std::max)(snapshot.style.font_size, MinFontSize),
                  MaxFontSize);
-  HFONT font = CreateFontW(
-      -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace);
-  if (font == nullptr)
+  const GdiObject font = createAnnotationTextFont(snapshot.style, font_px);
+  if (!font)
   {
     return;
   }
 
-  const HGDIOBJ old_font = SelectObject(hdc, font);
+  const SelectGuard selected_font(hdc, font.get());
   const COLORREF color = colorBgraToRef(snapshot.style.color);
   SetTextColor(hdc, color);
   SetBkMode(hdc, TRANSPARENT);
@@ -755,18 +752,13 @@ void paintLiveInlineText(HDC hdc,
                                 &prefix);
   }
   const int caret_x = origin_x + static_cast<int>(prefix.cx);
-  const HPEN pen = CreatePen(PS_SOLID, kInlineCaretWidthPx, color);
-  if (pen != nullptr)
+  const GdiObject pen(CreatePen(PS_SOLID, kInlineCaretWidthPx, color));
+  if (pen)
   {
-    const HGDIOBJ old_pen = SelectObject(hdc, pen);
+    const SelectGuard selected_pen(hdc, pen.get());
     MoveToEx(hdc, caret_x, origin_y, nullptr);
     LineTo(hdc, caret_x, origin_y + font_px);
-    SelectObject(hdc, old_pen);
-    DeleteObject(pen);
   }
-
-  SelectObject(hdc, old_font);
-  DeleteObject(font);
 }
 
 void paintInlineEditFrame(HDC hdc,
@@ -841,8 +833,11 @@ LRESULT CALLBACK inlineEditHostWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_MOUSEWHEEL:
       if (data != nullptr)
       {
-        (void)handleSizeComboWheel(
-            data, static_cast<int>(static_cast<short>(HIWORD(wparam))));
+        if (data->window().m_overlay != nullptr)
+        {
+          return SendMessageW(data->window().m_overlay, WM_MOUSEWHEEL, wparam,
+                              lparam);
+        }
       }
       return 0;
     case WM_COMMAND:
@@ -953,10 +948,9 @@ void beginInlineText(AnnotationEditorHost* data, HWND hwnd, int x, int y,
     return;
   }
   SendMessageW(data->inlineText().m_inline_edit, EM_SETLIMITTEXT, kInlineTextMaxChars - 1, 0);
-  data->inlineText().m_inline_edit_font.reset(CreateFontW(
-      -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
+  const AnnotationStyle& style = data->core().m_controller.style();
+  data->inlineText().m_inline_edit_font =
+      createAnnotationTextFont(style, style.font_size);
   if (data->inlineText().m_inline_edit_font)
   {
     SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,

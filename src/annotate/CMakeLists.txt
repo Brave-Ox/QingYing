@@ -1,5 +1,6 @@
 add_library(qingying_annotate STATIC
   annotation_engine.cpp
+  annotation_font_catalog.cpp
   annotation_document.cpp
   annotation_editor_session.cpp
   annotation_interaction_controller.cpp

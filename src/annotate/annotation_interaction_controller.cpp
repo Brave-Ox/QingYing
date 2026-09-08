@@ -79,10 +79,28 @@ void AnnotationInteractionController::setStrokeWidth(float width)
   refreshPreviewStyle();
 }
 
+void AnnotationInteractionController::setFontFace(const std::wstring& font_face)
+{
+  m_style.font_face = font_face.empty() ? AnnotationTextFontFace : font_face;
+  refreshPreviewStyle();
+}
+
 void AnnotationInteractionController::setFontSize(int font_size)
 {
   m_style.font_size =
       (std::min)((std::max)(font_size, MinFontSize), MaxFontSize);
+}
+
+void AnnotationInteractionController::setBold(bool bold)
+{
+  m_style.bold = bold;
+  refreshPreviewStyle();
+}
+
+void AnnotationInteractionController::setItalic(bool italic)
+{
+  m_style.italic = italic;
+  refreshPreviewStyle();
 }
 
 void AnnotationInteractionController::setFilled(bool filled)

@@ -195,7 +195,10 @@ struct AnnotationStyle
   ColorBgra color{};
   float stroke_width{DefaultStrokeWidth};
   float opacity{DefaultOpacity};
+  std::wstring font_face{AnnotationTextFontFace};
   int font_size{DefaultFontSize};
+  bool bold{false};
+  bool italic{false};
   bool filled{false};
   AnnotationLineStyle line_style{AnnotationLineStyle::Solid};
   AnnotationArrowStyle arrow_style{AnnotationArrowStyle::EndOpen};

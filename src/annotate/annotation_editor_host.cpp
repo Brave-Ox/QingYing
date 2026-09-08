@@ -115,6 +115,12 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
       setColorPickerEyedropping(data, false);
       return true;
     }
+    if (annotationEditorFontMenuConsumesEscape(
+            data->chrome().m_font_menu_open))
+    {
+      closeFontMenu(data);
+      return true;
+    }
     if (annotationEditorStyleMenuConsumesEscape(data->chrome().m_style_menu))
     {
       closeStyleMenu(data);
@@ -281,6 +287,22 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         (void)handleColorPickerEyedropperClick(data, x, y);
         return 0;
       }
+      if (data->chrome().m_font_menu_open)
+      {
+        const POINT point{x, y};
+        const bool menu_hit =
+            PtInRect(&data->chrome().m_font_menu_rect, point) != FALSE;
+        const bool chip_hit = hitTestFontFaceChip(data, x, y);
+        if (menu_hit)
+        {
+          handlePropertyBarClick(data, x, y);
+          return 0;
+        }
+        if (!chip_hit)
+        {
+          closeFontMenu(data);
+        }
+      }
       if (data->chrome().m_style_menu != AnnotationEditorStyleMenu::None)
       {
         const POINT point{x, y};
@@ -405,15 +427,24 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         const bool chip_hover = hitTestStrokeChip(data, x, y);
         const bool arrow_style_hover = hitTestArrowStyleChip(data, x, y);
         const bool line_style_hover = hitTestLineStyleChip(data, x, y);
+        const bool bold_hover = hitTestBold(data, x, y);
+        const bool italic_hover = hitTestItalic(data, x, y);
+        const bool font_face_hover = hitTestFontFaceChip(data, x, y);
         if (hit != data->chrome().m_toolbar_hover ||
             chip_hover != data->chrome().m_stroke_chip_hover ||
             arrow_style_hover != data->chrome().m_arrow_style_chip_hover ||
-            line_style_hover != data->chrome().m_line_style_chip_hover)
+            line_style_hover != data->chrome().m_line_style_chip_hover ||
+            bold_hover != data->chrome().m_bold_hover ||
+            italic_hover != data->chrome().m_italic_hover ||
+            font_face_hover != data->chrome().m_font_face_hover)
         {
           data->chrome().m_toolbar_hover = hit;
           data->chrome().m_stroke_chip_hover = chip_hover;
           data->chrome().m_arrow_style_chip_hover = arrow_style_hover;
           data->chrome().m_line_style_chip_hover = line_style_hover;
+          data->chrome().m_bold_hover = bold_hover;
+          data->chrome().m_italic_hover = italic_hover;
+          data->chrome().m_font_face_hover = font_face_hover;
           invalidateToolbar(data);
         }
         TRACKMOUSEEVENT track{};
@@ -426,12 +457,18 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data->chrome().m_toolbar_hover >= 0 ||
           data->chrome().m_stroke_chip_hover ||
           data->chrome().m_arrow_style_chip_hover ||
-          data->chrome().m_line_style_chip_hover)
+          data->chrome().m_line_style_chip_hover ||
+          data->chrome().m_bold_hover ||
+          data->chrome().m_italic_hover ||
+          data->chrome().m_font_face_hover)
       {
         data->chrome().m_toolbar_hover = -1;
         data->chrome().m_stroke_chip_hover = false;
         data->chrome().m_arrow_style_chip_hover = false;
         data->chrome().m_line_style_chip_hover = false;
+        data->chrome().m_bold_hover = false;
+        data->chrome().m_italic_hover = false;
+        data->chrome().m_font_face_hover = false;
         invalidateToolbar(data);
       }
       if (data->inlineText().m_text_gesture_active)
@@ -455,12 +492,18 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           (data->chrome().m_toolbar_hover >= 0 ||
            data->chrome().m_stroke_chip_hover ||
            data->chrome().m_arrow_style_chip_hover ||
-           data->chrome().m_line_style_chip_hover))
+           data->chrome().m_line_style_chip_hover ||
+           data->chrome().m_bold_hover ||
+           data->chrome().m_italic_hover ||
+           data->chrome().m_font_face_hover))
       {
         data->chrome().m_toolbar_hover = -1;
         data->chrome().m_stroke_chip_hover = false;
         data->chrome().m_arrow_style_chip_hover = false;
         data->chrome().m_line_style_chip_hover = false;
+        data->chrome().m_bold_hover = false;
+        data->chrome().m_italic_hover = false;
+        data->chrome().m_font_face_hover = false;
         invalidateToolbar(data);
       }
       return 0;
@@ -476,6 +519,10 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       ScreenToClient(hwnd, &pt);
       const int delta =
           static_cast<int>(static_cast<short>(HIWORD(wparam)));
+      if (handleFontWheel(data, pt.x, pt.y, delta))
+      {
+        return 0;
+      }
       if (handleStyleChipWheel(data, pt.x, pt.y, delta))
       {
         return 0;
@@ -610,6 +657,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         destroyColorPicker(data);
         destroyStrokePopup(data);
         data->chrome().m_combo_font.reset();
+        data->chrome().m_font_catalog.clear();
         finishAndNotify(data);
         data->core().m_session.reset();
         data->window().m_callback = {};

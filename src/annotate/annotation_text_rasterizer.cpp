@@ -64,6 +64,20 @@ int toPixel(double value)
 
 }  // namespace
 
+GdiObject createAnnotationTextFont(const AnnotationStyle& style, int font_size)
+{
+  const int font_px = clampFontSize(font_size);
+  const int font_weight = style.bold ? FW_BOLD : FW_NORMAL;
+  const wchar_t* font_face = style.font_face.empty()
+                                 ? AnnotationTextFontFace
+                                 : style.font_face.c_str();
+  return GdiObject(CreateFontW(-font_px, 0, 0, 0, font_weight,
+                               style.italic ? TRUE : FALSE, FALSE, FALSE,
+                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               DEFAULT_PITCH | FF_DONTCARE, font_face));
+}
+
 void rasterizeAnnotationText(Image& target, const Annotation& annotation)
 {
   if (annotation.text.empty() || target.empty())
@@ -99,11 +113,8 @@ void rasterizeAnnotationText(Image& target, const Annotation& annotation)
   }
 
   const HGDIOBJ old_bitmap = SelectObject(mem_dc.get(), dib.get());
-  const int font_px = clampFontSize(annotation.style.font_size);
-  const GdiObjectGuard font(CreateFontW(
-      -font_px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
+  const GdiObject font(createAnnotationTextFont(
+      annotation.style, annotation.style.font_size));
   const HGDIOBJ old_font =
       font.get() != nullptr ? SelectObject(mem_dc.get(), font.get()) : nullptr;
 

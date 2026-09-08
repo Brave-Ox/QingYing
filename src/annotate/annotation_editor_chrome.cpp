@@ -16,6 +16,7 @@
 #include "annotate/annotation_editor_color_picker.h"
 #include "annotate/annotation_editor_inline_text.h"
 #include "annotate/annotation_editor_stroke_popup.h"
+#include "annotate/annotation_text_rasterizer.h"
 
 namespace qingying {
 
@@ -172,10 +173,9 @@ void syncSizeFromCombo(AnnotationEditorHost* data)
       AnnotationEditorFontSizeOptions[static_cast<std::size_t>(index)]);
   if (data->inlineText().m_inline_edit != nullptr)
   {
-    data->inlineText().m_inline_edit_font.reset(CreateFontW(
-        -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-        FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
+    const AnnotationStyle& style = data->core().m_controller.style();
+    data->inlineText().m_inline_edit_font =
+        createAnnotationTextFont(style, style.font_size);
     if (data->inlineText().m_inline_edit_font)
     {
       SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,
@@ -210,7 +210,10 @@ void syncStyleFromAnnotation(AnnotationEditorHost* data,
     return;
   }
   data->core().m_controller.setColor(annotation.style.color);
+  data->core().m_controller.setFontFace(annotation.style.font_face);
   selectFontSizeInCombo(data, annotation.style.font_size);
+  data->core().m_controller.setBold(annotation.style.bold);
+  data->core().m_controller.setItalic(annotation.style.italic);
   invalidateToolbar(data);
 }
 
@@ -238,7 +241,10 @@ void applyLiveTextStyle(AnnotationEditorHost* data)
   }
 
   updated.style.color = data->core().m_controller.style().color;
+  updated.style.font_face = data->core().m_controller.style().font_face;
   updated.style.font_size = data->core().m_controller.style().font_size;
+  updated.style.bold = data->core().m_controller.style().bold;
+  updated.style.italic = data->core().m_controller.style().italic;
   fillTextHitBounds(data->window().m_overlay, updated);
   if (data->core().m_session.engine().replaceAt(index, updated))
   {
@@ -283,6 +289,10 @@ void resetPropertyBarRects(AnnotationEditorHost* data)
     data->chrome().m_shape_rects[static_cast<std::size_t>(i)] = {};
   }
   data->chrome().m_fill_rect = {};
+  data->chrome().m_bold_rect = {};
+  data->chrome().m_italic_rect = {};
+  data->chrome().m_font_face_rect = {};
+  data->chrome().m_font_menu_rect = {};
   data->chrome().m_arrow_style_chip_rect = {};
   data->chrome().m_line_style_chip_rect = {};
   data->chrome().m_style_menu_rect = {};
@@ -462,6 +472,19 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
   int x = bar_left + AnnotationEditorBarPadding;
   const int mosaic_combo_x = x;
 
+  if (annotationEditorPropertyBarShowsTextStyle(tool))
+  {
+    data->chrome().m_bold_rect = takeToolbarButtonRect(x, y);
+    data->chrome().m_italic_rect = takeToolbarButtonRect(x, y);
+    skipToolbarDivider(x);
+    data->chrome().m_font_face_rect =
+        takeToolbarSizedRect(x, y, AnnotationEditorFontFaceChipWidth);
+    skipToolbarDivider(x);
+    data->chrome().m_size_combo_rect =
+        takeToolbarSizedRect(x, y, AnnotationEditorFontComboWidth);
+    skipToolbarDivider(x);
+  }
+
   if (annotationEditorPropertyBarShowsShapeToggle(tool))
   {
     data->chrome().m_shape_rects[0] = takeToolbarButtonRect(x, y);
@@ -518,8 +541,12 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
         takeToolbarSizedRect(x, y, AnnotationEditorStrokeChipWidth);
   }
 
-  data->chrome().m_size_combo_rect = {};
-  if (annotationEditorPropertyBarShowsSizeCombo(tool))
+  if (!annotationEditorPropertyBarShowsTextStyle(tool))
+  {
+    data->chrome().m_size_combo_rect = {};
+  }
+  if (annotationEditorPropertyBarShowsSizeCombo(tool) &&
+      !annotationEditorPropertyBarShowsTextStyle(tool))
   {
     const int placed_x =
         annotationEditorPropertyBarShowsMosaicSize(tool) ? mosaic_combo_x
@@ -569,6 +596,36 @@ void layoutPropertyBar(HWND hwnd, AnnotationEditorHost* data)
     data->chrome().m_style_menu_rect = toWinRect(menu);
   }
 
+  if (data->chrome().m_font_menu_open &&
+      data->chrome().m_font_face_rect.right >
+          data->chrome().m_font_face_rect.left)
+  {
+    const std::vector<std::wstring>& fonts =
+        data->chrome().m_font_catalog.cachedFonts();
+    const AnnotationEditorRect chip_rect{
+        data->chrome().m_font_face_rect.left,
+        data->chrome().m_font_face_rect.top,
+        data->chrome().m_font_face_rect.right,
+        data->chrome().m_font_face_rect.bottom};
+    AnnotationEditorRect menu = annotationEditorFontMenuRect(
+        chip_rect, static_cast<int>(fonts.size()));
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    if (menu.bottom > client.bottom)
+    {
+      const int height = menu.bottom - menu.top;
+      menu.bottom = chip_rect.top - AnnotationEditorButtonGap;
+      menu.top = menu.bottom - height;
+    }
+    if (menu.right > client.right)
+    {
+      const int width = menu.right - menu.left;
+      menu.right = client.right;
+      menu.left = menu.right - width;
+    }
+    data->chrome().m_font_menu_rect = toWinRect(menu);
+  }
+
   bindPropertyBarTooltips(data);
 }
 
@@ -580,6 +637,10 @@ void resizeEditorChrome(AnnotationEditorHost* data)
   }
 
   const AnnotationTool tool = data->core().m_controller.tool();
+  if (!annotationEditorPropertyBarShowsFontFace(tool))
+  {
+    closeFontMenu(data);
+  }
   if ((data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow &&
        !annotationEditorPropertyBarShowsArrowStyle(tool)) ||
       (data->chrome().m_style_menu == AnnotationEditorStyleMenu::Line &&
@@ -655,10 +716,9 @@ void refreshInlineEditFont(AnnotationEditorHost* data)
   {
     return;
   }
-  data->inlineText().m_inline_edit_font.reset(CreateFontW(
-      -data->core().m_controller.style().font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, AnnotationTextFontFace));
+  const AnnotationStyle& style = data->core().m_controller.style();
+  data->inlineText().m_inline_edit_font =
+      createAnnotationTextFont(style, style.font_size);
   if (data->inlineText().m_inline_edit_font)
   {
     SendMessageW(data->inlineText().m_inline_edit, WM_SETFONT,
@@ -820,6 +880,119 @@ bool hitTestFill(const AnnotationEditorHost* data, int x, int y)
   return PtInRect(&data->chrome().m_fill_rect, pt) != FALSE;
 }
 
+bool hitTestBold(const AnnotationEditorHost* data, int x, int y)
+{
+  return data != nullptr &&
+         annotationEditorPropertyBarShowsTextStyle(
+             data->core().m_controller.tool()) &&
+         PtInRect(&data->chrome().m_bold_rect, POINT{x, y}) != FALSE;
+}
+
+bool hitTestItalic(const AnnotationEditorHost* data, int x, int y)
+{
+  return data != nullptr &&
+         annotationEditorPropertyBarShowsTextStyle(
+             data->core().m_controller.tool()) &&
+         PtInRect(&data->chrome().m_italic_rect, POINT{x, y}) != FALSE;
+}
+
+bool hitTestFontFaceChip(const AnnotationEditorHost* data, int x, int y)
+{
+  return data != nullptr &&
+         annotationEditorPropertyBarShowsFontFace(
+             data->core().m_controller.tool()) &&
+         PtInRect(&data->chrome().m_font_face_rect, POINT{x, y}) != FALSE;
+}
+
+int hitTestFontMenu(const AnnotationEditorHost* data, int x, int y)
+{
+  if (data == nullptr || !data->chrome().m_font_menu_open)
+  {
+    return -1;
+  }
+  const RECT& rect = data->chrome().m_font_menu_rect;
+  const std::vector<std::wstring>& fonts =
+      data->chrome().m_font_catalog.cachedFonts();
+  return annotationEditorFontMenuHitTest(
+      AnnotationEditorRect{rect.left, rect.top, rect.right, rect.bottom},
+      static_cast<int>(fonts.size()),
+      data->chrome().m_font_menu_scroll_offset, x, y);
+}
+
+int findFontFaceIndex(const std::vector<std::wstring>& fonts,
+                      const std::wstring& font_face)
+{
+  for (std::size_t i = 0; i < fonts.size(); ++i)
+  {
+    if (CompareStringOrdinal(fonts.at(i).c_str(), -1, font_face.c_str(), -1,
+                             TRUE) == CSTR_EQUAL)
+    {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void applyFontFace(AnnotationEditorHost* data, const std::wstring& font_face)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+  data->core().m_controller.setFontFace(font_face);
+  refreshInlineEditFont(data);
+  applyLiveTextStyle(data);
+  invalidateToolbar(data);
+}
+
+void closeFontMenu(AnnotationEditorHost* data)
+{
+  if (data == nullptr || !data->chrome().m_font_menu_open)
+  {
+    return;
+  }
+  data->chrome().m_font_menu_open = false;
+  data->chrome().m_font_menu_rect = {};
+  invalidateToolbar(data);
+}
+
+bool handleFontWheel(AnnotationEditorHost* data, int x, int y, int delta)
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+  const int steps = annotationEditorWheelDeltaToSteps(delta);
+  const POINT point{x, y};
+  if (data->chrome().m_font_menu_open &&
+      PtInRect(&data->chrome().m_font_menu_rect, point) != FALSE)
+  {
+    const int count = static_cast<int>(
+        data->chrome().m_font_catalog.cachedFonts().size());
+    data->chrome().m_font_menu_scroll_offset =
+        annotationEditorFontMenuScrollOffset(
+            data->chrome().m_font_menu_scroll_offset, count, -steps);
+    invalidateToolbar(data);
+    return true;
+  }
+  if (!hitTestFontFaceChip(data, x, y))
+  {
+    return false;
+  }
+
+  const std::vector<std::wstring>& fonts =
+      data->chrome().m_font_catalog.fonts();
+  const int current = findFontFaceIndex(
+      fonts, data->core().m_controller.style().font_face);
+  const int next = annotationEditorFontFaceStepIndex(
+      current, static_cast<int>(fonts.size()), steps);
+  if (next >= 0)
+  {
+    applyFontFace(data, fonts.at(static_cast<std::size_t>(next)));
+  }
+  return true;
+}
+
 int hitTestLineStyle(const AnnotationEditorHost* data, int x, int y)
 {
   if (data == nullptr ||
@@ -914,6 +1087,31 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
     return;
   }
 
+  const int font_index = hitTestFontMenu(data, x, y);
+  if (font_index >= 0)
+  {
+    const std::vector<std::wstring>& fonts =
+        data->chrome().m_font_catalog.cachedFonts();
+    applyFontFace(data, fonts.at(static_cast<std::size_t>(font_index)));
+    closeFontMenu(data);
+    return;
+  }
+  if (data->chrome().m_font_menu_open &&
+      hitTestFontFaceChip(data, x, y))
+  {
+    closeFontMenu(data);
+    return;
+  }
+  if (data->chrome().m_font_menu_open)
+  {
+    const POINT point{x, y};
+    if (PtInRect(&data->chrome().m_font_menu_rect, point) != FALSE)
+    {
+      return;
+    }
+    closeFontMenu(data);
+  }
+
   const int arrow_index = hitTestArrowStyle(data, x, y);
   if (arrow_index >= 0)
   {
@@ -952,6 +1150,43 @@ void handlePropertyBarClick(AnnotationEditorHost* data, int x, int y)
       return;
     }
     closeStyleMenu(data);
+  }
+
+  if (hitTestBold(data, x, y))
+  {
+    data->core().m_controller.setBold(
+        !data->core().m_controller.style().bold);
+    refreshInlineEditFont(data);
+    applyLiveTextStyle(data);
+    invalidateToolbar(data);
+    return;
+  }
+
+  if (hitTestItalic(data, x, y))
+  {
+    data->core().m_controller.setItalic(
+        !data->core().m_controller.style().italic);
+    refreshInlineEditFont(data);
+    applyLiveTextStyle(data);
+    invalidateToolbar(data);
+    return;
+  }
+
+  if (hitTestFontFaceChip(data, x, y))
+  {
+    closeStyleMenu(data);
+    const std::vector<std::wstring>& fonts =
+        data->chrome().m_font_catalog.fonts();
+    const int selected = findFontFaceIndex(
+        fonts, data->core().m_controller.style().font_face);
+    data->chrome().m_font_menu_scroll_offset =
+        annotationEditorFontMenuEnsureVisible(
+            data->chrome().m_font_menu_scroll_offset, selected,
+            static_cast<int>(fonts.size()));
+    data->chrome().m_font_menu_open = true;
+    layoutPropertyBar(data->window().m_overlay, data);
+    invalidateToolbar(data);
+    return;
   }
 
   const int shape_index = hitTestShapeToggle(data, x, y);
@@ -1062,6 +1297,9 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
     return false;
   }
   ScreenToClient(data->window().m_overlay, &pt);
+  const bool font_menu_hit =
+      data->chrome().m_font_menu_open &&
+      PtInRect(&data->chrome().m_font_menu_rect, pt) != FALSE;
   return hitTestEditorToolbar(data, pt.x, pt.y) >= 0 ||
          hitTestChromeBar(data, pt.x, pt.y) ||
          hitTestCurrentColorSwatch(data, pt.x, pt.y) ||
@@ -1070,6 +1308,10 @@ bool pointerHitsStyleChrome(const AnnotationEditorHost* data)
          hitTestStrokeChip(data, pt.x, pt.y) ||
          hitTestShapeToggle(data, pt.x, pt.y) >= 0 ||
          hitTestFill(data, pt.x, pt.y) ||
+         hitTestBold(data, pt.x, pt.y) ||
+         hitTestItalic(data, pt.x, pt.y) ||
+         hitTestFontFaceChip(data, pt.x, pt.y) ||
+         font_menu_hit ||
          hitTestLineStyleChip(data, pt.x, pt.y) ||
          hitTestArrowStyleChip(data, pt.x, pt.y) ||
          hitTestLineStyle(data, pt.x, pt.y) >= 0 ||
@@ -1239,6 +1481,74 @@ void paintStyleMenu(HDC hdc, const AnnotationEditorPaintSnapshot& snapshot)
   }
 }
 
+void drawTextStyleButton(HDC hdc, const RECT& rect, const wchar_t* label,
+                         bool selected, bool hovered, HFONT font)
+{
+  const ModernToolbarColors colors = DefaultModernToolbarColors;
+  if (selected || hovered)
+  {
+    const COLORREF fill = selected ? colors.selected_fill : colors.hover_fill;
+    fillRoundRect(hdc, rect, fill, fill,
+                  DefaultModernToolbarMetrics.hover_radius);
+  }
+  const HGDIOBJ old_font =
+      font != nullptr ? SelectObject(hdc, font) : nullptr;
+  SetBkMode(hdc, TRANSPARENT);
+  SetTextColor(hdc, colors.icon);
+  RECT text_rect = rect;
+  DrawTextW(hdc, label, -1, &text_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  if (old_font != nullptr)
+  {
+    SelectObject(hdc, old_font);
+  }
+}
+
+void paintFontMenu(HDC hdc, const AnnotationEditorPaintSnapshot& snapshot)
+{
+  if (!snapshot.font_menu_open ||
+      snapshot.font_menu_rect.right <= snapshot.font_menu_rect.left)
+  {
+    return;
+  }
+  drawToolbarBar(hdc, snapshot.font_menu_rect);
+  const ModernToolbarColors colors = DefaultModernToolbarColors;
+  const AnnotationEditorRect menu{snapshot.font_menu_rect.left,
+                                   snapshot.font_menu_rect.top,
+                                   snapshot.font_menu_rect.right,
+                                   snapshot.font_menu_rect.bottom};
+  const HGDIOBJ old_font = snapshot.combo_font != nullptr
+                               ? SelectObject(hdc, snapshot.combo_font)
+                               : nullptr;
+  SetBkMode(hdc, TRANSPARENT);
+  SetTextColor(hdc, colors.label);
+  for (std::size_t i = 0; i < snapshot.visible_font_faces.size(); ++i)
+  {
+    const RECT item = toWinRect(annotationEditorFontMenuItemRect(
+        menu, static_cast<int>(i)));
+    const std::wstring& face = snapshot.visible_font_faces.at(i);
+    const bool selected = CompareStringOrdinal(
+                              face.c_str(), -1,
+                              snapshot.style.font_face.c_str(), -1, TRUE) ==
+                          CSTR_EQUAL;
+    if (selected)
+    {
+      fillRoundRect(hdc, item, colors.selected_fill, colors.selected_fill,
+                    DefaultModernToolbarMetrics.hover_radius);
+    }
+    RECT label = item;
+    label.left += AnnotationEditorBarPadding;
+    label.right -= AnnotationEditorBarPadding;
+    DrawTextW(hdc, face.c_str(), static_cast<int>(face.size()), &label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
+                  DT_NOPREFIX);
+  }
+  if (old_font != nullptr)
+  {
+    SelectObject(hdc, old_font);
+  }
+}
+
 void paintPropertyBar(HDC hdc,
                       const AnnotationEditorPaintSnapshot& snapshot,
                       bool draw_shell)
@@ -1261,6 +1571,41 @@ void paintPropertyBar(HDC hdc,
 
   const AnnotationTool tool = snapshot.tool;
   const AnnotationStyle& style = snapshot.style;
+
+  if (annotationEditorPropertyBarShowsTextStyle(tool))
+  {
+    drawTextStyleButton(hdc, snapshot.bold_rect, L"B", style.bold,
+                        snapshot.bold_hover, snapshot.combo_font);
+    drawTextStyleButton(hdc, snapshot.italic_rect, L"I", style.italic,
+                        snapshot.italic_hover, snapshot.combo_font);
+
+    const RECT& font_chip = snapshot.font_face_rect;
+    if (snapshot.font_face_hover || snapshot.font_menu_open)
+    {
+      const COLORREF fill = snapshot.font_menu_open
+                                ? colors.selected_fill
+                                : colors.hover_fill;
+      fillRoundRect(hdc, font_chip, fill, fill,
+                    DefaultModernToolbarMetrics.hover_radius);
+    }
+    const HGDIOBJ old_font = snapshot.combo_font != nullptr
+                                 ? SelectObject(hdc, snapshot.combo_font)
+                                 : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, colors.label);
+    RECT font_label = font_chip;
+    font_label.left += AnnotationEditorBarPadding;
+    font_label.right -= AnnotationEditorButtonWidth;
+    DrawTextW(hdc, style.font_face.c_str(),
+              static_cast<int>(style.font_face.size()), &font_label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
+                  DT_NOPREFIX);
+    if (old_font != nullptr)
+    {
+      SelectObject(hdc, old_font);
+    }
+    drawStyleChevron(hdc, font_chip, colors.icon);
+  }
 
   if (annotationEditorPropertyBarShowsShapeToggle(tool))
   {
@@ -1368,6 +1713,7 @@ void paintPropertyBar(HDC hdc,
 
   if (!annotationEditorPropertyBarShowsStroke(tool))
   {
+    paintFontMenu(hdc, snapshot);
     return;
   }
 
@@ -1408,6 +1754,7 @@ void paintPropertyBar(HDC hdc,
   }
 
   paintStyleMenu(hdc, snapshot);
+  paintFontMenu(hdc, snapshot);
 }
 
 void paintEditorToolbar(HDC hdc,
@@ -1552,8 +1899,13 @@ bool hitTestChromeBar(const AnnotationEditorHost* data, int x, int y)
   {
     return true;
   }
-  return data->chrome().m_style_menu != AnnotationEditorStyleMenu::None &&
-         PtInRect(&data->chrome().m_style_menu_rect, pt) != FALSE;
+  if (data->chrome().m_style_menu != AnnotationEditorStyleMenu::None &&
+      PtInRect(&data->chrome().m_style_menu_rect, pt) != FALSE)
+  {
+    return true;
+  }
+  return data->chrome().m_font_menu_open &&
+         PtInRect(&data->chrome().m_font_menu_rect, pt) != FALSE;
 }
 
 void bindEditorTooltips(AnnotationEditorHost* data)
@@ -1639,6 +1991,7 @@ void beginChromeDrag(AnnotationEditorHost* data, HWND hwnd, int /*x*/, int /*y*/
   data->chrome().m_chrome_drag_origin_x = data->chrome().m_chrome_offset_x;
   data->chrome().m_chrome_drag_origin_y = data->chrome().m_chrome_offset_y;
   closeStyleMenu(data);
+  closeFontMenu(data);
   hideStrokePopup(data);
   hideColorPicker(data, false);
   SetCapture(hwnd);
@@ -1729,6 +2082,7 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
   hideStrokePopup(data);
   hideColorPicker(data, false);
   closeStyleMenu(data);
+  closeFontMenu(data);
   if (id != kButtonTextId)
   {
     commitInlineText(data);

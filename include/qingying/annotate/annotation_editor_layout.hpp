@@ -30,6 +30,10 @@ inline constexpr int AnnotationEditorStyleMenuWidth =
     AnnotationEditorStyleChipWidth;
 inline constexpr int AnnotationEditorStyleMenuPadding = 4;
 inline constexpr int AnnotationEditorStyleMenuItemHeight = 28;
+inline constexpr int AnnotationEditorTextStyleButtonWidth = 28;
+inline constexpr int AnnotationEditorFontFaceChipWidth = 200;
+inline constexpr int AnnotationEditorFontMenuWidth = 240;
+inline constexpr int AnnotationEditorFontMenuMaxVisibleItems = 10;
 inline constexpr int AnnotationEditorStrokePopupWidth = 280;
 inline constexpr int AnnotationEditorStrokePopupHeight = 72;
 inline constexpr int AnnotationEditorStrokePopupCornerRadius =
@@ -162,7 +166,15 @@ inline int annotationEditorPropertyBarWidth()
                           AnnotationEditorStyleChipWidth * 2 +
                           AnnotationEditorDividerGap * 2 + stroke_width +
                           colors_width;
-  return (std::max)((std::max)(simple_width, geometry_width), arrow_width);
+  const int text_width = AnnotationEditorBarPadding * 2 +
+                         AnnotationEditorTextStyleButtonWidth * 2 +
+                         AnnotationEditorButtonGap * 2 +
+                         AnnotationEditorFontFaceChipWidth +
+                         AnnotationEditorFontComboWidth +
+                         AnnotationEditorDividerGap * 3 + colors_width;
+  return (std::max)((std::max)((std::max)(simple_width, geometry_width),
+                               arrow_width),
+                    text_width);
 }
 
 // 放下主栏与二级栏所需的最小客户区宽度。
@@ -222,6 +234,16 @@ inline bool annotationEditorPropertyBarShowsArrowStyle(AnnotationTool tool)
 }
 
 inline bool annotationEditorPropertyBarShowsFont(AnnotationTool tool)
+{
+  return tool == AnnotationTool::Text;
+}
+
+inline bool annotationEditorPropertyBarShowsTextStyle(AnnotationTool tool)
+{
+  return tool == AnnotationTool::Text;
+}
+
+inline bool annotationEditorPropertyBarShowsFontFace(AnnotationTool tool)
 {
   return tool == AnnotationTool::Text;
 }
@@ -605,6 +627,118 @@ enum class AnnotationEditorStyleMenu
   Arrow,
   Line,
 };
+
+inline int annotationEditorFontMenuVisibleCount(int item_count)
+{
+  return (std::min)((std::max)(0, item_count),
+                    AnnotationEditorFontMenuMaxVisibleItems);
+}
+
+inline int annotationEditorFontMenuMaxOffset(int item_count)
+{
+  return (std::max)(0, item_count - AnnotationEditorFontMenuMaxVisibleItems);
+}
+
+inline int annotationEditorFontMenuScrollOffset(int offset, int item_count,
+                                                int steps)
+{
+  return (std::min)((std::max)(0, offset + steps),
+                    annotationEditorFontMenuMaxOffset(item_count));
+}
+
+inline int annotationEditorFontMenuEnsureVisible(int offset, int selected_index,
+                                                 int item_count)
+{
+  int result = annotationEditorFontMenuScrollOffset(offset, item_count, 0);
+  if (selected_index < 0 || selected_index >= item_count)
+  {
+    return result;
+  }
+  if (selected_index < result)
+  {
+    result = selected_index;
+  }
+  else if (selected_index >=
+           result + AnnotationEditorFontMenuMaxVisibleItems)
+  {
+    result = selected_index - AnnotationEditorFontMenuMaxVisibleItems + 1;
+  }
+  return annotationEditorFontMenuScrollOffset(result, item_count, 0);
+}
+
+inline int annotationEditorFontFaceStepIndex(int current_index, int item_count,
+                                             int steps)
+{
+  if (item_count <= 0)
+  {
+    return -1;
+  }
+  if (current_index < 0 || current_index >= item_count)
+  {
+    return 0;
+  }
+  int next = (current_index + steps) % item_count;
+  if (next < 0)
+  {
+    next += item_count;
+  }
+  return next;
+}
+
+inline AnnotationEditorRect annotationEditorFontMenuRect(
+    const AnnotationEditorRect& chip, int item_count)
+{
+  const int visible = annotationEditorFontMenuVisibleCount(item_count);
+  return AnnotationEditorRect{
+      chip.left, chip.bottom + AnnotationEditorButtonGap,
+      chip.left + AnnotationEditorFontMenuWidth,
+      chip.bottom + AnnotationEditorButtonGap +
+          AnnotationEditorStyleMenuPadding * 2 +
+          visible * AnnotationEditorStyleMenuItemHeight};
+}
+
+inline AnnotationEditorRect annotationEditorFontMenuItemRect(
+    const AnnotationEditorRect& menu, int visible_index)
+{
+  const int top = menu.top + AnnotationEditorStyleMenuPadding +
+                  visible_index * AnnotationEditorStyleMenuItemHeight;
+  return AnnotationEditorRect{menu.left + AnnotationEditorStyleMenuPadding,
+                              top,
+                              menu.right - AnnotationEditorStyleMenuPadding,
+                              top + AnnotationEditorStyleMenuItemHeight};
+}
+
+inline int annotationEditorFontMenuHitTest(const AnnotationEditorRect& menu,
+                                           int item_count, int scroll_offset,
+                                           int x, int y)
+{
+  const int visible = annotationEditorFontMenuVisibleCount(item_count);
+  if (x < menu.left || x >= menu.right || y < menu.top || y >= menu.bottom)
+  {
+    return -1;
+  }
+  const int relative_y = y - menu.top - AnnotationEditorStyleMenuPadding;
+  if (relative_y < 0)
+  {
+    return -1;
+  }
+  const int visible_index = relative_y / AnnotationEditorStyleMenuItemHeight;
+  if (visible_index >= visible)
+  {
+    return -1;
+  }
+  if (visible_index < 0)
+  {
+    return -1;
+  }
+  const int index = scroll_offset + visible_index;
+  return index < item_count ? index : -1;
+}
+
+inline bool annotationEditorFontMenuConsumesEscape(bool open)
+{
+  return open;
+}
 
 inline AnnotationEditorRect annotationEditorStyleMenuRect(
     const AnnotationEditorRect& chip, int item_count)

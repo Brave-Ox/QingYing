@@ -378,6 +378,73 @@ TEST(AnnotationOverlayTest, StrokeToolsShowWidthNotFontOnPropertyBar)
   EXPECT_FALSE(annotationEditorPropertyBarShowsFont(AnnotationTool::Mosaic));
 }
 
+TEST(AnnotationOverlayTest, TextPropertyBarShowsFontAndEmphasisControlsOnly)
+{
+  EXPECT_TRUE(annotationEditorPropertyBarShowsTextStyle(AnnotationTool::Text));
+  EXPECT_TRUE(annotationEditorPropertyBarShowsFontFace(AnnotationTool::Text));
+  EXPECT_FALSE(
+      annotationEditorPropertyBarShowsTextStyle(AnnotationTool::Rectangle));
+  EXPECT_FALSE(annotationEditorPropertyBarShowsFontFace(AnnotationTool::Pen));
+  EXPECT_FALSE(
+      annotationEditorPropertyBarShowsTextStyle(AnnotationTool::Mosaic));
+}
+
+TEST(AnnotationOverlayTest, FontMenuShowsAtMostTenVisibleRows)
+{
+  EXPECT_EQ(annotationEditorFontMenuVisibleCount(0), 0);
+  EXPECT_EQ(annotationEditorFontMenuVisibleCount(4), 4);
+  EXPECT_EQ(annotationEditorFontMenuVisibleCount(24),
+            AnnotationEditorFontMenuMaxVisibleItems);
+
+  const AnnotationEditorRect chip{100, 40, 300, 68};
+  const AnnotationEditorRect menu = annotationEditorFontMenuRect(chip, 24);
+  EXPECT_EQ(menu.left, chip.left);
+  EXPECT_EQ(menu.right - menu.left, AnnotationEditorFontMenuWidth);
+  EXPECT_EQ(menu.bottom - menu.top,
+            AnnotationEditorStyleMenuPadding * 2 +
+                AnnotationEditorFontMenuMaxVisibleItems *
+                    AnnotationEditorStyleMenuItemHeight);
+}
+
+TEST(AnnotationOverlayTest, FontMenuHitTestIncludesScrollOffset)
+{
+  const AnnotationEditorRect menu{100, 80, 340, 368};
+  const AnnotationEditorRect third =
+      annotationEditorFontMenuItemRect(menu, 2);
+
+  EXPECT_EQ(annotationEditorFontMenuHitTest(menu, 24, 7, third.left + 1,
+                                             third.top + 1),
+            9);
+  EXPECT_EQ(annotationEditorFontMenuHitTest(menu, 24, 7, menu.right + 1,
+                                             third.top + 1),
+            -1);
+}
+
+TEST(AnnotationOverlayTest, FontMenuScrollOffsetClampsAndKeepsSelectionVisible)
+{
+  EXPECT_EQ(annotationEditorFontMenuScrollOffset(0, 24, 3), 3);
+  EXPECT_EQ(annotationEditorFontMenuScrollOffset(0, 24, -2), 0);
+  EXPECT_EQ(annotationEditorFontMenuScrollOffset(13, 24, 9), 14);
+  EXPECT_EQ(annotationEditorFontMenuEnsureVisible(0, 18, 24), 9);
+  EXPECT_EQ(annotationEditorFontMenuEnsureVisible(14, 3, 24), 3);
+  EXPECT_EQ(annotationEditorFontMenuEnsureVisible(4, 8, 24), 4);
+}
+
+TEST(AnnotationOverlayTest, FontChipWheelCyclesInstalledFonts)
+{
+  EXPECT_EQ(annotationEditorFontFaceStepIndex(0, 4, 1), 1);
+  EXPECT_EQ(annotationEditorFontFaceStepIndex(0, 4, -1), 3);
+  EXPECT_EQ(annotationEditorFontFaceStepIndex(3, 4, 1), 0);
+  EXPECT_EQ(annotationEditorFontFaceStepIndex(-1, 4, 1), 0);
+  EXPECT_EQ(annotationEditorFontFaceStepIndex(0, 0, 1), -1);
+}
+
+TEST(AnnotationOverlayTest, FontMenuConsumesEscapeOnlyWhileOpen)
+{
+  EXPECT_TRUE(annotationEditorFontMenuConsumesEscape(true));
+  EXPECT_FALSE(annotationEditorFontMenuConsumesEscape(false));
+}
+
 TEST(AnnotationOverlayTest, MosaicPropertyBarShowsSizeNotColorStrokeOrFont)
 {
   EXPECT_TRUE(annotationEditorPropertyBarShowsMosaicSize(AnnotationTool::Mosaic));

@@ -382,6 +382,44 @@ TEST(AnnotationInteractionControllerTest, DefaultStyleMatchesAnnotationStyleDefa
   EXPECT_EQ(controller.style().color.a, AnnotationStyle{}.color.a);
   EXPECT_FLOAT_EQ(controller.style().stroke_width, DefaultStrokeWidth);
   EXPECT_EQ(controller.style().font_size, DefaultFontSize);
+  EXPECT_EQ(controller.style().font_face, L"Microsoft YaHei UI");
+  EXPECT_FALSE(controller.style().bold);
+  EXPECT_FALSE(controller.style().italic);
+}
+
+TEST(AnnotationInteractionControllerTest, TextStyleSettersUpdateControllerState)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  controller.setFontFace(L"SimSun");
+  controller.setBold(true);
+  controller.setItalic(true);
+
+  EXPECT_EQ(controller.style().font_face, L"SimSun");
+  EXPECT_TRUE(controller.style().bold);
+  EXPECT_TRUE(controller.style().italic);
+
+  controller.setFontFace(L"");
+  EXPECT_EQ(controller.style().font_face, L"Microsoft YaHei UI");
+}
+
+TEST(AnnotationInteractionControllerTest, TextStyleSettersRefreshActivePreview)
+{
+  AnnotationInteractionController controller;
+  prepare(controller);
+
+  ASSERT_TRUE(controller.beginStroke(10.0f, 10.0f));
+  controller.updateStroke(40.0f, 40.0f);
+
+  controller.setFontFace(L"SimHei");
+  controller.setBold(true);
+  controller.setItalic(true);
+
+  ASSERT_TRUE(controller.hasPreview());
+  EXPECT_EQ(controller.preview().style.font_face, L"SimHei");
+  EXPECT_TRUE(controller.preview().style.bold);
+  EXPECT_TRUE(controller.preview().style.italic);
 }
 
 TEST(AnnotationInteractionControllerTest, SetColorIsUsedByPreviewAndCommittedStroke)

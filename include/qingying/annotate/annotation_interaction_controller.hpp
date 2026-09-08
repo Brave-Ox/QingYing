@@ -21,7 +21,10 @@ class AnnotationInteractionController
 
   void setColor(const ColorBgra& color);
   void setStrokeWidth(float width);
+  void setFontFace(const std::wstring& font_face);
   void setFontSize(int font_size);
+  void setBold(bool bold);
+  void setItalic(bool italic);
   void setFilled(bool filled);
   void setLineStyle(AnnotationLineStyle line_style);
   void setArrowStyle(AnnotationArrowStyle arrow_style);
