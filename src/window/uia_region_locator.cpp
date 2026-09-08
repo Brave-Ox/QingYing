@@ -56,6 +56,8 @@ UiaControlType mapControlType(CONTROLTYPEID control_type) noexcept
       return UiaControlType::Edit;
     case UIA_HyperlinkControlTypeId:
       return UiaControlType::Hyperlink;
+    case UIA_ImageControlTypeId:
+      return UiaControlType::Image;
     case UIA_ListItemControlTypeId:
       return UiaControlType::ListItem;
     case UIA_MenuItemControlTypeId:
@@ -95,6 +97,7 @@ SmartRegionSemantic semanticFor(UiaControlType control_type) noexcept
     case UiaControlType::TreeItem:
       return SmartRegionSemantic::ActionableControl;
     case UiaControlType::Document:
+    case UiaControlType::Image:
     case UiaControlType::List:
     case UiaControlType::Tree:
     case UiaControlType::DataGrid:

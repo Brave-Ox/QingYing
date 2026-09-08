@@ -13,6 +13,7 @@ namespace {
 
 constexpr int kMinimumCandidateWidth = 16;
 constexpr int kMinimumCandidateHeight = 16;
+constexpr std::uint8_t kMinimumVisualConfidence = 70;
 constexpr std::int64_t kLargeGenericCandidatePercent = 85;
 constexpr int kSourceScoreUia = 4000;
 constexpr int kSourceScoreVisual = 3500;
@@ -130,6 +131,11 @@ SmartRegionCandidateRejection candidateRejection(
       candidate.rect.height() < kMinimumCandidateHeight) {
     return SmartRegionCandidateRejection::TooSmall;
   }
+  if (candidate.source == SmartRegionDiagnosticSource::Visual &&
+      candidate.visual_confidence < kMinimumVisualConfidence)
+  {
+    return SmartRegionCandidateRejection::LowConfidence;
+  }
 
   const std::int64_t owner_area = areaOf(owner_rect);
   const std::int64_t candidate_area = areaOf(candidate.rect);
@@ -182,8 +188,12 @@ int candidateScore(const SmartRegionCandidate& candidate) noexcept
 {
   const std::int64_t area = areaOf(candidate.rect);
   const std::int64_t area_penalty = area / kAreaSpecificityDivisor;
-  const int area_score = static_cast<int>((std::max)(
+  int area_score = static_cast<int>((std::max)(
       std::int64_t{0}, kMaximumAreaSpecificityScore - area_penalty));
+  if (candidate.source == SmartRegionDiagnosticSource::Visual)
+  {
+    area_score /= 2;
+  }
   return sourceScore(diagnosticSourceFor(candidate)) +
          semanticScore(candidate.semantic) + area_score;
 }
@@ -387,6 +397,8 @@ const wchar_t* smartRegionCandidateRejectionName(
       return L"outside-owner";
     case SmartRegionCandidateRejection::TooSmall:
       return L"too-small";
+    case SmartRegionCandidateRejection::LowConfidence:
+      return L"low-confidence";
     case SmartRegionCandidateRejection::GenericTooLarge:
       return L"generic-too-large";
     case SmartRegionCandidateRejection::LowerScore:
@@ -567,20 +579,15 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
 
   if (visual_context != nullptr && visual_context->valid() &&
       has_client_rect) {
-    WindowRect visual_rect;
     window_detail::VisualRegionDiagnostic visual_diagnostic;
+    SmartRegionCandidate visual_candidate;
     const std::uint64_t visual_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
-    const bool found_visual_region =
-        diagnostic_enabled
-            ? window_detail::findVisualRegion(
-                  *visual_context->background,
-                  visual_context->image_screen_rect, client_rect, screen_point,
-                  visual_rect, visual_diagnostic)
-            : window_detail::findVisualRegion(
-                  *visual_context->background,
-                  visual_context->image_screen_rect, client_rect, screen_point,
-                  visual_rect);
+    const bool found_visual_region = window_detail::findVisualRegionCandidate(
+        *visual_context->background, visual_context->image_screen_rect,
+        client_rect, screen_point,
+        reinterpret_cast<std::uintptr_t>(root_window), visual_candidate,
+        diagnostic_enabled ? &visual_diagnostic : nullptr);
     if (diagnostic_enabled) {
       diagnostic_event.visual_lookup_ms =
           GetTickCount64() - visual_lookup_begin_ms;
@@ -588,11 +595,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     }
     if (found_visual_region) {
       if (candidate_count < SmartRegionMaxCandidates) {
-        candidates[candidate_count++] = makeCandidate(
-            root_window, root_window, visual_rect,
-            SmartRegionKind::KnownContent,
-            SmartRegionDiagnosticSource::Visual,
-            SmartRegionSemantic::ContentSurface);
+        candidates[candidate_count++] = visual_candidate;
       }
     }
   }

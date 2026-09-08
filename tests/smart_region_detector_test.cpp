@@ -379,6 +379,7 @@ TEST(SmartRegionCandidateSelectorTest,
                                SmartRegionKind::KnownContent};
   sidebar.source = SmartRegionDiagnosticSource::Visual;
   sidebar.semantic = SmartRegionSemantic::ContentSurface;
+  sidebar.visual_confidence = 95;
   SmartRegionCandidate selected;
   const SmartRegionCandidate candidates[] = {chromium_viewport, sidebar};
 
@@ -386,6 +387,29 @@ TEST(SmartRegionCandidateSelectorTest,
       candidates, std::size(candidates), 80, 300, owner_rect, selected));
   EXPECT_EQ(selected.target_window, 3U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Visual);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     RejectsLowConfidenceVisualTextureInFavorOfKnownContent)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate content{1, 2, {0, 100, 1200, 800},
+                               SmartRegionKind::KnownContent};
+  content.source = SmartRegionDiagnosticSource::KnownContent;
+  content.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate texture{1, 3, {420, 260, 524, 354},
+                               SmartRegionKind::KnownContent};
+  texture.source = SmartRegionDiagnosticSource::Visual;
+  texture.semantic = SmartRegionSemantic::ContentSurface;
+  texture.visual_confidence = 40;
+  const SmartRegionCandidate candidates[] = {content, texture};
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 460, 300, owner_rect, selected));
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::KnownContent);
+  EXPECT_EQ(selected.rect.left, 0);
+  EXPECT_EQ(selected.rect.right, 1200);
 }
 
 TEST(SmartRegionCandidateSelectorTest, RejectsInvalidCandidatesAndKeepsEditor)
@@ -465,6 +489,20 @@ TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)
   EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
   EXPECT_EQ(candidate.rect.left, 100);
   EXPECT_EQ(candidate.rect.bottom, 240);
+}
+
+TEST(UiaRegionLocatorTest, MapsImageElementToContentSurfaceCandidate)
+{
+  const window_detail::UiaRegionProperties properties{
+      {100, 200, 500, 440}, window_detail::UiaControlType::Image, true, true};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+  EXPECT_EQ(candidate.source, SmartRegionDiagnosticSource::Uia);
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ContentSurface);
+  EXPECT_EQ(candidate.rect.left, 100);
+  EXPECT_EQ(candidate.rect.bottom, 440);
 }
 
 TEST(UiaRegionLocatorTest,

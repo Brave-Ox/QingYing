@@ -18,6 +18,10 @@ constexpr int kListRowLeft = 50;
 constexpr int kListRowTop = 100;
 constexpr int kListRowRight = 350;
 constexpr int kListRowBottom = 160;
+constexpr int kPhotoLeft = 80;
+constexpr int kPhotoTop = 40;
+constexpr int kPhotoRight = 320;
+constexpr int kPhotoBottom = 260;
 
 Image makeSidebarImage()
 {
@@ -170,6 +174,36 @@ Image makeTextGlyphImage()
   return image;
 }
 
+Image makeTexturedPhotoWithInternalRoadEdges()
+{
+  Image image;
+  image.width = 400;
+  image.height = 300;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+
+  for (int y = kPhotoTop; y < kPhotoBottom; ++y)
+  {
+    for (int x = kPhotoLeft; x < kPhotoRight; ++x)
+    {
+      const bool above_horizon = y < 140;
+      const bool inside_road = x >= 150 && x < 250;
+      const std::uint32_t texture =
+          static_cast<std::uint32_t>(((x * 3 + y * 5) % 11) * 0x00010101u);
+      const std::uint32_t base = inside_road
+                                     ? (above_horizon ? 0xFF707070u
+                                                      : 0xFF202020u)
+                                     : (above_horizon ? 0xFFB07030u
+                                                      : 0xFF205020u);
+      image.pixels[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(image.width) +
+                   static_cast<std::size_t>(x)] = base + texture;
+    }
+  }
+  return image;
+}
+
 TEST(VisualRegionLocatorTest,
      RejectsCandidateWhenAnySideFallsBackToTheOwnerClientArea)
 {
@@ -308,6 +342,38 @@ TEST(VisualRegionLocatorTest, RejectsUniformBackground)
   EXPECT_FALSE(window_detail::findVisualRegion(
       image, image_screen_rect, owner_client_rect, {48, 160}, result));
   EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     PrefersPhotoOuterBoundsOverInternalRoadAndHorizonEdges)
+{
+  const Image image = makeTexturedPhotoWithInternalRoadEdges();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {200, 180}, result));
+  EXPECT_EQ(result.left, kPhotoLeft);
+  EXPECT_EQ(result.top, kPhotoTop);
+  EXPECT_EQ(result.right, kPhotoRight);
+  EXPECT_EQ(result.bottom, kPhotoBottom);
+}
+
+TEST(VisualRegionLocatorTest,
+     VisualCandidateKeepsConfidenceWithoutDiagnosticOutput)
+{
+  const Image image = makeBoundedCardImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::findVisualRegionCandidate(
+      image, image_screen_rect, owner_client_rect, {160, 150}, 1,
+      candidate, nullptr));
+  EXPECT_EQ(candidate.source, SmartRegionDiagnosticSource::Visual);
+  EXPECT_EQ(candidate.rect.left, 80);
+  EXPECT_GE(candidate.visual_confidence, 70);
 }
 
 }  // namespace

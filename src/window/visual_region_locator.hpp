@@ -7,6 +7,12 @@
 #include "qingying/action/image.hpp"
 #include "qingying/window/window_detector.hpp"
 
+namespace qingying {
+
+struct SmartRegionCandidate;
+
+}  // namespace qingying
+
 namespace qingying::window_detail {
 
 enum class VisualRegionEdge : std::uint8_t {
@@ -22,6 +28,8 @@ enum class VisualRegionEdge : std::uint8_t {
 struct VisualRegionDiagnostic {
   WindowRect candidate;
   std::uint8_t edge_mask{0};
+  std::uint8_t edge_coverage[4]{};
+  std::uint8_t confidence{0};
   bool accepted{false};
 };
 
@@ -35,5 +43,10 @@ bool findVisualRegion(const Image& background,
                       const WindowRect& owner_client_rect,
                       POINT screen_point, WindowRect& out,
                       VisualRegionDiagnostic& diagnostics) noexcept;
+bool findVisualRegionCandidate(
+    const Image& background, const WindowRect& image_screen_rect,
+    const WindowRect& owner_client_rect, POINT screen_point,
+    std::uintptr_t owner_window, SmartRegionCandidate& out,
+    VisualRegionDiagnostic* diagnostics) noexcept;
 
 }  // namespace qingying::window_detail

@@ -42,6 +42,7 @@ struct SmartRegionCandidate {
   SmartRegionKind kind{SmartRegionKind::None};
   SmartRegionDiagnosticSource source{SmartRegionDiagnosticSource::None};
   SmartRegionSemantic semantic{SmartRegionSemantic::Unknown};
+  std::uint8_t visual_confidence{0};
 
   bool valid() const noexcept;
   bool contains(int screen_x, int screen_y) const noexcept;
@@ -55,6 +56,7 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
   PointerOutside,
   OutsideOwner,
   TooSmall,
+  LowConfidence,
   GenericTooLarge,
   LowerScore,
 };

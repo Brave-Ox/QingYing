@@ -18,6 +18,7 @@ enum class UiaControlType : std::uint8_t {
   DataItem,
   Edit,
   Hyperlink,
+  Image,
   ListItem,
   MenuItem,
   TabItem,

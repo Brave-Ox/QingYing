@@ -123,12 +123,14 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
     if (FAILED(StringCchPrintfW(
             candidate_message, std::size(candidate_message),
             L"  candidate[%llu] source=%s semantic=%u rect=(%d,%d,%d,%d) "
-            L"score=%d selected=%d reason=%s\n",
+            L"confidence=%u score=%d selected=%d reason=%s\n",
             static_cast<unsigned long long>(index),
             smartRegionDiagnosticSourceName(candidate.candidate.source),
             static_cast<unsigned int>(candidate.candidate.semantic),
             candidate.candidate.rect.left, candidate.candidate.rect.top,
             candidate.candidate.rect.right, candidate.candidate.rect.bottom,
+            static_cast<unsigned int>(
+                candidate.candidate.visual_confidence),
             candidate.score, candidate.selected ? 1 : 0,
             smartRegionCandidateRejectionName(candidate.rejection))) ||
         FAILED(StringCchCatW(message, std::size(message), candidate_message))) {
