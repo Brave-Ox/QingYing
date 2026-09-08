@@ -6,6 +6,7 @@
 #include "qingying/app/capture_service.h"
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
+#include "qingying/automation/automation_contract.h"
 
 #include <memory>
 
@@ -104,8 +105,15 @@ class SaveHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("save");
     }
+    ResultActionService::CommitAuthorization authorize_commit;
+    if (request.operation_control) {
+      authorize_commit = [control = request.operation_control] {
+        return control->tryCommit();
+      };
+    }
     return result_actions_.save(request.context.result_scope, payload->result,
-                                payload->path);
+                                payload->path, nullptr,
+                                std::move(authorize_commit));
   }
 
  private:

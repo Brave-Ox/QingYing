@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/result_action_service.h"
 
 #include "qingying/export/export_service.hpp"
+#include "qingying/app/save_policy.h"
 #include "qingying/pin/pin_manager.hpp"
 
 #include <Windows.h>
@@ -14,11 +15,12 @@ namespace qingying {
 ResultActionService::ResultActionService(ResultStore& results,
                                          ExportService& export_service,
                                          PinManager& pin_manager, SaveDialog save_dialog,
-                                         InteractionGate* gate)
+                                         InteractionGate* gate,
+                                         SavePolicy* save_policy)
     : results_(results),
       export_service_(export_service),
       pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)),
-      gate_(gate ? *gate : local_gate_) {}
+      gate_(gate ? *gate : local_gate_), save_policy_(save_policy) {}
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
@@ -57,11 +59,27 @@ ActionResult ResultActionService::copy(
 }
 ActionResult ResultActionService::save(
     ResultScopeId scope, const ResultSelection& selection,
-    const std::wstring& path, const InteractionGate::Guard* owner) {
+    const std::wstring& path, const InteractionGate::Guard* owner,
+    CommitAuthorization authorize_commit) {
   auto guard = gate_.acquire(InteractionKind::SaveDialog, owner);
   if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
-  return lease ? saveImage(*lease.image(), path) : noResult("save");
+  if (!lease) return noResult("save");
+  if (scope == kGuiResultScopeId) {
+    return saveImage(*lease.image(), lease.metadata().result_id, path, true,
+                     std::move(authorize_commit));
+  }
+  if (save_policy_ == nullptr) {
+    ActionResult result;
+    result.error_code = ErrorCode::kAccessDenied;
+    result.message = "external save policy is unavailable";
+    return result;
+  }
+  ValidatedSavePath validated;
+  auto validation = save_policy_->validateFullPath(path, false, &validated);
+  if (!validation.ok) return validation;
+  return saveImage(*lease.image(), lease.metadata().result_id, validated.absolute_path,
+                   validated.overwrite, std::move(authorize_commit));
 }
 ActionResult ResultActionService::save(
     ResultScopeId scope, const ResultSelection& selection,
@@ -105,7 +123,10 @@ ActionResult ResultActionService::copyImage(const Image& image) {
 }
 
 ActionResult ResultActionService::saveImage(const Image& image,
-                                            const std::wstring& path) {
+                                            ResultId result_id,
+                                            const std::wstring& path,
+                                            bool overwrite,
+                                            CommitAuthorization authorize_commit) {
   if (path.empty()) {
     ActionResult result;
     result.ok = false;
@@ -113,7 +134,16 @@ ActionResult ResultActionService::saveImage(const Image& image,
     result.message = "save path required";
     return result;
   }
-  return export_service_.savePng(image, path);
+  ExportService::PngSaveOptions options;
+  options.overwrite = overwrite;
+  options.authorize_commit = std::move(authorize_commit);
+  auto result = export_service_.savePng(image, path, std::move(options));
+  if (result.ok) {
+    if (auto* saved = std::get_if<SavedResult>(&result.output)) {
+      saved->result_id = result_id;
+    }
+  }
+  return result;
 }
 
 ActionResult ResultActionService::saveImageWithDialog(
@@ -149,7 +179,7 @@ ActionResult ResultActionService::saveImageWithDialog(
     return result;
   }
 
-  ActionResult result = saveImage(image, *selected_path);
+  ActionResult result = saveImage(image, kInvalidResultId, *selected_path, true);
   if (!result.ok && show_error_message) {
     showSaveErrorMessage();
   }

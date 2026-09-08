@@ -1,6 +1,7 @@
 add_library(qingying_export STATIC
   dib_encoder.cpp
   export_service.cpp
+  png_file_transaction.cpp
 )
 
 target_include_directories(qingying_export

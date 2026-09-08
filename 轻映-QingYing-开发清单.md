@@ -151,6 +151,7 @@
 - [ ] 明确交互式动作的异步工作流契约；
 - [x] F9-11 / Named Pipe 生产接线：同一 EXE 分流 GUI 与 --mcp-stdio，增加默认关闭的持久化托盘开关，接通真实 status 和显式退出回收；2026-09-08 新增 8 项测试，专项 8/8、完整 Release 679/679 通过，M1 已完成（详见 F9 方案及 MCP stdio profile）；
 - [x] F9-12：提取 UI 线程共享 CaptureService，统一交互占用、预算预检、Pin 排除、单次区域捕获和 scoped 结果发布；实现主显示器中心截图 Handler 与 checked arithmetic，2026-09-08 新增 11 项测试，专项 36/36、完整 Release 700/700 通过；MCP Tool 映射留到 F9-15（详见 F9 方案完成记录）；
+- [x] F9-13：新增本地允许目录 SavePolicy 和同目录 PNG 文件事务，拒绝 UNC/设备路径/ADS/保留名/越界/reparse，默认不覆盖并在编码后取得 OperationControl 提交权再原子提交；失败与取消清理临时文件，GUI 保留确认覆盖行为；2026-09-08 新增 8 项测试，完整 Release 708/708 通过，公共 save Tool 参数接线留到 F9-15（详见 F9 方案完成记录）；
 - [ ] 实现 F9 Tool 集；
 - [ ] 失败返回明确错误，不自动操作屏幕或无限重试。
 

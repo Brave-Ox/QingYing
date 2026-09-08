@@ -11,6 +11,7 @@
 #include "qingying/app/longshot_controller.hpp"
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
+#include "qingying/app/save_policy.h"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
 #include "qingying/automation/automation_endpoint.h"
@@ -28,6 +29,9 @@
 #include <string>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
+
+#include <ShlObj.h>
 
 namespace {
 
@@ -70,6 +74,23 @@ qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
   return profiles;
 }
 
+std::vector<std::wstring> makeAllowedSaveDirectories(
+    const std::wstring& test_namespace) {
+  if (!test_namespace.empty()) {
+    wchar_t temporary[MAX_PATH] = {};
+    const DWORD length = GetTempPathW(MAX_PATH, temporary);
+    if (length != 0 && length < MAX_PATH) return {temporary};
+  }
+  PWSTR pictures = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT,
+                                     nullptr, &pictures)) && pictures) {
+    std::wstring path(pictures);
+    CoTaskMemFree(pictures);
+    return {std::move(path)};
+  }
+  return {};
+}
+
 }  // namespace
 
 namespace qingying {
@@ -84,7 +105,9 @@ struct Application::Impl {
         longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
-        result_actions_(result_store_, export_service_, pin_manager_, {}, &interaction_gate_),
+        save_policy_(makeAllowedSaveDirectories(test_namespace_)),
+        result_actions_(result_store_, export_service_, pin_manager_, {},
+                        &interaction_gate_, &save_policy_),
         capture_service_(capture_, result_store_, pin_manager_, interaction_gate_),
         longshot_controller_(longshot_, overlay_),
         capture_workflow_(capture_, capture_service_, longshot_controller_,
@@ -264,6 +287,7 @@ struct Application::Impl {
   LongShotPluginHost longshot_plugin_host_;
   LongShotEngine longshot_;
   ExportService export_service_;
+  SavePolicy save_policy_;
   ResultStore result_store_;
   PinManager pin_manager_;
   InteractionGate interaction_gate_;

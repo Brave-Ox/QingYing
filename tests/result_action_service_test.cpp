@@ -1,5 +1,6 @@
 ﻿#include "qingying/app/result_action_service.h"
 #include "qingying/export/export_service.hpp"
+#include "qingying/app/save_policy.h"
 #include "qingying/pin/pin_manager.hpp"
 #include <gtest/gtest.h>
 #include <filesystem>
@@ -68,5 +69,45 @@ TEST(ResultActionServiceTest, CancelledDialogAllowsReentrantClearWithoutWriting)
   });
   EXPECT_TRUE(actions.save(id).ok);
   EXPECT_EQ(store.currentId(), kInvalidResultId);
+}
+TEST(ResultActionServiceTest, ExternalSaveUsesPolicyCommitAndTypedMetadata) {
+  wchar_t directory[MAX_PATH] = {};
+  wchar_t seed[MAX_PATH] = {};
+  ASSERT_NE(GetTempPathW(MAX_PATH, directory), 0u);
+  ASSERT_NE(GetTempFileNameW(directory, L"qra", 0, seed), 0u);
+  DeleteFileW(seed);
+  ASSERT_TRUE(CreateDirectoryW(seed, nullptr));
+  const std::filesystem::path root(seed);
+  const auto cancelled_path = root / L"cancelled.png";
+  const auto saved_path = root / L"saved.png";
+
+  ResultStore store;
+  ExportService exporter;
+  PinManager pins;
+  SavePolicy policy({root.wstring()});
+  ResultActionService actions(store, exporter, pins, {}, nullptr, &policy);
+  constexpr ResultScopeId scope = 7;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+
+  bool cancellation_checked = false;
+  auto cancelled = actions.save(scope, ResultSelection::specific(id),
+      cancelled_path.wstring(), nullptr, [&] {
+        cancellation_checked = true;
+        return false;
+      });
+  EXPECT_TRUE(cancellation_checked);
+  EXPECT_EQ(cancelled.error_code, ErrorCode::kCancelled);
+  EXPECT_FALSE(std::filesystem::exists(cancelled_path));
+
+  auto saved = actions.save(scope, ResultSelection::specific(id),
+      saved_path.wstring(), nullptr, [] { return true; });
+  ASSERT_TRUE(saved.ok) << saved.message;
+  const auto* metadata = std::get_if<SavedResult>(&saved.output);
+  ASSERT_NE(metadata, nullptr);
+  EXPECT_EQ(metadata->result_id, id);
+  EXPECT_EQ(metadata->absolute_path, saved_path.wstring());
+  EXPECT_EQ(metadata->format, ImageFormat::Png);
+
+  std::filesystem::remove_all(root);
 }
 }  // namespace qingying

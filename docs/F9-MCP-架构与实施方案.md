@@ -813,17 +813,21 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-13：实现安全保存策略、临时文件和原子提交
 
-**状态：未开始；前置：F9-03、F9-04、F9-05。** 建议提交：`feat(f9-13): save PNG results through validated file transactions`。
+**状态：验收完成（2026-09-08）；前置：F9-03、F9-04、F9-05。** 建议提交：`feat(f9-13): save PNG results through validated file transactions`。
 
 **文件范围：** 新增 `include/qingying/app/save_policy.h`、`src/app/save_policy.cpp`、`src/export/png_file_transaction.cpp` 及内部头；修改 `include/qingying/export/export_service.hpp`、`src/export/export_service.cpp`、ResultActionService 与相关 CMake。
 
-- [ ] 分离保存策略与编码实现，应用配置提供允许的本地目录；MCP path/name 合成完整路径，PNG 单文件名和默认 overwrite=false 在应用层复核。
-- [ ] 按第 9.3 节拒绝 UNC、设备路径、ADS、保留名、越界和 reparse point，验证目录实际身份，避免只做字符串前缀检查。
-- [ ] 创建同目录独占临时文件，通过安全创建的句柄/流编码；持有必要目录/文件句柄，防止校验后目录替换把写入引到其他位置。
-- [ ] 编码完成后，通过应用层注入的中立提交仲裁接口/回调取得提交权，再原子提交最终文件；由 F9-05 的 OperationControl 提供仲裁，qingying_export 不依赖 qingying_automation/OperationRegistry，避免 automation → workflow → export → automation 的 target 环。默认不替换已存在文件，不能 Exists 后再无条件写最终路径。
-- [ ] 编码失败/取消清理临时文件；提交成功后返回真实路径，不因期限尾检改报失败。GUI 的确认/覆盖策略可保留，编码和提交复用同一服务。
+- [x] 分离保存策略与编码实现，应用配置提供允许的本地目录；MCP path/name 合成完整路径，PNG 单文件名和默认 overwrite=false 在应用层复核。
+- [x] 按第 9.3 节拒绝 UNC、设备路径、ADS、保留名、越界和 reparse point，验证目录实际身份，避免只做字符串前缀检查。
+- [x] 创建同目录独占临时文件，通过安全创建的句柄/流编码；持有必要目录/文件句柄，防止校验后目录替换把写入引到其他位置。
+- [x] 编码完成后，通过应用层注入的中立提交仲裁接口/回调取得提交权，再原子提交最终文件；由 F9-05 的 OperationControl 提供仲裁，qingying_export 不依赖 qingying_automation/OperationRegistry，避免 automation → workflow → export → automation 的 target 环。默认不替换已存在文件，不能 Exists 后再无条件写最终路径。
+- [x] 编码失败/取消清理临时文件；提交成功后返回真实路径，不因期限尾检改报失败。GUI 的确认/覆盖策略可保留，编码和提交复用同一服务。
 
 **验收：** 新增 `tests/save_policy_test.cpp`、`tests/png_file_transaction_test.cpp`，扩展 export_service 测试；在隔离临时目录验证目录越界、中文名、junction/目录替换、目标竞争创建、不覆盖、显式覆盖、提交前后取消及残留清理。此提交不增加线程。
+
+**完成记录：** 新增应用层 `SavePolicy`，以配置的本地允许目录复核单个 PNG 文件名与完整路径，拒绝 UNC、设备路径、ADS、保留名、目录越界及目录链 reparse point；生产组合根默认允许当前用户图片目录，进程测试使用隔离临时目录。`ExportService` 改为复用 PNG 文件事务：在目标同目录独占创建临时文件，经 WIC 内存流编码后写入并刷新句柄，编码完成才调用中立提交回调，随后以 `MoveFileExW` 原子提交；无覆盖模式不先检查目标，显式覆盖沿用 GUI 已确认语义。失败、取消和竞争均由 RAII 删除临时文件，成功返回带真实绝对路径、ResultId 和 PNG 格式的类型化结果；保存 Handler 将 F9-05 `OperationControl::tryCommit()` 注入回调，export target 未引入 automation 依赖，且未新增线程。
+
+**验证记录：** 2026-09-08 新增 8 项测试，完整 Release 708/708 通过；覆盖允许目录与中文名、越界/UNC/设备路径/ADS/保留名、reparse 目录、竞争创建默认不覆盖、显式覆盖、提交前取消、临时文件清理、提交期间目录替换阻止，以及外部 scope 的策略、提交权和类型化保存元数据。公共 MCP 的 path/name schema 与 overwrite 参数仍按计划在 F9-15 接线。
 
 ### F9-14：接入持 lease 的有界异步导出
 
