@@ -97,7 +97,7 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
     return;
   }
   const SmartRegionDiagnosticEvent& event = diagnostics.latestEvent();
-  wchar_t message[2048]{};
+  wchar_t message[4096]{};
   if (FAILED(StringCchPrintfW(
           message, std::size(message),
           L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) total=%llu ms "
@@ -124,12 +124,13 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
   }
   for (std::size_t index = 0; index < event.candidate_count; ++index) {
     const SmartRegionCandidateDiagnostic& candidate = event.candidates[index];
-    wchar_t candidate_message[256]{};
+    wchar_t candidate_message[384]{};
     if (FAILED(StringCchPrintfW(
             candidate_message, std::size(candidate_message),
             L"  candidate[%llu] source=%s semantic=%u rect=(%d,%d,%d,%d) "
             L"area=%lld coverage=%u confidence=%u score=%d selected=%d "
-            L"reason=%s\n",
+            L"parts=(source:%d semantic:%d pointer:%d area:%d boundary:%d "
+            L"hierarchy:%d) reason=%s\n",
             static_cast<unsigned long long>(index),
             smartRegionDiagnosticSourceName(candidate.candidate.source),
             static_cast<unsigned int>(candidate.candidate.semantic),
@@ -140,6 +141,9 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
             static_cast<unsigned int>(
                 candidate.candidate.visual_confidence),
             candidate.score, candidate.selected ? 1 : 0,
+            candidate.source_score, candidate.semantic_score,
+            candidate.pointer_score, candidate.area_score,
+            candidate.boundary_score, candidate.hierarchy_score,
             smartRegionCandidateRejectionName(candidate.rejection))) ||
         FAILED(StringCchCatW(message, std::size(message), candidate_message))) {
       break;
@@ -763,10 +767,16 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->controller.update(x, y);
           data->controller.confirm();
           if (data->controller.selection().empty() && data->has_hover) {
-            // 纯点击未拖拽 → 吸附稳定的智能候选区域。
+            // 纯点击未拖拽：优先使用已经检测完成的最新局部候选，避免
+            // 迟滞中的旧候选或整窗回退成为最终选区。
+            const SmartRegionCandidate& selection_candidate =
+                data->hover_stabilizer.selectionCandidate();
+            const OverlayClientRect selection_rect =
+                screenRectToOverlayClient(selection_candidate.rect,
+                                          data->screen);
             data->controller.setSelection(
-                data->hover_rect.x, data->hover_rect.y, data->hover_rect.width,
-                data->hover_rect.height);
+                selection_rect.x, selection_rect.y, selection_rect.width,
+                selection_rect.height);
           }
           break;
         case DragKind::Resize:

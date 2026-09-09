@@ -141,6 +141,45 @@ TEST(SmartRegionHoverStabilizerTest,
   EXPECT_EQ(stabilizer.stableCandidate().target_window, 12U);
 }
 
+TEST(SmartRegionHoverStabilizerTest,
+     PromotesFirstDetailedCandidateWithoutFallbackDelay)
+{
+  SmartRegionCandidate fallback{1, 1, {0, 0, 1000, 800},
+                                SmartRegionKind::Window};
+  fallback.source = SmartRegionDiagnosticSource::Window;
+  fallback.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate button{1, 12, {200, 180, 320, 220},
+                              SmartRegionKind::KnownContent};
+  button.source = SmartRegionDiagnosticSource::Uia;
+  button.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(fallback, 100));
+  EXPECT_TRUE(stabilizer.update(button, 116));
+  EXPECT_FALSE(stabilizer.hasPendingCandidate());
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 12U);
+}
+
+TEST(SmartRegionHoverStabilizerTest,
+     UsesLatestPendingDetailedCandidateForClickSelection)
+{
+  SmartRegionCandidate first{1, 11, {100, 100, 300, 200},
+                             SmartRegionKind::KnownContent};
+  first.source = SmartRegionDiagnosticSource::Uia;
+  first.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate second{1, 12, {120, 110, 320, 210},
+                              SmartRegionKind::KnownContent};
+  second.source = SmartRegionDiagnosticSource::Visual;
+  second.semantic = SmartRegionSemantic::ContentSurface;
+  second.visual_confidence = 90;
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(first, 100));
+  ASSERT_FALSE(stabilizer.update(second, 116));
+  ASSERT_TRUE(stabilizer.hasPendingCandidate());
+  EXPECT_EQ(stabilizer.selectionCandidate().target_window, 12U);
+}
+
 TEST(SmartRegionHoverRenderGateTest,
      RequestsARenderOnlyWhenTheVisibleHoverRegionChanges)
 {
@@ -393,6 +432,120 @@ TEST(SmartRegionCandidateSelectorTest,
       candidates, std::size(candidates), 80, 300, owner_rect, selected));
   EXPECT_EQ(selected.target_window, 3U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Visual);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     PrefersHighConfidenceVisualCardOverLargeUiaContentSurface)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate document{1, 2, {20, 20, 1180, 700},
+                                SmartRegionKind::KnownContent};
+  document.source = SmartRegionDiagnosticSource::Uia;
+  document.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate card{1, 3, {400, 220, 680, 460},
+                            SmartRegionKind::KnownContent};
+  card.source = SmartRegionDiagnosticSource::Visual;
+  card.semantic = SmartRegionSemantic::ContentSurface;
+  card.visual_confidence = 95;
+  const SmartRegionCandidate candidates[] = {document, card};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 520, 320, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 3U);
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Visual);
+  EXPECT_GT(diagnostic.candidates[1].source_score, 0);
+  EXPECT_GT(diagnostic.candidates[1].semantic_score, 0);
+  EXPECT_GT(diagnostic.candidates[1].pointer_score, 0);
+  EXPECT_GT(diagnostic.candidates[1].area_score, 0);
+  EXPECT_GT(diagnostic.candidates[1].boundary_score, 0);
+  EXPECT_GT(diagnostic.candidates[1].hierarchy_score, 0);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     MarksNearIdenticalLowerRankedCandidateAsDuplicate)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate uia_card{1, 2, {400, 220, 680, 460},
+                                SmartRegionKind::KnownContent};
+  uia_card.source = SmartRegionDiagnosticSource::Uia;
+  uia_card.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate visual_card{1, 3, {401, 221, 681, 461},
+                                   SmartRegionKind::KnownContent};
+  visual_card.source = SmartRegionDiagnosticSource::Visual;
+  visual_card.semantic = SmartRegionSemantic::ContentSurface;
+  visual_card.visual_confidence = 95;
+  const SmartRegionCandidate candidates[] = {uia_card, visual_card};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 520, 320, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 3U);
+  EXPECT_EQ(diagnostic.candidates[0].rejection,
+            SmartRegionCandidateRejection::Duplicate);
+  EXPECT_TRUE(diagnostic.candidates[1].selected);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     DuplicateCandidateDoesNotEliminateAnotherDistinctCandidate)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate strongest{1, 2, {100, 100, 200, 200},
+                                  SmartRegionKind::KnownContent};
+  strongest.source = SmartRegionDiagnosticSource::Uia;
+  strongest.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate duplicate{1, 3, {106, 100, 206, 200},
+                                  SmartRegionKind::KnownContent};
+  duplicate.source = SmartRegionDiagnosticSource::Msaa;
+  duplicate.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate distinct{1, 4, {112, 100, 212, 200},
+                                 SmartRegionKind::KnownContent};
+  distinct.source = SmartRegionDiagnosticSource::KnownContent;
+  distinct.semantic = SmartRegionSemantic::ContentSurface;
+  const SmartRegionCandidate candidates[] = {strongest, duplicate, distinct};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 150, 150, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 2U);
+  EXPECT_EQ(diagnostic.candidates[1].rejection,
+            SmartRegionCandidateRejection::Duplicate);
+  EXPECT_EQ(diagnostic.candidates[2].rejection,
+            SmartRegionCandidateRejection::LowerScore);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     IgnoresCandidatesBeyondTheFixedCapacity)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate candidates[SmartRegionMaxCandidates + 1];
+  for (std::size_t index = 0; index < SmartRegionMaxCandidates; ++index)
+  {
+    candidates[index] = {1, index + 1, owner_rect,
+                         SmartRegionKind::Window};
+    candidates[index].source = SmartRegionDiagnosticSource::Window;
+    candidates[index].semantic = SmartRegionSemantic::Fallback;
+  }
+  candidates[SmartRegionMaxCandidates] = {
+      1, 100, {400, 220, 680, 260}, SmartRegionKind::KnownContent};
+  candidates[SmartRegionMaxCandidates].source =
+      SmartRegionDiagnosticSource::Uia;
+  candidates[SmartRegionMaxCandidates].semantic =
+      SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 520, 240, owner_rect, selected,
+      diagnostic));
+  EXPECT_NE(selected.target_window, 100U);
+  EXPECT_EQ(diagnostic.candidate_count, SmartRegionMaxCandidates);
 }
 
 TEST(SmartRegionCandidateSelectorTest,

@@ -59,6 +59,7 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
   TooSmall,
   LowConfidence,
   GenericTooLarge,
+  Duplicate,
   LowerScore,
 };
 
@@ -71,6 +72,12 @@ constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
 struct SmartRegionCandidateDiagnostic {
   SmartRegionCandidate candidate;
   int score{0};
+  int source_score{0};
+  int semantic_score{0};
+  int pointer_score{0};
+  int area_score{0};
+  int boundary_score{0};
+  int hierarchy_score{0};
   std::int64_t area{0};
   std::uint8_t owner_coverage_percent{0};
   SmartRegionCandidateRejection rejection{
@@ -162,6 +169,9 @@ class SmartRegionHoverStabilizer {
   bool hasStableCandidate() const noexcept;
   bool hasPendingCandidate() const noexcept;
   const SmartRegionCandidate& stableCandidate() const noexcept;
+  // 点击确认时优先使用已经检测完成的最新局部候选；泛化回退候选不会覆盖
+  // 当前稳定的局部候选。
+  const SmartRegionCandidate& selectionCandidate() const noexcept;
 
  private:
   SmartRegionCandidate m_stable;

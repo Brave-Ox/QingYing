@@ -16,17 +16,33 @@ constexpr int kMinimumCandidateWidth = 16;
 constexpr int kMinimumCandidateHeight = 16;
 constexpr std::uint8_t kMinimumVisualConfidence = 70;
 constexpr std::int64_t kLargeGenericCandidatePercent = 85;
-constexpr int kSourceScoreUia = 4000;
-constexpr int kSourceScoreMsaa = 3750;
-constexpr int kSourceScoreVisual = 3500;
-constexpr int kSourceScoreKnownContent = 3000;
-constexpr int kSourceScoreClientArea = 1000;
-constexpr int kSourceScoreWindow = 500;
+constexpr int kSourceScoreUia = 1200;
+constexpr int kSourceScoreMsaa = 1100;
+constexpr int kSourceScoreVisual = 1000;
+constexpr int kSourceScoreKnownContent = 900;
+constexpr int kSourceScoreClientArea = 200;
+constexpr int kSourceScoreWindow = 100;
 // 鼠标下可独立操作的控件优先于其所在的泛化内容容器。
-constexpr int kSemanticScoreActionable = 900;
-constexpr int kSemanticScoreContent = 800;
-constexpr int kMaximumAreaSpecificityScore = 600;
-constexpr std::int64_t kAreaSpecificityDivisor = 2000;
+constexpr int kSemanticScoreActionable = 1000;
+constexpr int kSemanticScoreContent = 450;
+constexpr int kMaximumPointerScore = 100;
+constexpr int kMaximumHierarchyScore = 300;
+constexpr int kHierarchyStepScore = 100;
+
+struct CandidateScoreBreakdown
+{
+  int source{0};
+  int semantic{0};
+  int pointer{0};
+  int area{0};
+  int boundary{0};
+  int hierarchy{0};
+
+  int total() const noexcept
+  {
+    return source + semantic + pointer + area + boundary + hierarchy;
+  }
+};
 
 bool candidatesEqual(const SmartRegionCandidate& left,
                      const SmartRegionCandidate& right) noexcept
@@ -36,6 +52,12 @@ bool candidatesEqual(const SmartRegionCandidate& left,
          left.rect.left == right.rect.left && left.rect.top == right.rect.top &&
          left.rect.right == right.rect.right &&
          left.rect.bottom == right.rect.bottom && left.kind == right.kind;
+}
+
+bool isDetailedCandidate(const SmartRegionCandidate& candidate) noexcept
+{
+  return candidate.valid() && candidate.kind == SmartRegionKind::KnownContent &&
+         candidate.semantic != SmartRegionSemantic::Fallback;
 }
 
 bool getRootClientScreenRect(HWND root_window, WindowRect& out) noexcept
@@ -195,18 +217,142 @@ int semanticScore(SmartRegionSemantic semantic) noexcept
   return 0;
 }
 
-int candidateScore(const SmartRegionCandidate& candidate) noexcept
+int pointerScore(const SmartRegionCandidate& candidate, int screen_x,
+                 int screen_y) noexcept
 {
-  const std::int64_t area = areaOf(candidate.rect);
-  const std::int64_t area_penalty = area / kAreaSpecificityDivisor;
-  int area_score = static_cast<int>((std::max)(
-      std::int64_t{0}, kMaximumAreaSpecificityScore - area_penalty));
+  const int distance_left = screen_x - candidate.rect.left;
+  const int distance_right = candidate.rect.right - 1 - screen_x;
+  const int distance_top = screen_y - candidate.rect.top;
+  const int distance_bottom = candidate.rect.bottom - 1 - screen_y;
+  const int edge_distance = (std::min)(
+      (std::min)(distance_left, distance_right),
+      (std::min)(distance_top, distance_bottom));
+  const int minimum_dimension =
+      (std::min)(candidate.rect.width(), candidate.rect.height());
+  if (edge_distance <= 0 || minimum_dimension <= 0)
+  {
+    return 0;
+  }
+  const std::int64_t scaled_score =
+      static_cast<std::int64_t>(edge_distance) * kMaximumPointerScore * 2 /
+      minimum_dimension;
+  return static_cast<int>((std::min)(
+      static_cast<std::int64_t>(kMaximumPointerScore), scaled_score));
+}
+
+int areaScore(const SmartRegionCandidate& candidate,
+              const WindowRect& owner_rect) noexcept
+{
+  const std::int64_t owner_area = areaOf(owner_rect);
+  const std::int64_t candidate_area = areaOf(candidate.rect);
+  if (owner_area <= 0 || candidate_area <= 0)
+  {
+    return 0;
+  }
+  const long double coverage_percent =
+      static_cast<long double>(candidate_area) * 100.0L /
+      static_cast<long double>(owner_area);
+  if (coverage_percent <= 5)
+  {
+    return 700;
+  }
+  if (coverage_percent <= 20)
+  {
+    return 600;
+  }
+  if (coverage_percent <= 50)
+  {
+    return 350;
+  }
+  if (coverage_percent <= 75)
+  {
+    return 150;
+  }
+  return 0;
+}
+
+int boundaryScore(const SmartRegionCandidate& candidate) noexcept
+{
   if (candidate.source == SmartRegionDiagnosticSource::Visual)
   {
-    area_score /= 2;
+    return static_cast<int>(candidate.visual_confidence) * 8;
   }
-  return sourceScore(diagnosticSourceFor(candidate)) +
-         semanticScore(candidate.semantic) + area_score;
+  if (candidate.source == SmartRegionDiagnosticSource::Uia ||
+      candidate.source == SmartRegionDiagnosticSource::Msaa)
+  {
+    return candidate.semantic == SmartRegionSemantic::ActionableControl
+               ? 300
+               : 150;
+  }
+  return candidate.source == SmartRegionDiagnosticSource::KnownContent ? 100
+                                                                        : 0;
+}
+
+int hierarchyScore(const SmartRegionCandidate& candidate,
+                   const SmartRegionCandidate* candidates,
+                   std::size_t candidate_count, int screen_x,
+                   int screen_y) noexcept
+{
+  if (candidate.semantic == SmartRegionSemantic::Fallback)
+  {
+    return 0;
+  }
+  int score = 0;
+  const std::int64_t candidate_area = areaOf(candidate.rect);
+  for (std::size_t index = 0; index < candidate_count; ++index)
+  {
+    const SmartRegionCandidate& container = candidates[index];
+    if (!container.valid() || !container.contains(screen_x, screen_y) ||
+        areaOf(container.rect) <= candidate_area ||
+        !rectInside(candidate.rect, container.rect))
+    {
+      continue;
+    }
+    score = (std::min)(kMaximumHierarchyScore,
+                       score + kHierarchyStepScore);
+  }
+  return score;
+}
+
+CandidateScoreBreakdown candidateScore(
+    const SmartRegionCandidate& candidate,
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    int screen_x, int screen_y, const WindowRect& owner_rect) noexcept
+{
+  CandidateScoreBreakdown score;
+  score.source = sourceScore(diagnosticSourceFor(candidate));
+  score.semantic = semanticScore(candidate.semantic);
+  score.pointer = pointerScore(candidate, screen_x, screen_y);
+  score.area = areaScore(candidate, owner_rect);
+  score.boundary = boundaryScore(candidate);
+  score.hierarchy = hierarchyScore(candidate, candidates, candidate_count,
+                                   screen_x, screen_y);
+  return score;
+}
+
+bool rectanglesAreNearDuplicates(const WindowRect& left,
+                                 const WindowRect& right) noexcept
+{
+  const WindowRect overlap{
+      (std::max)(left.left, right.left),
+      (std::max)(left.top, right.top),
+      (std::min)(left.right, right.right),
+      (std::min)(left.bottom, right.bottom)};
+  const std::int64_t overlap_area = areaOf(overlap);
+  const std::int64_t left_area = areaOf(left);
+  const std::int64_t right_area = areaOf(right);
+  const std::int64_t smaller_area = (std::min)(left_area, right_area);
+  const std::int64_t larger_area = (std::max)(left_area, right_area);
+  if (overlap_area <= 0 || smaller_area <= 0)
+  {
+    return false;
+  }
+  const long double overlap_ratio =
+      static_cast<long double>(overlap_area) /
+      static_cast<long double>(smaller_area);
+  const long double area_ratio = static_cast<long double>(larger_area) /
+                                 static_cast<long double>(smaller_area);
+  return overlap_ratio >= 0.90L && area_ratio <= 1.10L;
 }
 
 bool selectBestInternal(const SmartRegionCandidate* candidates,
@@ -227,19 +373,62 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
     return false;
   }
 
-  const std::size_t diagnostic_count =
-      (std::min)(candidate_count, SmartRegionDiagnosticMaxCandidates);
+  const std::size_t processing_count =
+      (std::min)(candidate_count, SmartRegionMaxCandidates);
+  const std::size_t diagnostic_count = processing_count;
   if (diagnostics != nullptr) {
     diagnostics->candidate_count = diagnostic_count;
   }
 
+  bool duplicate[SmartRegionMaxCandidates]{};
+  for (std::size_t left_index = 0; left_index < processing_count;
+       ++left_index)
+  {
+    if (duplicate[left_index] ||
+        candidateRejection(candidates[left_index], screen_x, screen_y,
+                           owner_rect) !=
+        SmartRegionCandidateRejection::None)
+    {
+      continue;
+    }
+    for (std::size_t right_index = left_index + 1;
+         right_index < processing_count; ++right_index)
+    {
+      if (duplicate[right_index] ||
+          candidateRejection(candidates[right_index], screen_x, screen_y,
+                             owner_rect) !=
+              SmartRegionCandidateRejection::None ||
+          !rectanglesAreNearDuplicates(candidates[left_index].rect,
+                                       candidates[right_index].rect))
+      {
+        continue;
+      }
+      const CandidateScoreBreakdown left_score = candidateScore(
+          candidates[left_index], candidates, processing_count, screen_x,
+          screen_y, owner_rect);
+      const CandidateScoreBreakdown right_score = candidateScore(
+          candidates[right_index], candidates, processing_count, screen_x,
+          screen_y, owner_rect);
+      if (right_score.total() > left_score.total())
+      {
+        duplicate[left_index] = true;
+        break;
+      }
+      duplicate[right_index] = true;
+    }
+  }
+
   int best_score = -1;
   std::int64_t best_area = 0;
-  std::size_t best_index = candidate_count;
-  for (std::size_t index = 0; index < candidate_count; ++index) {
+  std::size_t best_index = processing_count;
+  for (std::size_t index = 0; index < processing_count; ++index) {
     const SmartRegionCandidate& candidate = candidates[index];
-    const SmartRegionCandidateRejection rejection =
+    SmartRegionCandidateRejection rejection =
         candidateRejection(candidate, screen_x, screen_y, owner_rect);
+    if (rejection == SmartRegionCandidateRejection::None && duplicate[index])
+    {
+      rejection = SmartRegionCandidateRejection::Duplicate;
+    }
     if (diagnostics != nullptr && index < diagnostic_count) {
       SmartRegionCandidateDiagnostic& diagnostic =
           diagnostics->candidates[index];
@@ -260,17 +449,28 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
       continue;
     }
 
-    const int score = candidateScore(candidate);
+    const CandidateScoreBreakdown score = candidateScore(
+        candidate, candidates, processing_count, screen_x, screen_y,
+        owner_rect);
     if (diagnostics != nullptr && index < diagnostic_count) {
-      diagnostics->candidates[index].score = score;
+      SmartRegionCandidateDiagnostic& diagnostic =
+          diagnostics->candidates[index];
+      diagnostic.score = score.total();
+      diagnostic.source_score = score.source;
+      diagnostic.semantic_score = score.semantic;
+      diagnostic.pointer_score = score.pointer;
+      diagnostic.area_score = score.area;
+      diagnostic.boundary_score = score.boundary;
+      diagnostic.hierarchy_score = score.hierarchy;
     }
     const std::int64_t area = areaOf(candidate.rect);
-    if (score > best_score ||
-        (score == best_score && (best_area == 0 || area < best_area)) ||
-        (score == best_score && area == best_area &&
+    if (score.total() > best_score ||
+        (score.total() == best_score &&
+         (best_area == 0 || area < best_area)) ||
+        (score.total() == best_score && area == best_area &&
          candidate.target_window < out.target_window)) {
       out = candidate;
-      best_score = score;
+      best_score = score.total();
       best_area = area;
       best_index = index;
     }
@@ -449,6 +649,8 @@ const wchar_t* smartRegionCandidateRejectionName(
       return L"low-confidence";
     case SmartRegionCandidateRejection::GenericTooLarge:
       return L"generic-too-large";
+    case SmartRegionCandidateRejection::Duplicate:
+      return L"duplicate";
     case SmartRegionCandidateRejection::LowerScore:
       return L"lower-score";
     case SmartRegionCandidateRejection::None:
@@ -476,6 +678,14 @@ bool SmartRegionHoverStabilizer::update(
     m_pending = SmartRegionCandidate{};
     m_pending_since_ms = 0;
     return false;
+  }
+
+  if (!isDetailedCandidate(m_stable) && isDetailedCandidate(candidate))
+  {
+    m_stable = candidate;
+    m_pending = SmartRegionCandidate{};
+    m_pending_since_ms = 0;
+    return true;
   }
 
   if (!candidatesEqual(candidate, m_pending)) {
@@ -515,6 +725,12 @@ const SmartRegionCandidate& SmartRegionHoverStabilizer::stableCandidate()
     const noexcept
 {
   return m_stable;
+}
+
+const SmartRegionCandidate& SmartRegionHoverStabilizer::selectionCandidate()
+    const noexcept
+{
+  return isDetailedCandidate(m_pending) ? m_pending : m_stable;
 }
 
 bool SmartRegionHoverRenderGate::update(const SmartRegionCandidate& candidate,
