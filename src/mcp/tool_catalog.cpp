@@ -53,11 +53,12 @@ Json handleSchema(std::size_t limit) {
 Json toolFailure(int code, const std::string& message) {
   return result({{"error", {{"code", std::string(errorCodeSymbol(code))}, {"message", message}}}}, true);
 }
-const std::array<Tool, 7>& tools() {
-  static const std::array<Tool, 7> catalog{{
+const std::array<Tool, 8>& tools() {
+  static const std::array<Tool, 8> catalog{{
     {"status", "Query desktop automation availability and limits", "", ToolKind::Status},
     {"capture_window", "Capture visible desktop pixels for one matching window", "", ToolKind::CaptureWindow},
     {"crop_center", "Capture the physical center of the primary display", "", ToolKind::CropCenter},
+    {"copy", "Copy a connection-owned result to the clipboard", "", ToolKind::Copy},
     {"save", "Save a connection-owned result as a PNG file", "", ToolKind::Save},
     {"get_operation", "Query a connection-owned operation", "operation_id", ToolKind::GetOperation},
     {"cancel_operation", "Request cancellation of a connection-owned operation", "operation_id", ToolKind::CancelOperation},
@@ -84,6 +85,12 @@ Json Tool::descriptor(const AutomationLimits& limits) const {
     schema["properties"] = {{"width", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}},
                             {"height", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}}};
     schema["required"] = {"width", "height"};
+  } else if (kind == ToolKind::Copy) {
+    schema["properties"] = {
+      {"result_id", handleSchema(limits.max_opaque_handle_bytes)},
+      {"request_key", {{"type", "string"}, {"minLength", 1},
+                       {"maxLength", limits.max_request_key_bytes}}}};
+    schema["required"] = {"result_id"};
   } else if (kind == ToolKind::Save) {
     schema["properties"] = {
       {"result_id", handleSchema(limits.max_opaque_handle_bytes)},
@@ -146,6 +153,32 @@ AutomationRequest Tool::decode(const Json& arguments, RequestId id, const Automa
       throw std::invalid_argument("invalid crop dimensions");
     AutomationRequest request; request.request_id = id;
     request.payload = ExecuteActionRequest{CropCenterRequest{static_cast<int>(width), static_cast<int>(height)}};
+    return request;
+  }
+  if (kind == ToolKind::Copy) {
+    if (arguments.empty() || arguments.size() > 2 ||
+        !arguments.contains("result_id") ||
+        !opaque(arguments.at("result_id"), limits))
+      throw std::invalid_argument("arguments do not match inputSchema");
+    for (const auto& item : arguments.items())
+      if (item.key() != "result_id" && item.key() != "request_key")
+        throw std::invalid_argument("arguments do not match inputSchema");
+    std::optional<std::string> key;
+    if (arguments.contains("request_key")) {
+      if (!arguments["request_key"].is_string())
+        throw std::invalid_argument("request_key must be string");
+      key = arguments["request_key"].get<std::string>();
+      if (key->empty() || key->size() > limits.max_request_key_bytes ||
+          key->find('\0') != std::string::npos)
+        throw std::invalid_argument("invalid request_key");
+    }
+    ExecuteActionRequest execute;
+    execute.payload = CopyRequest{ResultSelection::current()};
+    execute.request_key = std::move(key);
+    execute.result_handle = ResultHandle{arguments["result_id"].get<std::string>()};
+    AutomationRequest request;
+    request.request_id = id;
+    request.payload = std::move(execute);
     return request;
   }
   if (kind == ToolKind::Save) {
@@ -231,6 +264,13 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
     }
     return result(std::move(data), true);
   }
+  if (kind == ToolKind::Copy) {
+    if (!std::holds_alternative<CopiedResult>(response.result.output) ||
+        !response.operation_handle)
+      return toolFailure(ErrorCode::kUnknown, "Expected copied result handle");
+    return result({{"result_id", arguments.at("result_id")},
+                   {"operation_id", response.operation_handle->value}}, false);
+  }
   ipc::WireResponse wire; wire.response = response;
   const auto frame = ipc::encodeFrame(wire, limits);
   if (!frame) return toolFailure(ErrorCode::kUnknown, "Invalid automation response");
@@ -246,6 +286,8 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
         return toolFailure(ErrorCode::kUnknown, "Expected captured result handles");
       data = serialized.at("result").at("output"); data.erase("kind");
       data["result_id"] = response.result_handle->value; data["operation_id"] = response.operation_handle->value; break;
+    case ToolKind::Copy:
+      break;
     case ToolKind::Save:
       if (!std::holds_alternative<SavedResult>(response.result.output) || !response.operation_handle)
         return toolFailure(ErrorCode::kUnknown, "Expected saved result handle");

@@ -901,16 +901,20 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-18：开放 copy 并落实剪贴板提交边界
 
-**状态：未开始；前置：F9-05、F9-07、F9-15。** 建议提交：`feat(f9-18): copy explicitly selected MCP results`。
+**状态：已完成（2026-09-09）；前置：F9-05、F9-07、F9-15。** 建议提交：`feat(f9-18): copy explicitly selected MCP results`。
 
 **文件范围：** 修改 ResultActionService、CopyHandler、`src/mcp/tool_catalog.cpp`、Endpoint 和 codec。
 
-- [ ] copy 必须提供本 scope 的有效 result_id；UI acquire 后再操作剪贴板，成功不释放结果、不续期。
-- [ ] 通过 F9-05 的提交仲裁在最终副作用前检查取消/期限，执行后返回真实 CopiedResult；通过 request_key 复用已受理操作，避免重复剪贴板动作。
-- [ ] 交互长截活跃时返回 Busy；已实现的 GUI Copy 保持原行为，外部错误走结构化结果。
-- [ ] 同提交登记 schema、decoder、encoder 和 capability。
+- [x] copy 必须提供本 scope 的有效 result_id；UI acquire 后再操作剪贴板，成功不释放结果、不续期。
+- [x] 通过 F9-05 的提交仲裁在最终副作用前检查取消/期限，执行后返回真实 CopiedResult；通过 request_key 复用已受理操作，避免重复剪贴板动作。
+- [x] 交互长截活跃时返回 Busy；已实现的 GUI Copy 保持原行为，外部错误走结构化结果。
+- [x] 同提交登记 schema、decoder、encoder 和 capability。
 
 **验收：** 扩展 action_handlers/result_action_service/catalog 测试，用 fake clipboard 验证显式 ID、越权/过期、提交前取消、提交后成功、request_key 冲突及保存仍可消费同一结果；真实剪贴板测试保留为明确的桌面验收。
+
+**完成记录：** MCP `copy` 现要求连接内不透明 `result_id`，可选 `request_key`；ToolCatalog、stdio 列表、私有 Pipe codec、Endpoint 句柄解析和生产 capability 同步开放。Endpoint 先按可信连接解析 ResultHandle 并持有共享交互准入，CopyHandler 再获取对应 scope 的 ResultLease；最终剪贴板写入前通过 OperationControl 原子取得提交权，取消或超时会阻止副作用。成功输出真实 `CopiedResult`，公共响应只回显原不透明 result_id 与 operation_id；结果不释放、不续期，仍可继续 save/release。GUI Copy 继续使用既有 current/显式 ResultId 路径和交互门禁。
+
+**验证记录：** 2026-09-09 新增 fake clipboard、CopyHandler 提交仲裁、过期结果、opaque copy codec 和 ToolCatalog 测试，F9-18 相关 ResultActionService、Handler、Endpoint、OperationRegistry、codec、catalog 与 stdio 专项 79/79 通过；完整 Release 构建成功，743/743 通过。覆盖越权/过期结果在副作用前拒绝、提交前取消、提交后类型化成功、同一结果继续保存、request_key 相同参数复用与不同参数冲突、Busy/清理占用，以及公共响应不泄露内部数值 ID。真实 Windows 剪贴板写入按计划保留为 F9-24 桌面验收。
 
 ### F9-19：增加 PinId、来源与全应用预算后开放 pin
 

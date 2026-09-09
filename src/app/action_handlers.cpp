@@ -102,7 +102,16 @@ class CopyHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("copy");
     }
-    return result_actions_.copy(request.context.result_scope, payload->result);
+    ResultActionService::CommitAuthorization authorize_commit;
+    if (request.operation_control) {
+      authorize_commit = [control = request.operation_control] {
+        return control->tryCommit();
+      };
+    }
+    return request.operation_control
+        ? result_actions_.copyAdmitted(request.context.result_scope,
+              payload->result, std::move(authorize_commit))
+        : result_actions_.copy(request.context.result_scope, payload->result);
   }
 
  private:

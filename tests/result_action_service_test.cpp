@@ -58,6 +58,85 @@ TEST(ResultActionServiceTest, ForeignIdsAreRejectedBeforeSideEffects) {
   EXPECT_FALSE(actions.pin(2, selected).ok);
   EXPECT_TRUE(store.acquire(3, id));
 }
+
+TEST(ResultActionServiceTest, ExternalCopyCommitsOnceAndKeepsResultConsumable) {
+  ResultStore store;
+  ExportService exporter;
+  PinManager pins;
+  int clipboard_writes = 0;
+  ResultActionService actions(store, exporter, pins, {}, nullptr, nullptr, {},
+      [&](const Image& image) {
+        ++clipboard_writes;
+        ActionResult result;
+        result.ok = !image.empty();
+        result.error_code = result.ok ? ErrorCode::kOk
+                                      : ErrorCode::kExportFailed;
+        return result;
+      });
+  constexpr ResultScopeId scope = kGuiResultScopeId;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+
+  int commit_checks = 0;
+  auto copied = actions.copy(scope, ResultSelection::specific(id), nullptr,
+      [&] { ++commit_checks; return true; });
+  ASSERT_TRUE(copied.ok);
+  EXPECT_EQ(commit_checks, 1);
+  EXPECT_EQ(clipboard_writes, 1);
+  ASSERT_NE(std::get_if<CopiedResult>(&copied.output), nullptr);
+  EXPECT_EQ(std::get<CopiedResult>(copied.output).result_id, id);
+  EXPECT_TRUE(store.acquire(scope, ResultSelection::specific(id)));
+  TemporaryFile saved;
+  ASSERT_FALSE(saved.path.empty());
+  EXPECT_TRUE(actions.save(id, saved.path).ok);
+  EXPECT_TRUE(store.acquire(scope, ResultSelection::specific(id)));
+}
+
+TEST(ResultActionServiceTest, ExternalCopyCancellationPreventsClipboardCommit) {
+  ResultStore store;
+  ExportService exporter;
+  PinManager pins;
+  int clipboard_writes = 0;
+  ResultActionService actions(store, exporter, pins, {}, nullptr, nullptr, {},
+      [&](const Image&) {
+        ++clipboard_writes;
+        ActionResult result;
+        result.ok = true;
+        result.error_code = ErrorCode::kOk;
+        return result;
+      });
+  constexpr ResultScopeId scope = 8;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+
+  const auto cancelled = actions.copy(scope, ResultSelection::specific(id),
+                                      nullptr, [] { return false; });
+  EXPECT_EQ(cancelled.error_code, ErrorCode::kCancelled);
+  EXPECT_EQ(clipboard_writes, 0);
+  EXPECT_TRUE(store.acquire(scope, ResultSelection::specific(id)));
+}
+
+TEST(ResultActionServiceTest, ExpiredExternalCopyIsRejectedBeforeClipboardWrite) {
+  auto now = std::chrono::steady_clock::now();
+  ResultStore store({}, [&] { return now; });
+  ExportService exporter;
+  PinManager pins;
+  int clipboard_writes = 0;
+  ResultActionService actions(store, exporter, pins, {}, nullptr, nullptr, {},
+      [&](const Image&) {
+        ++clipboard_writes;
+        ActionResult result;
+        result.ok = true;
+        result.error_code = ErrorCode::kOk;
+        return result;
+      });
+  constexpr ResultScopeId scope = 10;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+  now += std::chrono::seconds{61};
+
+  const auto expired = actions.copyAdmitted(scope,
+      ResultSelection::specific(id), [] { return true; });
+  EXPECT_EQ(expired.error_code, ErrorCode::kResultExpired);
+  EXPECT_EQ(clipboard_writes, 0);
+}
 TEST(ResultActionServiceTest, CancelledDialogAllowsReentrantClearWithoutWriting) {
   ResultStore store;
   ExportService exporter;

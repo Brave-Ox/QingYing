@@ -20,11 +20,12 @@
 
 ## 静态工具与句柄
 
-同一个 `Tool` 登记项提供名称、参数字段、描述、schema、decoder 和 encoder；F9-17 后目录列七项：
+同一个 `Tool` 登记项提供名称、参数字段、描述、schema、decoder 和 encoder；F9-18 后目录列八项：
 
 - status：空对象参数，返回实际状态；传输不可达时返回 reachable:false、app_running:null 和 connection_reason，未知应用字段为 null。
 - crop_center：必填正整数 width/height，按主显示器物理像素中心截图，返回不透明 result_id、operation_id、尺寸、物理边界、捕获模式和剩余有效期。
 - capture_window：必填窗口标题 query，match 为 contains（默认）或 exact，可选正整数 process_id；唯一匹配后复核窗口身份和可见边界，截取当前桌面可见像素并返回不透明 result_id、operation_id、尺寸、物理边界、visible_screen 和剩余有效期。0 匹配返回 WindowNotFound，多匹配返回 WindowAmbiguous、有限候选和 truncated；不激活、移动、恢复窗口，也不显示选区遮罩。
+- copy：必填当前连接拥有的不透明 result_id，可选 request_key；在剪贴板写入前检查取消和期限，成功返回原 result_id 与不透明 operation_id，且不释放结果或延长其 TTL。
 - save：必填不透明 result_id、允许目录 path 和单个 PNG 文件名 name；overwrite 默认 false，request_key 可选。保存不弹对话框，实际文件事务完成后返回原 result_id、不透明 operation_id、绝对路径和 png 格式。
 - get_operation：operation_id 为非空不透明字符串，返回操作状态、进度、相对时间和结果可用性。操作本身失败不会使成功的查询变成 isError:true。
 - cancel_operation：operation_id 为不透明字符串，返回是否请求取消及当前状态。公共 schema 不接受 request_id。
@@ -32,7 +33,7 @@
 
 所有参数对象均禁止额外字段；句柄使用 ASCII 字母、数字、下划线或连字符，长度上限来自 AutomationLimits（默认 128）。不把数字字符串解析为内部 ID。控制 DTO 可携带 operation_handle/result_handle，通过私有 wire 到 Endpoint；Endpoint 使用当前可信 context 调用 Registry 解析并验证归属，同时传数字和句柄会被拒绝。释放路径允许解析有界失效记录以保持重复释放语义。
 
-输出同时提供 structuredContent 和对应的 text JSON，业务失败使用 isError:true；公共响应中的操作/结果 ID 保留不透明字符串，不输出内部 request/operation 数字 ID。get_operation 的 outcome 保留成功/错误诊断，不公开内部 ActionOutput 和 data；crop_center/save 通过响应侧可信句柄元数据映射公开 ID。
+输出同时提供 structuredContent 和对应的 text JSON，业务失败使用 isError:true；公共响应中的操作/结果 ID 保留不透明字符串，不输出内部 request/operation 数字 ID。get_operation 的 outcome 保留成功/错误诊断，不公开内部 ActionOutput 和 data；capture_window/crop_center/copy/save 通过响应侧可信句柄元数据映射公开 ID。
 
 依据：[Tools、结构化输出及错误分层](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)。
 

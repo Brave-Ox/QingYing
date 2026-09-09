@@ -358,7 +358,8 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
       return {{"action", "crop_center"}, {"width", value.width}, {"height", value.height}};
     else {
       require(value.result.kind == ResultSelectionKind::Explicit ||
-              (std::is_same_v<T, SaveRequest> && execute.result_handle &&
+              ((std::is_same_v<T, SaveRequest> ||
+                std::is_same_v<T, CopyRequest>) && execute.result_handle &&
                value.result.kind == ResultSelectionKind::Current));
       if constexpr (std::is_same_v<T, SaveRequest>) {
         path(value.path, limits);
@@ -371,8 +372,16 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
         else
           save["result_id"] = value.result.result_id;
         return save;
-      } else return {{"action", std::is_same_v<T, CopyRequest> ? "copy" : "pin"},
-                    {"result_id", value.result.result_id}};
+      } else {
+        Json consumer{{"action", std::is_same_v<T, CopyRequest> ? "copy" : "pin"}};
+        if constexpr (std::is_same_v<T, CopyRequest>) {
+          if (execute.result_handle)
+            consumer["result_handle"] = textJson(execute.result_handle->value,
+                limits.max_opaque_handle_bytes, false);
+          else consumer["result_id"] = value.result.result_id;
+        } else consumer["result_id"] = value.result.result_id;
+        return consumer;
+      }
     }
   }, execute.payload);
   if (execute.request_key) result["request_key"] = textJson(*execute.request_key, limits.max_request_key_bytes, false);
@@ -407,12 +416,16 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
     result.payload = CropCenterRequest{integer(value.at("width")), integer(value.at("height"))};
   } else if (name == "copy" || name == "pin" || name == "save") {
     const bool save = name == "save";
+    const bool opaque_consumer = save || name == "copy";
     if (save) {
       fields(value, {"action", "path"},
              {"request_key", "result_id", "result_handle", "overwrite"});
       require(value.contains("result_id") != value.contains("result_handle"));
-    }
-    else fields(value, {"action", "result_id"}, {"request_key"});
+    } else if (name == "copy") {
+      fields(value, {"action"},
+             {"request_key", "result_id", "result_handle"});
+      require(value.contains("result_id") != value.contains("result_handle"));
+    } else fields(value, {"action", "result_id"}, {"request_key"});
     if (save) {
       auto full_path = wide(value.at("path"), limits.max_path_utf16_units);
       path(full_path, limits);
@@ -427,6 +440,10 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
         result.payload = SaveRequest{ResultSelection::specific(
             id(value.at("result_id"))), std::move(full_path), overwrite};
       }
+    } else if (opaque_consumer && value.contains("result_handle")) {
+      result.payload = CopyRequest{ResultSelection::current()};
+      result.result_handle = ResultHandle{string(value.at("result_handle"),
+          limits.max_opaque_handle_bytes, false)};
     } else {
       const auto selection = ResultSelection::specific(id(value.at("result_id")));
       if (name == "copy") result.payload = CopyRequest{selection};

@@ -26,6 +26,7 @@ class ResultActionService final {
   using SaveTransaction = std::function<ActionResult(
       const Image&, ResultId, const std::wstring&, bool,
       CommitAuthorization)>;
+  using CopyTransaction = std::function<ActionResult(const Image&)>;
   struct PreparedSave {
     ResultLease lease;
     std::wstring absolute_path;
@@ -40,7 +41,8 @@ class ResultActionService final {
                       PinManager& pin_manager, SaveDialog save_dialog = {},
                       InteractionGate* gate = nullptr,
                       SavePolicy* save_policy = nullptr,
-                      SaveTransaction save_transaction = {});
+                      SaveTransaction save_transaction = {},
+                      CopyTransaction copy_transaction = {});
 
   void setOwnerWindow(HWND owner_window) noexcept;
   void bindPinWindowActions();
@@ -50,7 +52,13 @@ class ResultActionService final {
   ActionResult save(ResultId result_id);
   ActionResult pin(ResultId result_id);
   ActionResult copy(ResultScopeId scope, const ResultSelection& selection,
-                    const InteractionGate::Guard* owner = nullptr);
+                    const InteractionGate::Guard* owner = nullptr,
+                    CommitAuthorization authorize_commit = {});
+  // AutomationEndpoint already owns the shared interaction admission while
+  // this method acquires the scoped result and commits the clipboard write.
+  ActionResult copyAdmitted(ResultScopeId scope,
+                            const ResultSelection& selection,
+                            CommitAuthorization authorize_commit);
   ActionResult save(ResultScopeId scope, const ResultSelection& selection,
                     const std::wstring& path,
                     const InteractionGate::Guard* owner = nullptr,
@@ -70,7 +78,8 @@ class ResultActionService final {
   ActionResult executeSave(PreparedSave task);
 
  private:
-  ActionResult copyImage(const Image& image);
+  ActionResult copyImage(const Image& image, ResultId result_id,
+                         CommitAuthorization authorize_commit = {});
   ActionResult saveImage(const Image& image, ResultId result_id,
                          const std::wstring& path, bool overwrite,
                          CommitAuthorization authorize_commit = {});
@@ -91,6 +100,7 @@ class ResultActionService final {
   InteractionGate& gate_;
   SavePolicy* save_policy_{nullptr};
   SaveTransaction save_transaction_;
+  CopyTransaction copy_transaction_;
 };
 
 }  // namespace qingying

@@ -289,12 +289,20 @@ inline ActionValidationResult validateAutomationRequest(
                                        type == ActionType::Copy ||
                                        type == ActionType::Pin;
           if (payload.result_handle) {
-            const bool handle_target = type == ActionType::Save &&
+            const bool handle_target =
+                (type == ActionType::Save || type == ActionType::Copy) &&
                 payload.result_handle->valid() &&
                 payload.result_handle->value.size() <= limits.max_opaque_handle_bytes;
-            const auto* save = std::get_if<SaveRequest>(&payload.payload);
-            if (!handle_target || save == nullptr ||
-                save->result.kind != ResultSelectionKind::Current) {
+            const bool current_target = std::visit([](const auto& action) {
+              using Action = std::decay_t<decltype(action)>;
+              if constexpr (std::is_same_v<Action, SaveRequest> ||
+                            std::is_same_v<Action, CopyRequest>) {
+                return action.result.kind == ResultSelectionKind::Current;
+              } else {
+                return false;
+              }
+            }, payload.payload);
+            if (!handle_target || !current_target) {
               return {false, "invalid result handle or simultaneous numeric target"};
             }
           }

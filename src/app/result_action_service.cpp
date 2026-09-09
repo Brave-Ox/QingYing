@@ -21,6 +21,29 @@ ActionResult savePrepared() {
   return result;
 }
 
+ActionResult copyCancelled() {
+  ActionResult result;
+  result.error_code = ErrorCode::kCancelled;
+  result.message = "copy cancelled before clipboard commit";
+  return result;
+}
+
+ActionResult resultUnavailable(const ResultStore& results, ResultScopeId scope,
+                               const ResultSelection& selection,
+                               const char* action) {
+  if (selection.kind != ResultSelectionKind::Explicit)
+  {
+    ActionResult result;
+    result.error_code = ErrorCode::kNotReady;
+    result.message = std::string("no capture result to ") + action;
+    return result;
+  }
+  ActionResult result;
+  result.error_code = results.resultStatus(scope, selection.result_id);
+  result.message = std::string(errorCodeSymbol(result.error_code));
+  return result;
+}
+
 }  // namespace
 
 ResultActionService::ResultActionService(ResultStore& results,
@@ -28,12 +51,14 @@ ResultActionService::ResultActionService(ResultStore& results,
                                          PinManager& pin_manager, SaveDialog save_dialog,
                                          InteractionGate* gate,
                                          SavePolicy* save_policy,
-                                         SaveTransaction save_transaction)
+                                         SaveTransaction save_transaction,
+                                         CopyTransaction copy_transaction)
     : results_(results),
       export_service_(export_service),
       pin_manager_(pin_manager), save_dialog_(std::move(save_dialog)),
       gate_(gate ? *gate : local_gate_), save_policy_(save_policy),
-      save_transaction_(std::move(save_transaction)) {}
+      save_transaction_(std::move(save_transaction)),
+      copy_transaction_(std::move(copy_transaction)) {}
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
@@ -43,7 +68,7 @@ void ResultActionService::bindPinWindowActions() {
   pin_manager_.setActionCallbacks(
       [this](const Image& image) {
         auto guard = gate_.acquire(InteractionKind::Copy);
-        return guard ? copyImage(image) : unavailable();
+        return guard ? copyImage(image, kInvalidResultId) : unavailable();
       },
       [this](const Image& image) {
         return savePinImage(image);
@@ -64,11 +89,22 @@ ActionResult ResultActionService::pin(ResultId id) {
 }
 ActionResult ResultActionService::copy(
     ResultScopeId scope, const ResultSelection& selection,
-    const InteractionGate::Guard* owner) {
+    const InteractionGate::Guard* owner,
+    CommitAuthorization authorize_commit) {
   auto guard = gate_.acquire(InteractionKind::Copy, owner);
   if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
-  return lease ? copyImage(*lease.image()) : noResult("copy");
+  return lease ? copyImage(*lease.image(), lease.metadata().result_id,
+                           std::move(authorize_commit))
+               : noResult("copy");
+}
+ActionResult ResultActionService::copyAdmitted(
+    ResultScopeId scope, const ResultSelection& selection,
+    CommitAuthorization authorize_commit) {
+  const auto lease = results_.acquire(scope, selection);
+  return lease ? copyImage(*lease.image(), lease.metadata().result_id,
+                           std::move(authorize_commit))
+               : resultUnavailable(results_, scope, selection, "copy");
 }
 ActionResult ResultActionService::save(
     ResultScopeId scope, const ResultSelection& selection,
@@ -170,8 +206,16 @@ ActionResult ResultActionService::unavailable() const {
   return result;
 }
 
-ActionResult ResultActionService::copyImage(const Image& image) {
-  return export_service_.copyToClipboard(image);
+ActionResult ResultActionService::copyImage(
+    const Image& image, ResultId result_id,
+    CommitAuthorization authorize_commit) {
+  // Encoding/allocation may happen elsewhere, but no clipboard mutation is
+  // permitted until the operation has atomically crossed its commit boundary.
+  if (authorize_commit && !authorize_commit()) return copyCancelled();
+  auto result = copy_transaction_ ? copy_transaction_(image)
+                                  : export_service_.copyToClipboard(image);
+  if (result.ok) result.output = CopiedResult{result_id};
+  return result;
 }
 
 ActionResult ResultActionService::saveImage(const Image& image,

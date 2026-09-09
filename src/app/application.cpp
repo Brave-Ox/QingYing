@@ -112,7 +112,7 @@ struct Application::Impl {
             operation_registry_, scheduler_, interaction_gate_, {},
             AutomationEndpoint::ExecutionPolicy{
                 {ActionType::CaptureWindow, ActionType::CropCenter,
-                 ActionType::Save},
+                 ActionType::Copy, ActionType::Save},
                 [this] { export_executor_.shutdown(); }, false}),
         automation_runtime_(automation_endpoint_, scheduler_, [this] {
           ipc::PipeOptions options;

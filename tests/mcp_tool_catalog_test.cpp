@@ -4,7 +4,7 @@ using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
 TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
-  ASSERT_EQ(tools().size(), 7);
+  ASSERT_EQ(tools().size(), 8);
   for (const auto& tool : tools()) {
     const auto descriptor = tool.descriptor({});
     EXPECT_EQ(descriptor["name"], tool.name);
@@ -13,6 +13,8 @@ TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
         ? Json{{"query", "Editor"}}
         : tool.kind == ToolKind::CropCenter
         ? Json{{"width", 32}, {"height", 24}}
+        : tool.kind == ToolKind::Copy
+            ? Json{{"result_id", "opaque_123"}}
         : tool.kind == ToolKind::Save
             ? Json{{"result_id", "opaque_123"}, {"path", "C:\\shots"},
                    {"name", "capture.png"}}
@@ -27,7 +29,7 @@ TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
   EXPECT_NE(findTool("save"), nullptr);
   EXPECT_EQ(findTool("capture_region"), nullptr);
   EXPECT_NE(findTool("capture_window"), nullptr);
-  EXPECT_EQ(findTool("copy"), nullptr);
+  EXPECT_NE(findTool("copy"), nullptr);
   EXPECT_EQ(findTool("pin"), nullptr);
   EXPECT_EQ(findTool("longshot_select"), nullptr);
 }
@@ -84,7 +86,24 @@ TEST(McpToolCatalogTest, SaveRequiresOpaqueResultDirectoryAndPngName) {
       {"name", "x.png"}, {"extra", true}}, 1, {}), std::invalid_argument);
 }
 
-TEST(McpToolCatalogTest, CaptureAndSaveOutputsExposeOnlyOpaqueIds) {
+TEST(McpToolCatalogTest, CopyRequiresOpaqueResultAndSupportsIdempotencyKey) {
+  const auto* copy = findTool("copy"); ASSERT_NE(copy, nullptr);
+  const auto schema = copy->descriptor({})["inputSchema"];
+  EXPECT_EQ(schema["required"], Json{"result_id"});
+  auto request = copy->decode({{"result_id", "owned"},
+                               {"request_key", "copy-once"}}, 8, {});
+  const auto& execute = std::get<ExecuteActionRequest>(request.payload);
+  EXPECT_EQ(std::get<CopyRequest>(execute.payload).result.kind,
+            ResultSelectionKind::Current);
+  ASSERT_TRUE(execute.result_handle);
+  EXPECT_EQ(execute.result_handle->value, "owned");
+  EXPECT_EQ(execute.request_key, "copy-once");
+  EXPECT_THROW(copy->decode(Json::object(), 1, {}), std::invalid_argument);
+  EXPECT_THROW(copy->decode({{"result_id", "owned"}, {"extra", true}}, 1, {}),
+               std::invalid_argument);
+}
+
+TEST(McpToolCatalogTest, CaptureCopyAndSaveOutputsExposeOnlyOpaqueIds) {
   AutomationResponse capture;
   capture.result.ok = true; capture.result.error_code = ErrorCode::kOk;
   capture.result.request_id = 1; capture.result.operation_id = 2;
@@ -95,6 +114,16 @@ TEST(McpToolCatalogTest, CaptureAndSaveOutputsExposeOnlyOpaqueIds) {
       {{"width", 10}, {"height", 8}}, {});
   EXPECT_EQ(output["structuredContent"]["result_id"], "result-owned");
   EXPECT_EQ(output["structuredContent"]["operation_id"], "capture-operation");
+  EXPECT_EQ(output.dump().find("\"result_id\":17"), std::string::npos);
+
+  AutomationResponse copied;
+  copied.result.ok = true; copied.result.error_code = ErrorCode::kOk;
+  copied.result.output = CopiedResult{17};
+  copied.operation_handle = OperationHandle{"copy-operation"};
+  output = findTool("copy")->encode(copied,
+      {{"result_id", "result-owned"}}, {});
+  EXPECT_EQ(output["structuredContent"]["result_id"], "result-owned");
+  EXPECT_EQ(output["structuredContent"]["operation_id"], "copy-operation");
   EXPECT_EQ(output.dump().find("\"result_id\":17"), std::string::npos);
 
   AutomationResponse saved;

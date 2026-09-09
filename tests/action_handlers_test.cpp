@@ -5,12 +5,26 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/pin/pin_manager.hpp"
+#include "qingying/automation/automation_contract.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <utility>
 #include <vector>
+
+namespace {
+class CopyCommitControl final : public qingying::IOperationControl {
+ public:
+  explicit CopyCommitControl(bool allow) : allow_(allow) {}
+  bool requestCancel(qingying::AbortReason) override { return false; }
+  bool tryCommit() override { ++commit_calls; return allow_; }
+  qingying::OperationControlStatus status() override { return {}; }
+  int commit_calls{0};
+ private:
+  bool allow_;
+};
+}  // namespace
 
 TEST(AppActionHandlersTest, RegistersP0Handlers) {
   qingying::ActionDispatcher dispatcher;
@@ -50,6 +64,45 @@ TEST(AppActionHandlersTest, RegistersP0Handlers) {
   const qingying::ActionResult pin_result = dispatcher.dispatch(pin);
   EXPECT_FALSE(pin_result.ok);
   EXPECT_EQ(pin_result.error_code, qingying::ErrorCode::kNotReady);
+}
+
+TEST(AppActionHandlersTest, CopyHandlerUsesOperationCommitBeforeClipboardWrite) {
+  using namespace qingying;
+  ActionDispatcher dispatcher;
+  CaptureEngine capture;
+  ExportService exporter;
+  ResultStore store;
+  PinManager pins;
+  InteractionGate gate;
+  CaptureService capture_service(capture, store, pins, gate);
+  int writes = 0;
+  ResultActionService actions(store, exporter, pins, {}, nullptr, nullptr, {},
+      [&](const Image&) {
+        ++writes;
+        ActionResult result;
+        result.ok = true;
+        result.error_code = ErrorCode::kOk;
+        return result;
+      });
+  registerAppHandlers(dispatcher, capture_service, store, actions);
+  constexpr ResultScopeId scope = 9;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+
+  auto denied = std::make_shared<CopyCommitControl>(false);
+  ActionRequest request{CopyRequest{ResultSelection::specific(id)}};
+  request.context.result_scope = scope;
+  request.operation_control = denied;
+  EXPECT_EQ(dispatcher.dispatch(request).error_code, ErrorCode::kCancelled);
+  EXPECT_EQ(denied->commit_calls, 1);
+  EXPECT_EQ(writes, 0);
+
+  auto allowed = std::make_shared<CopyCommitControl>(true);
+  request.operation_control = allowed;
+  const auto copied = dispatcher.dispatch(request);
+  EXPECT_TRUE(copied.ok);
+  EXPECT_EQ(allowed->commit_calls, 1);
+  EXPECT_EQ(writes, 1);
+  EXPECT_EQ(std::get<CopiedResult>(copied.output).result_id, id);
 }
 
 TEST(AppActionHandlersTest, SuccessfulCapturePublishesExplicitResult) {

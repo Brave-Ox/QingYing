@@ -4,7 +4,7 @@
 #include <array>
 namespace qingying::mcp {
 using Json = nlohmann::json;
-enum class ToolKind { Status, CaptureWindow, CropCenter, Save, GetOperation, CancelOperation, ReleaseResult };
+enum class ToolKind { Status, CaptureWindow, CropCenter, Copy, Save, GetOperation, CancelOperation, ReleaseResult };
 struct Tool {
   const char* name;
   const char* description;
@@ -14,7 +14,7 @@ struct Tool {
   AutomationRequest decode(const Json& arguments, RequestId id, const AutomationLimits& limits) const;
   Json encode(const AutomationResponse& response, const Json& arguments, const AutomationLimits& limits) const;
 };
-const std::array<Tool, 7>& tools();
+const std::array<Tool, 8>& tools();
 const Tool* findTool(const std::string& name);
 Json toolFailure(int code, const std::string& message);
 }  // namespace qingying::mcp

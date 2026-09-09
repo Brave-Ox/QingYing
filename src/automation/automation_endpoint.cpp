@@ -179,9 +179,11 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
   if (action && action->result_handle) {
     const auto resolved = registry_.resolveResult(context, *action->result_handle);
     if (!resolved) { reply(responseWith(ErrorCode::kResultNotFound)); return; }
-    auto* save = std::get_if<SaveRequest>(&action->payload);
-    if (!save) { reply(responseWith(ErrorCode::kInvalidArgument)); return; }
-    save->result = ResultSelection::specific(*resolved);
+    if (auto* save = std::get_if<SaveRequest>(&action->payload))
+      save->result = ResultSelection::specific(*resolved);
+    else if (auto* copy = std::get_if<CopyRequest>(&action->payload))
+      copy->result = ResultSelection::specific(*resolved);
+    else { reply(responseWith(ErrorCode::kInvalidArgument)); return; }
     action->result_handle.reset();
     if (!validateAutomationRequest(resolved_request, limits_).valid) {
       reply(responseWith(ErrorCode::kInvalidArgument)); return;
