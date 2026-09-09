@@ -22,6 +22,10 @@ constexpr int kPhotoLeft = 80;
 constexpr int kPhotoTop = 40;
 constexpr int kPhotoRight = 320;
 constexpr int kPhotoBottom = 260;
+constexpr int kSmallControlLeft = 80;
+constexpr int kSmallControlTop = 100;
+constexpr int kSmallControlRight = 156;
+constexpr int kSmallControlBottom = 130;
 
 Image makeSidebarImage()
 {
@@ -131,6 +135,46 @@ Image makeShortRowInWideOwnerImage()
   return image;
 }
 
+Image makeWideRowOutsideLocalSampleImage()
+{
+  Image image;
+  image.width = 1600;
+  image.height = 900;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 300; y < 346; ++y)
+  {
+    for (int x = 200; x < 1400; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
+Image makeCardClippedByImageBounds()
+{
+  Image image;
+  image.width = 400;
+  image.height = 300;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 60; y < 240; ++y)
+  {
+    for (int x = 0; x < 200; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
 Image makeWeakBoundaryCardImage()
 {
   Image image;
@@ -169,6 +213,37 @@ Image makeTextGlyphImage()
       image.pixels[static_cast<std::size_t>(y) *
                        static_cast<std::size_t>(image.width) +
                    static_cast<std::size_t>(x)] = 0xFF202020u;
+    }
+  }
+  return image;
+}
+
+Image makeSmallRoundedControlImage(std::uint32_t background_pixel,
+                                   std::uint32_t control_pixel)
+{
+  Image image;
+  image.width = 240;
+  image.height = 180;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      background_pixel);
+  constexpr int CornerInset = 4;
+  for (int y = kSmallControlTop; y < kSmallControlBottom; ++y)
+  {
+    for (int x = kSmallControlLeft; x < kSmallControlRight; ++x)
+    {
+      const bool inside_horizontal_center =
+          x >= kSmallControlLeft + CornerInset &&
+          x < kSmallControlRight - CornerInset;
+      const bool inside_vertical_center =
+          y >= kSmallControlTop + CornerInset &&
+          y < kSmallControlBottom - CornerInset;
+      if (inside_horizontal_center || inside_vertical_center)
+      {
+        image.pixels.at(static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(image.width) +
+                        static_cast<std::size_t>(x)) = control_pixel;
+      }
     }
   }
   return image;
@@ -300,6 +375,34 @@ TEST(VisualRegionLocatorTest, FindsShortRowInsideWideOwner)
   EXPECT_EQ(result.bottom, 346);
 }
 
+TEST(VisualRegionLocatorTest,
+     FindsWideRowWhoseSidesAreOutsideLocalSampleBounds)
+{
+  const Image image = makeWideRowOutsideLocalSampleImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 323}, result));
+  EXPECT_EQ(result.left, 200);
+  EXPECT_EQ(result.top, 300);
+  EXPECT_EQ(result.right, 1400);
+  EXPECT_EQ(result.bottom, 346);
+}
+
+TEST(VisualRegionLocatorTest, RejectsImageClipAsMissingOwnerBoundary)
+{
+  const Image image = makeCardClippedByImageBounds();
+  const WindowRect image_screen_rect{100, 0, 500, image.height};
+  const WindowRect owner_client_rect{0, 0, 500, image.height};
+  WindowRect result;
+
+  EXPECT_FALSE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {160, 150}, result));
+  EXPECT_TRUE(result.empty());
+}
+
 TEST(VisualRegionLocatorTest, FindsCardWithWeakButContinuousBoundaries)
 {
   const Image image = makeWeakBoundaryCardImage();
@@ -325,6 +428,63 @@ TEST(VisualRegionLocatorTest, RejectsTextGlyphsAsRegionBoundaries)
   EXPECT_FALSE(window_detail::findVisualRegion(
       image, image_screen_rect, owner_client_rect, {168, 138}, result));
   EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     FindsSmallRoundedWeakContrastControlOnLightBackground)
+{
+  constexpr std::uint32_t LightControlPixel = 0xFFF2F2F2u;
+  const Image image = makeSmallRoundedControlImage(
+      kPagePixel, LightControlPixel);
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {118, 115}, result));
+  EXPECT_EQ(result.left, kSmallControlLeft);
+  EXPECT_EQ(result.top, kSmallControlTop);
+  EXPECT_EQ(result.right, kSmallControlRight);
+  EXPECT_EQ(result.bottom, kSmallControlBottom);
+}
+
+TEST(VisualRegionLocatorTest,
+     FindsSmallRoundedWeakContrastControlOnDarkBackground)
+{
+  constexpr std::uint32_t DarkBackgroundPixel = 0xFF202020u;
+  constexpr std::uint32_t DarkControlPixel = 0xFF262626u;
+  const Image image = makeSmallRoundedControlImage(
+      DarkBackgroundPixel, DarkControlPixel);
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {118, 115}, result));
+  EXPECT_EQ(result.left, kSmallControlLeft);
+  EXPECT_EQ(result.top, kSmallControlTop);
+  EXPECT_EQ(result.right, kSmallControlRight);
+  EXPECT_EQ(result.bottom, kSmallControlBottom);
+}
+
+TEST(VisualRegionLocatorTest,
+     SmallRoundedControlProducesASelectableVisualCandidate)
+{
+  constexpr std::uint32_t LightControlPixel = 0xFFF2F2F2u;
+  const Image image = makeSmallRoundedControlImage(
+      kPagePixel, LightControlPixel);
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::findVisualRegionCandidate(
+      image, image_screen_rect, owner_client_rect, {118, 115}, 1,
+      candidate, nullptr));
+  EXPECT_EQ(candidate.rect.left, kSmallControlLeft);
+  EXPECT_EQ(candidate.rect.top, kSmallControlTop);
+  EXPECT_EQ(candidate.rect.right, kSmallControlRight);
+  EXPECT_EQ(candidate.rect.bottom, kSmallControlBottom);
+  EXPECT_GE(candidate.visual_confidence, 70);
 }
 
 TEST(VisualRegionLocatorTest, RejectsUniformBackground)

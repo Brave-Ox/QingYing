@@ -12,12 +12,19 @@ namespace {
 
 constexpr int kMinimumRegionWidth = 48;
 constexpr int kMinimumRegionHeight = 36;
+constexpr int kMinimumCompactRegionWidth = 24;
+constexpr int kMinimumCompactRegionHeight = 20;
+constexpr int kMaximumCompactRegionWidth = 320;
+constexpr int kMaximumCompactRegionHeight = 160;
 constexpr int kMaximumSearchDistance = 640;
 constexpr int kSampleStride = 4;
 constexpr int kMinimumSamples = 8;
+constexpr int kMinimumCompactSamples = 4;
 constexpr int kEdgeColorDifference = 36;
+constexpr int kWeakEdgeColorDifference = 18;
 constexpr int kRequiredEdgeCoveragePercent = 60;
 constexpr int kLocalProbeHalfExtent = 96;
+constexpr int kCompactProbeHalfExtent = 12;
 constexpr std::int64_t kMaximumRegionPercent = 85;
 constexpr std::size_t kMaximumConfirmedBoundaries = 3;
 constexpr std::size_t kMaximumBoundaryCandidates =
@@ -78,15 +85,19 @@ bool valid(const SearchBounds& bounds) noexcept
   return bounds.right > bounds.left && bounds.bottom > bounds.top;
 }
 
-SearchBounds localProbeBounds(const SearchBounds& bounds,
-                              POINT point) noexcept
+SearchBounds localSampleBounds(const SearchBounds& available_bounds,
+                               POINT point) noexcept
 {
   const int point_x = static_cast<int>(point.x);
   const int point_y = static_cast<int>(point.y);
-  return {(std::max)(bounds.left, point_x - kLocalProbeHalfExtent),
-          (std::max)(bounds.top, point_y - kLocalProbeHalfExtent),
-          (std::min)(bounds.right, point_x + kLocalProbeHalfExtent),
-          (std::min)(bounds.bottom, point_y + kLocalProbeHalfExtent)};
+  return {(std::max)(available_bounds.left,
+                     point_x - kLocalProbeHalfExtent),
+          (std::max)(available_bounds.top,
+                     point_y - kLocalProbeHalfExtent),
+          (std::min)(available_bounds.right,
+                     point_x + kLocalProbeHalfExtent),
+          (std::min)(available_bounds.bottom,
+                     point_y + kLocalProbeHalfExtent)};
 }
 
 std::uint32_t pixelAt(const Image& image,
@@ -109,18 +120,21 @@ int channelDifference(std::uint32_t left, std::uint32_t right,
                                        : right_channel - left_channel;
 }
 
-bool isStrongEdge(std::uint32_t left, std::uint32_t right) noexcept
+bool hasColorDifference(std::uint32_t left, std::uint32_t right,
+                        int minimum_difference) noexcept
 {
   const int difference = channelDifference(left, right, 0) +
                          channelDifference(left, right, 8) +
                          channelDifference(left, right, 16);
-  return difference >= kEdgeColorDifference;
+  return difference >= minimum_difference;
 }
 
 int verticalEdgeCoverage(const Image& image,
                          const WindowRect& image_screen_rect,
                          const SearchBounds& bounds, int screen_x,
-                         int sample_top, int sample_bottom) noexcept
+                         int sample_top, int sample_bottom,
+                         int minimum_difference = kEdgeColorDifference,
+                         int minimum_samples = kMinimumSamples) noexcept
 {
   if (screen_x <= bounds.left || screen_x >= bounds.right ||
       sample_bottom <= sample_top)
@@ -133,19 +147,23 @@ int verticalEdgeCoverage(const Image& image,
   for (int y = sample_top; y < sample_bottom; y += kSampleStride)
   {
     ++samples;
-    if (isStrongEdge(pixelAt(image, image_screen_rect, screen_x - 1, y),
-                     pixelAt(image, image_screen_rect, screen_x, y)))
+    if (hasColorDifference(
+            pixelAt(image, image_screen_rect, screen_x - 1, y),
+            pixelAt(image, image_screen_rect, screen_x, y),
+            minimum_difference))
     {
       ++edge_samples;
     }
   }
-  return samples >= kMinimumSamples ? edge_samples * 100 / samples : 0;
+  return samples >= minimum_samples ? edge_samples * 100 / samples : 0;
 }
 
 int horizontalEdgeCoverage(const Image& image,
                            const WindowRect& image_screen_rect,
                            const SearchBounds& bounds, int screen_y,
-                           int sample_left, int sample_right) noexcept
+                           int sample_left, int sample_right,
+                           int minimum_difference = kEdgeColorDifference,
+                           int minimum_samples = kMinimumSamples) noexcept
 {
   if (screen_y <= bounds.top || screen_y >= bounds.bottom ||
       sample_right <= sample_left)
@@ -158,19 +176,22 @@ int horizontalEdgeCoverage(const Image& image,
   for (int x = sample_left; x < sample_right; x += kSampleStride)
   {
     ++samples;
-    if (isStrongEdge(pixelAt(image, image_screen_rect, x, screen_y - 1),
-                     pixelAt(image, image_screen_rect, x, screen_y)))
+    if (hasColorDifference(
+            pixelAt(image, image_screen_rect, x, screen_y - 1),
+            pixelAt(image, image_screen_rect, x, screen_y),
+            minimum_difference))
     {
       ++edge_samples;
     }
   }
-  return samples >= kMinimumSamples ? edge_samples * 100 / samples : 0;
+  return samples >= minimum_samples ? edge_samples * 100 / samples : 0;
 }
 
 int colorRangeConsistency(const Image& image,
                           const WindowRect& image_screen_rect,
                           bool vertical, int fixed_coordinate, int begin,
-                          int end) noexcept
+                          int end,
+                          int minimum_samples = kMinimumSamples) noexcept
 {
   int minimum[3] = {255, 255, 255};
   int maximum[3] = {0, 0, 0};
@@ -191,7 +212,7 @@ int colorRangeConsistency(const Image& image,
     }
     ++samples;
   }
-  if (samples < kMinimumSamples)
+  if (samples < minimum_samples)
   {
     return 0;
   }
@@ -234,7 +255,9 @@ void retainBoundary(BoundaryCandidates& candidates,
 BoundaryCandidates collectVerticalBoundaries(
     const Image& image, const WindowRect& image_screen_rect,
     const SearchBounds& bounds, POINT point, int sample_top,
-    int sample_bottom, bool search_left) noexcept
+    int sample_bottom, bool search_left,
+    int minimum_difference = kEdgeColorDifference,
+    int minimum_samples = kMinimumSamples) noexcept
 {
   BoundaryCandidates candidates;
   const int point_x = static_cast<int>(point.x);
@@ -249,7 +272,8 @@ BoundaryCandidates collectVerticalBoundaries(
   for (int x = start; search_left ? x >= limit : x <= limit; x += step)
   {
     const int coverage = verticalEdgeCoverage(
-        image, image_screen_rect, bounds, x, sample_top, sample_bottom);
+        image, image_screen_rect, bounds, x, sample_top, sample_bottom,
+        minimum_difference, minimum_samples);
     const bool strong = coverage >= kRequiredEdgeCoveragePercent;
     if (strong && !inside_edge)
     {
@@ -258,7 +282,8 @@ BoundaryCandidates collectVerticalBoundaries(
       const int consistency =
           exterior_x > bounds.left && exterior_x < bounds.right
               ? colorRangeConsistency(image, image_screen_rect, true,
-                                      exterior_x, sample_top, sample_bottom)
+                                      exterior_x, sample_top, sample_bottom,
+                                      minimum_samples)
               : 0;
       retainBoundary(candidates, {x, coverage, consistency, true});
     }
@@ -273,7 +298,9 @@ BoundaryCandidates collectVerticalBoundaries(
 BoundaryCandidates collectHorizontalBoundaries(
     const Image& image, const WindowRect& image_screen_rect,
     const SearchBounds& bounds, POINT point, int sample_left,
-    int sample_right, bool search_top) noexcept
+    int sample_right, bool search_top,
+    int minimum_difference = kEdgeColorDifference,
+    int minimum_samples = kMinimumSamples) noexcept
 {
   BoundaryCandidates candidates;
   const int point_y = static_cast<int>(point.y);
@@ -288,7 +315,8 @@ BoundaryCandidates collectHorizontalBoundaries(
   for (int y = start; search_top ? y >= limit : y <= limit; y += step)
   {
     const int coverage = horizontalEdgeCoverage(
-        image, image_screen_rect, bounds, y, sample_left, sample_right);
+        image, image_screen_rect, bounds, y, sample_left, sample_right,
+        minimum_difference, minimum_samples);
     const bool strong = coverage >= kRequiredEdgeCoveragePercent;
     if (strong && !inside_edge)
     {
@@ -297,7 +325,8 @@ BoundaryCandidates collectHorizontalBoundaries(
       const int consistency =
           exterior_y > bounds.top && exterior_y < bounds.bottom
               ? colorRangeConsistency(image, image_screen_rect, false,
-                                      exterior_y, sample_left, sample_right)
+                                      exterior_y, sample_left, sample_right,
+                                      minimum_samples)
               : 0;
       retainBoundary(candidates, {y, coverage, consistency, true});
     }
@@ -317,12 +346,12 @@ std::int64_t areaOf(const WindowRect& rect) noexcept
 bool missingBoundaryIsAttachedToOwner(
     const BoundaryCandidate& left, const BoundaryCandidate& right,
     const BoundaryCandidate& top, const BoundaryCandidate& bottom,
-    const SearchBounds& bounds) noexcept
+    const WindowRect& owner_client_rect) noexcept
 {
-  return (left.confirmed || left.coordinate == bounds.left) &&
-         (right.confirmed || right.coordinate == bounds.right) &&
-         (top.confirmed || top.coordinate == bounds.top) &&
-         (bottom.confirmed || bottom.coordinate == bounds.bottom);
+  return (left.confirmed || left.coordinate == owner_client_rect.left) &&
+         (right.confirmed || right.coordinate == owner_client_rect.right) &&
+         (top.confirmed || top.coordinate == owner_client_rect.top) &&
+         (bottom.confirmed || bottom.coordinate == owner_client_rect.bottom);
 }
 
 int rectangleEvidenceScore(const BoundaryCandidate& left,
@@ -359,13 +388,19 @@ bool findVisualRegion(const Image& background,
     return false;
   }
 
-  const SearchBounds bounds = intersection(owner_client_rect, image_screen_rect);
-  if (!valid(bounds)) {
+  // available_bounds 是既属于 Owner、又存在冻结截图像素的可扫描区域。
+  // 它的边缘不一定是 Owner 边缘，不能直接作为缺失控件边界使用。
+  const SearchBounds available_bounds =
+      intersection(owner_client_rect, image_screen_rect);
+  if (!valid(available_bounds)) {
     return false;
   }
 
-  const SearchBounds local_bounds = localProbeBounds(bounds, screen_point);
-  if (!valid(local_bounds)) {
+  // local_sample_bounds 只限制边界覆盖率的采样跨度；候选边界仍可在
+  // available_bounds 中向外搜索，因此宽行和大卡片不会被局部采样裁断。
+  const SearchBounds local_sample_bounds =
+      localSampleBounds(available_bounds, screen_point);
+  if (!valid(local_sample_bounds)) {
     return false;
   }
 
@@ -376,41 +411,83 @@ bool findVisualRegion(const Image& background,
   const auto consider = [&](const BoundaryCandidates& left_candidates,
                             const BoundaryCandidates& right_candidates,
                             const BoundaryCandidates& top_candidates,
-                            const BoundaryCandidates& bottom_candidates)
+                            const BoundaryCandidates& bottom_candidates,
+                            int minimum_width, int minimum_height,
+                            bool compact_candidate)
   {
     for (std::size_t left_index = 0;
          left_index < left_candidates.count; ++left_index)
     {
-      const BoundaryCandidate& left =
+      const BoundaryCandidate& detected_left =
           left_candidates.values.at(left_index);
       for (std::size_t right_index = 0;
            right_index < right_candidates.count; ++right_index)
       {
-        const BoundaryCandidate& right =
+        const BoundaryCandidate& detected_right =
             right_candidates.values.at(right_index);
         for (std::size_t top_index = 0;
              top_index < top_candidates.count; ++top_index)
         {
-          const BoundaryCandidate& top = top_candidates.values.at(top_index);
+          const BoundaryCandidate& detected_top =
+              top_candidates.values.at(top_index);
           for (std::size_t bottom_index = 0;
                bottom_index < bottom_candidates.count; ++bottom_index)
           {
-            const BoundaryCandidate& bottom =
+            const BoundaryCandidate& detected_bottom =
                 bottom_candidates.values.at(bottom_index);
-            const WindowRect candidate{left.coordinate, top.coordinate,
-                                       right.coordinate, bottom.coordinate};
+            const WindowRect candidate{
+                detected_left.coordinate, detected_top.coordinate,
+                detected_right.coordinate, detected_bottom.coordinate};
+            if (candidate.width() < minimum_width ||
+                candidate.height() < minimum_height ||
+                (compact_candidate &&
+                 (candidate.width() > kMaximumCompactRegionWidth ||
+                  candidate.height() > kMaximumCompactRegionHeight)))
+            {
+              continue;
+            }
+
+            BoundaryCandidate left = detected_left;
+            BoundaryCandidate right = detected_right;
+            BoundaryCandidate top = detected_top;
+            BoundaryCandidate bottom = detected_bottom;
+            if (compact_candidate)
+            {
+              left.coverage = verticalEdgeCoverage(
+                  background, image_screen_rect, available_bounds,
+                  left.coordinate, candidate.top, candidate.bottom,
+                  kWeakEdgeColorDifference, kMinimumCompactSamples);
+              right.coverage = verticalEdgeCoverage(
+                  background, image_screen_rect, available_bounds,
+                  right.coordinate, candidate.top, candidate.bottom,
+                  kWeakEdgeColorDifference, kMinimumCompactSamples);
+              top.coverage = horizontalEdgeCoverage(
+                  background, image_screen_rect, available_bounds,
+                  top.coordinate, candidate.left, candidate.right,
+                  kWeakEdgeColorDifference, kMinimumCompactSamples);
+              bottom.coverage = horizontalEdgeCoverage(
+                  background, image_screen_rect, available_bounds,
+                  bottom.coordinate, candidate.left, candidate.right,
+                  kWeakEdgeColorDifference, kMinimumCompactSamples);
+              left.confirmed =
+                  left.coverage >= kRequiredEdgeCoveragePercent;
+              right.confirmed =
+                  right.coverage >= kRequiredEdgeCoveragePercent;
+              top.confirmed = top.coverage >= kRequiredEdgeCoveragePercent;
+              bottom.confirmed =
+                  bottom.coverage >= kRequiredEdgeCoveragePercent;
+            }
             const int edge_count = static_cast<int>(left.confirmed) +
                                    static_cast<int>(right.confirmed) +
                                    static_cast<int>(top.confirmed) +
                                    static_cast<int>(bottom.confirmed);
             const bool has_horizontal_pair = top.confirmed && bottom.confirmed;
             const bool has_vertical_pair = left.confirmed && right.confirmed;
-            if (edge_count < 3 ||
+            if ((compact_candidate && edge_count != 4) ||
+                (!compact_candidate && edge_count < 3) ||
                 (!has_horizontal_pair && !has_vertical_pair) ||
                 !missingBoundaryIsAttachedToOwner(left, right, top, bottom,
-                                                  bounds) ||
-                candidate.width() < kMinimumRegionWidth ||
-                candidate.height() < kMinimumRegionHeight ||
+                                                  owner_client_rect) ||
                 !contains(candidate, screen_point) ||
                 areaOf(candidate) * 100 >=
                     areaOf(owner_client_rect) * kMaximumRegionPercent)
@@ -439,12 +516,50 @@ bool findVisualRegion(const Image& background,
     }
   };
 
+  // Small controls cannot cover enough of the regular 192-pixel probe span
+  // to seed the legacy rectangle search. Probe a narrow cross around the
+  // pointer first, then validate all four edges against the candidate's real
+  // dimensions. Requiring a complete rectangle keeps glyph strokes and image
+  // texture from becoming compact candidates when the weak threshold is used.
+  const int compact_sample_top =
+      (std::max)(available_bounds.top,
+                 static_cast<int>(screen_point.y) - kCompactProbeHalfExtent);
+  const int compact_sample_bottom =
+      (std::min)(available_bounds.bottom,
+                 static_cast<int>(screen_point.y) + kCompactProbeHalfExtent +
+                     1);
+  const int compact_sample_left =
+      (std::max)(available_bounds.left,
+                 static_cast<int>(screen_point.x) - kCompactProbeHalfExtent);
+  const int compact_sample_right =
+      (std::min)(available_bounds.right,
+                 static_cast<int>(screen_point.x) + kCompactProbeHalfExtent +
+                     1);
+  const BoundaryCandidates compact_left = collectVerticalBoundaries(
+      background, image_screen_rect, available_bounds, screen_point,
+      compact_sample_top, compact_sample_bottom, true,
+      kWeakEdgeColorDifference, kMinimumCompactSamples);
+  const BoundaryCandidates compact_right = collectVerticalBoundaries(
+      background, image_screen_rect, available_bounds, screen_point,
+      compact_sample_top, compact_sample_bottom, false,
+      kWeakEdgeColorDifference, kMinimumCompactSamples);
+  const BoundaryCandidates compact_top = collectHorizontalBoundaries(
+      background, image_screen_rect, available_bounds, screen_point,
+      compact_sample_left, compact_sample_right, true,
+      kWeakEdgeColorDifference, kMinimumCompactSamples);
+  const BoundaryCandidates compact_bottom = collectHorizontalBoundaries(
+      background, image_screen_rect, available_bounds, screen_point,
+      compact_sample_left, compact_sample_right, false,
+      kWeakEdgeColorDifference, kMinimumCompactSamples);
+  consider(compact_left, compact_right, compact_top, compact_bottom,
+           kMinimumCompactRegionWidth, kMinimumCompactRegionHeight, true);
+
   const BoundaryCandidates local_left = collectVerticalBoundaries(
-      background, image_screen_rect, bounds, screen_point, local_bounds.top,
-      local_bounds.bottom, true);
+      background, image_screen_rect, available_bounds, screen_point,
+      local_sample_bounds.top, local_sample_bounds.bottom, true);
   const BoundaryCandidates local_right = collectVerticalBoundaries(
-      background, image_screen_rect, bounds, screen_point, local_bounds.top,
-      local_bounds.bottom, false);
+      background, image_screen_rect, available_bounds, screen_point,
+      local_sample_bounds.top, local_sample_bounds.bottom, false);
   for (std::size_t left_index = 0; left_index < local_left.count; ++left_index)
   {
     for (std::size_t right_index = 0; right_index < local_right.count;
@@ -458,10 +573,10 @@ bool findVisualRegion(const Image& background,
         continue;
       }
       const BoundaryCandidates top = collectHorizontalBoundaries(
-          background, image_screen_rect, bounds, screen_point,
+          background, image_screen_rect, available_bounds, screen_point,
           left.coordinate, right.coordinate, true);
       const BoundaryCandidates bottom = collectHorizontalBoundaries(
-          background, image_screen_rect, bounds, screen_point,
+          background, image_screen_rect, available_bounds, screen_point,
           left.coordinate, right.coordinate, false);
       BoundaryCandidates selected_left;
       selected_left.values.at(0) = left;
@@ -469,16 +584,17 @@ bool findVisualRegion(const Image& background,
       BoundaryCandidates selected_right;
       selected_right.values.at(0) = right;
       selected_right.count = 1;
-      consider(selected_left, selected_right, top, bottom);
+      consider(selected_left, selected_right, top, bottom,
+               kMinimumRegionWidth, kMinimumRegionHeight, false);
     }
   }
 
   const BoundaryCandidates local_top = collectHorizontalBoundaries(
-      background, image_screen_rect, bounds, screen_point, local_bounds.left,
-      local_bounds.right, true);
+      background, image_screen_rect, available_bounds, screen_point,
+      local_sample_bounds.left, local_sample_bounds.right, true);
   const BoundaryCandidates local_bottom = collectHorizontalBoundaries(
-      background, image_screen_rect, bounds, screen_point, local_bounds.left,
-      local_bounds.right, false);
+      background, image_screen_rect, available_bounds, screen_point,
+      local_sample_bounds.left, local_sample_bounds.right, false);
   for (std::size_t top_index = 0; top_index < local_top.count; ++top_index)
   {
     for (std::size_t bottom_index = 0; bottom_index < local_bottom.count;
@@ -492,18 +608,19 @@ bool findVisualRegion(const Image& background,
         continue;
       }
       const BoundaryCandidates left = collectVerticalBoundaries(
-          background, image_screen_rect, bounds, screen_point, top.coordinate,
-          bottom.coordinate, true);
+          background, image_screen_rect, available_bounds, screen_point,
+          top.coordinate, bottom.coordinate, true);
       const BoundaryCandidates right = collectVerticalBoundaries(
-          background, image_screen_rect, bounds, screen_point, top.coordinate,
-          bottom.coordinate, false);
+          background, image_screen_rect, available_bounds, screen_point,
+          top.coordinate, bottom.coordinate, false);
       BoundaryCandidates selected_top;
       selected_top.values.at(0) = top;
       selected_top.count = 1;
       BoundaryCandidates selected_bottom;
       selected_bottom.values.at(0) = bottom;
       selected_bottom.count = 1;
-      consider(left, right, selected_top, selected_bottom);
+      consider(left, right, selected_top, selected_bottom,
+               kMinimumRegionWidth, kMinimumRegionHeight, false);
     }
   }
 
