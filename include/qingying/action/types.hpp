@@ -225,8 +225,12 @@ struct CaptureRegionRequest {
   ScreenPhysicalRect region{};
 };
 
+enum class WindowMatchMode { Contains, Exact };
+
 struct CaptureWindowRequest {
   std::wstring window_query;
+  WindowMatchMode match{WindowMatchMode::Contains};
+  std::optional<std::uint32_t> process_id;
 };
 
 struct CropCenterRequest {

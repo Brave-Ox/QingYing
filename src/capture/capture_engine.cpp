@@ -220,7 +220,7 @@ ActionResult CaptureEngine::captureWindow(const std::wstring& /*query*/,
   ActionResult r;
   r.ok = false;
   r.error_code = ErrorCode::kNotImplemented;
-  r.message = "CaptureEngine::captureWindow stub";
+  r.message = "CaptureEngine::captureWindow legacy stub; use CaptureService";
   return r;
 }
 

@@ -111,7 +111,8 @@ struct Application::Impl {
         automation_endpoint_(dispatcher_, capture_workflow_, result_store_,
             operation_registry_, scheduler_, interaction_gate_, {},
             AutomationEndpoint::ExecutionPolicy{
-                {ActionType::CropCenter, ActionType::Save},
+                {ActionType::CaptureWindow, ActionType::CropCenter,
+                 ActionType::Save},
                 [this] { export_executor_.shutdown(); }, false}),
         automation_runtime_(automation_endpoint_, scheduler_, [this] {
           ipc::PipeOptions options;

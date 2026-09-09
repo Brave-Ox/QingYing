@@ -345,8 +345,15 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
     if constexpr (std::is_same_v<T, StatusRequest>) return {{"action", "status"}};
     else if constexpr (std::is_same_v<T, CaptureRegionRequest>)
       return {{"action", "capture_region"}, {"region", rectJson(value.region)}};
-    else if constexpr (std::is_same_v<T, CaptureWindowRequest>)
-      return {{"action", "capture_window"}, {"query", utf8(value.window_query, limits.max_window_query_utf16_units)}};
+    else if constexpr (std::is_same_v<T, CaptureWindowRequest>) {
+      Json window{{"action", "capture_window"},
+                  {"query", utf8(value.window_query,
+                                 limits.max_window_query_utf16_units)},
+                  {"match", value.match == WindowMatchMode::Exact
+                                ? "exact" : "contains"}};
+      if (value.process_id) window["process_id"] = *value.process_id;
+      return window;
+    }
     else if constexpr (std::is_same_v<T, CropCenterRequest>)
       return {{"action", "crop_center"}, {"width", value.width}, {"height", value.height}};
     else {
@@ -379,8 +386,22 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
   else if (name == "capture_region") {
     fields(value, {"action", "region"}); result.payload = CaptureRegionRequest{readRect(value.at("region"))};
   } else if (name == "capture_window") {
-    fields(value, {"action", "query"});
-    result.payload = CaptureWindowRequest{wide(value.at("query"), limits.max_window_query_utf16_units)};
+    fields(value, {"action", "query"}, {"match", "process_id"});
+    CaptureWindowRequest window;
+    window.window_query = wide(value.at("query"), limits.max_window_query_utf16_units);
+    if (value.contains("match")) {
+      const auto& match = string(value.at("match"), 16);
+      require(match == "contains" || match == "exact");
+      window.match = match == "exact" ? WindowMatchMode::Exact
+                                      : WindowMatchMode::Contains;
+    }
+    if (value.contains("process_id")) {
+      require(!value.at("process_id").is_null());
+      window.process_id = static_cast<std::uint32_t>(
+          uint(value.at("process_id"), UINT32_MAX));
+      require(*window.process_id != 0);
+    }
+    result.payload = std::move(window);
   } else if (name == "crop_center") {
     fields(value, {"action", "width", "height"});
     result.payload = CropCenterRequest{integer(value.at("width")), integer(value.at("height"))};

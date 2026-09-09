@@ -1,6 +1,6 @@
 # F9-10 / F9-11 MCP stdio profile
 
-实现范围固定为 **2025-11-25 / stdio**。`McpBridge` 持有一个依赖 `IAutomationClient` 的 `McpProtocolSession`；`StdioTransport` 使用继承的标准句柄运行该 bridge。公开头文件不暴露 JSON 类型。F9-11 已接通生产 `--mcp-stdio` 启动分支、Pipe 连接创建及托盘开关。
+实现范围固定为 **2025-11-25 / stdio**。`McpBridge` 持有一个依赖 `IAutomationClient` 的 `McpProtocolSession`；`StdioTransport` 使用继承的标准句柄运行该 bridge。公开头文件不暴露 JSON 类型。F9-11 已接通生产 `--mcp-stdio` 启动分支、Pipe 连接创建及托盘开关，F9-17 已开放窗口可见像素截图。
 
 ## 启动与本机开关
 
@@ -20,10 +20,11 @@
 
 ## 静态工具与句柄
 
-同一个 `Tool` 登记项提供名称、参数字段、描述、schema、decoder 和 encoder；F9-15 后目录列六项：
+同一个 `Tool` 登记项提供名称、参数字段、描述、schema、decoder 和 encoder；F9-17 后目录列七项：
 
 - status：空对象参数，返回实际状态；传输不可达时返回 reachable:false、app_running:null 和 connection_reason，未知应用字段为 null。
 - crop_center：必填正整数 width/height，按主显示器物理像素中心截图，返回不透明 result_id、operation_id、尺寸、物理边界、捕获模式和剩余有效期。
+- capture_window：必填窗口标题 query，match 为 contains（默认）或 exact，可选正整数 process_id；唯一匹配后复核窗口身份和可见边界，截取当前桌面可见像素并返回不透明 result_id、operation_id、尺寸、物理边界、visible_screen 和剩余有效期。0 匹配返回 WindowNotFound，多匹配返回 WindowAmbiguous、有限候选和 truncated；不激活、移动、恢复窗口，也不显示选区遮罩。
 - save：必填不透明 result_id、允许目录 path 和单个 PNG 文件名 name；overwrite 默认 false，request_key 可选。保存不弹对话框，实际文件事务完成后返回原 result_id、不透明 operation_id、绝对路径和 png 格式。
 - get_operation：operation_id 为非空不透明字符串，返回操作状态、进度、相对时间和结果可用性。操作本身失败不会使成功的查询变成 isError:true。
 - cancel_operation：operation_id 为不透明字符串，返回是否请求取消及当前状态。公共 schema 不接受 request_id。

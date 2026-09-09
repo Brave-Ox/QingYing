@@ -26,6 +26,20 @@ void closeHandle(HANDLE& handle) {
   if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
   handle = nullptr;
 }
+class VisibleTestWindow {
+ public:
+  explicit VisibleTestWindow(const std::wstring& title) {
+    window_ = CreateWindowExW(0, L"STATIC", title.c_str(),
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE, 120, 120, 180, 140,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (window_) UpdateWindow(window_);
+  }
+  ~VisibleTestWindow() { if (window_) DestroyWindow(window_); }
+  bool valid() const noexcept { return window_ != nullptr; }
+
+ private:
+  HWND window_{};
+};
 // Own only the child and handles created by this test. Explicit inheritance
 // prevents another bridge from keeping this bridge's stdin alive after EOF.
 class Child {
@@ -254,6 +268,33 @@ TEST_F(McpProcessIntegrationTest, CropSaveReleaseRunsThroughTheRealLocalPipe) {
   EXPECT_EQ(status["result"]["structuredContent"]["resources"]["result_bytes"], 0);
   std::error_code ignored;
   std::filesystem::remove(saved_path, ignored);
+  ASSERT_TRUE(gui.message(WM_CLOSE)); ASSERT_TRUE(gui.exited());
+}
+TEST_F(McpProcessIntegrationTest, CaptureWindowRunsThroughTheRealLocalPipe) {
+  const std::wstring title = L"QingYing F9-17 Target " +
+      std::to_wstring(GetTickCount64());
+  VisibleTestWindow target(title);
+  ASSERT_TRUE(target.valid());
+  ASSERT_TRUE(settings.setEnabled(true));
+  Child gui; ASSERT_TRUE(gui.start(args()));
+  ASSERT_TRUE(until([&] { return gui.hwnd() != nullptr; }));
+  Child bridge; ASSERT_TRUE(bridge.start(args(true))); bridge.initialize();
+
+  const auto listed = bridge.tool(2, "status", Json::object());
+  ASSERT_NE(listed.dump().find("capture_window"), std::string::npos) << listed;
+  const auto captured = bridge.tool(3, "capture_window",
+      {{"query", std::filesystem::path(title).u8string()}, {"match", "exact"},
+       {"process_id", GetCurrentProcessId()}});
+  ASSERT_FALSE(captured.empty());
+  ASSERT_FALSE(captured["result"]["isError"].get<bool>()) << captured;
+  EXPECT_EQ(captured["result"]["structuredContent"]["capture_mode"],
+            "visible_screen");
+  const auto result_id =
+      captured["result"]["structuredContent"]["result_id"];
+  ASSERT_TRUE(result_id.is_string());
+  const auto released = bridge.tool(4, "release_result",
+                                    {{"result_id", result_id}});
+  EXPECT_FALSE(released["result"]["isError"].get<bool>()) << released;
   ASSERT_TRUE(gui.message(WM_CLOSE)); ASSERT_TRUE(gui.exited());
 }
 }  // namespace

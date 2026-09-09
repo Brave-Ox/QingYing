@@ -45,6 +45,7 @@ target_link_libraries(qingying_app_handlers
   PUBLIC qingying_action
   PRIVATE
     qingying_capture
+    qingying_window
     qingying_workflow
 )
 

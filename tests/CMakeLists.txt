@@ -8,6 +8,7 @@ add_executable(qingying_tests
   async_save_handler_test.cpp
   capture_service_test.cpp
   crop_center_handler_test.cpp
+  capture_window_handler_test.cpp
   action_dispatcher_test.cpp
   action_handlers_test.cpp
   automation_contract_test.cpp

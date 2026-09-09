@@ -4,12 +4,14 @@ using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
 TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
-  ASSERT_EQ(tools().size(), 6);
+  ASSERT_EQ(tools().size(), 7);
   for (const auto& tool : tools()) {
     const auto descriptor = tool.descriptor({});
     EXPECT_EQ(descriptor["name"], tool.name);
     EXPECT_FALSE(descriptor["inputSchema"]["additionalProperties"].get<bool>());
-    Json arguments = tool.kind == ToolKind::CropCenter
+    Json arguments = tool.kind == ToolKind::CaptureWindow
+        ? Json{{"query", "Editor"}}
+        : tool.kind == ToolKind::CropCenter
         ? Json{{"width", 32}, {"height", 24}}
         : tool.kind == ToolKind::Save
             ? Json{{"result_id", "opaque_123"}, {"path", "C:\\shots"},
@@ -24,10 +26,43 @@ TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
   EXPECT_NE(findTool("crop_center"), nullptr);
   EXPECT_NE(findTool("save"), nullptr);
   EXPECT_EQ(findTool("capture_region"), nullptr);
-  EXPECT_EQ(findTool("capture_window"), nullptr);
+  EXPECT_NE(findTool("capture_window"), nullptr);
   EXPECT_EQ(findTool("copy"), nullptr);
   EXPECT_EQ(findTool("pin"), nullptr);
   EXPECT_EQ(findTool("longshot_select"), nullptr);
+}
+
+TEST(McpToolCatalogTest, CaptureWindowSchemaDecodesMatchAndPid) {
+  const auto* tool = findTool("capture_window"); ASSERT_NE(tool, nullptr);
+  const auto schema = tool->descriptor({})["inputSchema"];
+  EXPECT_EQ(schema["required"], Json{"query"});
+  auto request = tool->decode({{"query", "中文"}, {"match", "exact"},
+                              {"process_id", 42}}, 7, {});
+  const auto& window = std::get<CaptureWindowRequest>(
+      std::get<ExecuteActionRequest>(request.payload).payload);
+  EXPECT_EQ(window.window_query, L"中文");
+  EXPECT_EQ(window.match, WindowMatchMode::Exact);
+  EXPECT_EQ(window.process_id, 42u);
+  EXPECT_THROW(tool->decode({{"query", "x"}, {"match", "regex"}}, 1, {}),
+               std::invalid_argument);
+  EXPECT_THROW(tool->decode({{"query", "x"}, {"process_id", 0}}, 1, {}),
+               std::invalid_argument);
+}
+
+TEST(McpToolCatalogTest, CaptureWindowFailureExposesCandidatesWithoutNativeHandles) {
+  AutomationResponse response;
+  response.result.error_code = ErrorCode::kWindowAmbiguous;
+  response.result.message = "window query is ambiguous";
+  response.result.output = WindowCandidates{{
+      {L"Editor", 42, {1, 2, 3, 4}, "window_opaque"}}, false};
+  const auto output = findTool("capture_window")->encode(
+      response, {{"query", "Editor"}}, {});
+  EXPECT_TRUE(output["isError"]);
+  EXPECT_EQ(output["structuredContent"]["error"]["code"],
+            "WindowAmbiguous");
+  EXPECT_EQ(output["structuredContent"]["candidates"][0]["window_token"],
+            "window_opaque");
+  EXPECT_EQ(output.dump().find("native_handle"), std::string::npos);
 }
 
 TEST(McpToolCatalogTest, SaveRequiresOpaqueResultDirectoryAndPngName) {

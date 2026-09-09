@@ -20,9 +20,9 @@ class CaptureEngine {
   // On success, `out` receives the BGRA32 frame (physical pixels).
   ActionResult captureRegion(const ScreenPhysicalRect& region, Image& out);
   ActionResult captureRegion(int x, int y, int width, int height, Image& out);
+  // Legacy compatibility stubs. Window discovery, center geometry and result
+  // publication belong to CaptureService; these entries do not duplicate it.
   ActionResult captureWindow(const std::wstring& query, Image& out);
-  // Legacy compatibility stub. Center geometry and result publication belong
-  // to CaptureService; this entry does not duplicate that policy.
   ActionResult cropCenter(int width, int height, Image& out);
 
  private:

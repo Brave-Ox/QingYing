@@ -44,7 +44,8 @@ ScreenPhysicalRect primaryMonitorRect() noexcept {
 CaptureService::CaptureService(
     CaptureEngine& capture, ResultStore& results, PinManager& pins,
     InteractionGate& gate, CaptureInvoker capture_invoker,
-    PrimaryMonitorProvider primary_monitor)
+    PrimaryMonitorProvider primary_monitor,
+    WindowResolver::Catalog window_catalog)
     : capture_(capture),
       results_(results),
       pins_(pins),
@@ -57,7 +58,8 @@ CaptureService::CaptureService(
                                          }}),
       primary_monitor_(primary_monitor ? std::move(primary_monitor)
                                        : PrimaryMonitorProvider{
-                                             primaryMonitorRect}) {}
+                                             primaryMonitorRect}),
+      window_resolver_(std::move(window_catalog)) {}
 
 void CaptureService::checkThread() const {
   if (std::this_thread::get_id() != ui_thread_)
@@ -163,6 +165,29 @@ ActionResult CaptureService::cropCenter(
     return failure(ErrorCode::kInvalidArgument,
                    "crop dimensions exceed the primary monitor");
   return capture(request, *region, interaction_owner);
+}
+
+ActionResult CaptureService::captureWindow(
+    const ActionRequest& request, const CaptureWindowRequest& window,
+    const InteractionGate::Guard* interaction_owner) {
+  checkThread();
+  const auto resolved = window_resolver_.resolve(WindowQuery{
+      window.window_query,
+      window.match == WindowMatchMode::Exact ? WindowTitleMatch::Exact
+                                             : WindowTitleMatch::Contains,
+      window.process_id});
+  if (!resolved.ok() || !resolved.window) {
+    auto result = failure(resolved.error_code,
+        resolved.error_code == ErrorCode::kWindowAmbiguous
+            ? "window query is ambiguous" : "window was not found");
+    result.output = resolved.candidates;
+    return result;
+  }
+  ResolvedWindow current;
+  if (!window_resolver_.revalidate(*resolved.window, &current))
+    return failure(ErrorCode::kWindowNotFound,
+                   "window changed before capture");
+  return capture(request, current.identity.bounds, interaction_owner);
 }
 
 }  // namespace qingying

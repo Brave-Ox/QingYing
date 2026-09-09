@@ -884,16 +884,20 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-17：实现 capture_window Handler 并开放窗口截图工具
 
-**状态：未开始；前置：F9-11、F9-12、F9-16。** 建议提交：`feat(f9-17): expose visible window capture through MCP`。
+**状态：已完成（2026-09-09）；前置：F9-11、F9-12、F9-16。** 建议提交：`feat(f9-17): expose visible window capture through MCP`。
 
 **文件范围：** 修改 `include/qingying/action/types.hpp` 的 CaptureWindowRequest、`src/action/action_dispatcher.cpp` 的对应校验、`src/app/action_handlers.cpp`、CaptureService、`src/mcp/tool_catalog.cpp` 和 codec。
 
-- [ ] 将 query/match/process_id 映射到 WindowResolver；唯一匹配后在捕获前复核窗口存在、进程身份、可见性和最新边界。
-- [ ] 通过共享捕获服务执行 captureRegion 并发布到本 scope，窗口查找不放进 GDI engine；明确旧 captureWindow(query) 桩的兼容或废弃策略。
-- [ ] 非完整可见边界明确拒绝；被其他窗口遮挡仍按 visible_screen 返回实际桌面像素，不激活、移动或恢复目标，不显示选区遮罩。
-- [ ] 同提交登记 capture_window schema、capability、窗口候选错误输出；不暴露原始 HWND，不新增 PrintWindow/DXGI 后端。
+- [x] 将 query/match/process_id 映射到 WindowResolver；唯一匹配后在捕获前复核窗口存在、进程身份、可见性和最新边界。
+- [x] 通过共享捕获服务执行 captureRegion 并发布到本 scope，窗口查找不放进 GDI engine；明确旧 captureWindow(query) 桩的兼容或废弃策略。
+- [x] 非完整可见边界明确拒绝；被其他窗口遮挡仍按 visible_screen 返回实际桌面像素，不激活、移动或恢复目标，不显示选区遮罩。
+- [x] 同提交登记 capture_window schema、capability、窗口候选错误输出；不暴露原始 HWND，不新增 PrintWindow/DXGI 后端。
 
 **验收：** 新增 `tests/capture_window_handler_test.cpp`，扩展 catalog/进程集成测试；覆盖歧义、窗口消失/移动/句柄复用、Pin 隐藏恢复、scope 与失败结果语义。真实遮挡与混合 DPI 在 F9-24 验收。
+
+**完成记录：** `CaptureWindowRequest` 现携带 query、contains/exact 匹配模式和可选 PID，私有 Pipe codec 与公共 MCP schema 使用同一约束。`CaptureWindowHandler` 通过 `CaptureService` 调用 `WindowResolver`，唯一匹配后再次枚举并复核原生句柄、PID、标题和可见边界，再把边界交给共享 `captureRegion`；结果继续走连接 scope、预算预留、Pin 临时隐藏、提交权和 TTL 发布。0/多个匹配分别返回 WindowNotFound/WindowAmbiguous，歧义响应包含有限候选、truncated 和不透明 token，不序列化 HWND。生产 capability 和静态 tools/list 已加入 capture_window；旧 `CaptureEngine::captureWindow(query)` 保留为明确返回 NotImplemented 的兼容桩，避免在 GDI engine 内复制窗口发现策略。
+
+**验证记录：** 2026-09-09 新增 7 项测试，F9-17 相关 Handler、ToolCatalog、codec、resolver 和 WindowDetector 专项 53/53 通过；真实进程测试通过 GUI、stdio bridge 与认证 Named Pipe，以 exact 标题和 PID 捕获测试窗口并释放结果。完整 Release 构建成功，737/737 通过。覆盖唯一匹配、歧义候选、0 匹配、窗口移动/关闭/句柄身份变化、Pin 排除状态、结果 scope、旧结果保留、公共 schema、非法 match/PID、候选错误输出和不透明 ID；真实遮挡与混合 DPI 仍按计划留在 F9-24。
 
 ### F9-18：开放 copy 并落实剪贴板提交边界
 

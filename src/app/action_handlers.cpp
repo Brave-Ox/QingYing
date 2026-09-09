@@ -73,6 +73,23 @@ class CropCenterHandler final : public IActionHandler {
   CaptureService& capture_service_;
 };
 
+class CaptureWindowHandler final : public IActionHandler {
+ public:
+  explicit CaptureWindowHandler(CaptureService& capture_service)
+      : capture_service_(capture_service) {}
+
+  ActionType type() const override { return ActionType::CaptureWindow; }
+
+  ActionResult handle(const ActionRequest& request) override {
+    const auto* payload = std::get_if<CaptureWindowRequest>(&request.payload);
+    if (payload == nullptr) return invalidPayload("capture window");
+    return capture_service_.captureWindow(request, *payload);
+  }
+
+ private:
+  CaptureService& capture_service_;
+};
+
 class CopyHandler final : public IActionHandler {
  public:
   explicit CopyHandler(ResultStore& results, ResultActionService& result_actions)
@@ -153,6 +170,8 @@ void registerAppHandlers(ActionDispatcher& dispatcher,
       std::make_unique<CaptureRegionHandler>(capture_service));
   dispatcher.registerHandler(
       std::make_unique<CropCenterHandler>(capture_service));
+  dispatcher.registerHandler(
+      std::make_unique<CaptureWindowHandler>(capture_service));
   dispatcher.registerHandler(
       std::make_unique<CopyHandler>(results, result_actions));
   dispatcher.registerHandler(

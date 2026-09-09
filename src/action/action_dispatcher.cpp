@@ -91,7 +91,8 @@ ActionValidationResult validateActionRequest(const ActionRequest& request) {
                      : invalidRequest("capture region must be non-empty");
         } else if constexpr (std::is_same_v<Payload,
                                             CaptureWindowRequest>) {
-          return payload.window_query.empty()
+          return payload.window_query.empty() ||
+                         (payload.process_id && *payload.process_id == 0)
                      ? invalidRequest("window query is required")
                      : ActionValidationResult{true, {}};
         } else if constexpr (std::is_same_v<Payload, CropCenterRequest>) {

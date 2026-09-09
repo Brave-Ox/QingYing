@@ -169,7 +169,7 @@ TEST(AutomationWireCodecTest, FractionalBooleanNegativeOverflowAndZeroIdsAreReje
 TEST(AutomationWireCodecTest, AllActionAndControlRequestsRoundtrip) {
   for (const auto& payload : std::vector<AutomationPayload>{
       ExecuteActionRequest{}, ExecuteActionRequest{CaptureRegionRequest{{-10, 20, 30, 40}}, {}},
-      ExecuteActionRequest{CaptureWindowRequest{L"中文窗口"}, {}}, ExecuteActionRequest{CropCenterRequest{1920, 1080}, {}},
+      ExecuteActionRequest{CaptureWindowRequest{L"中文窗口", WindowMatchMode::Exact, 42}, {}}, ExecuteActionRequest{CropCenterRequest{1920, 1080}, {}},
       ExecuteActionRequest{CopyRequest{ResultSelection::specific(9)}, "copy-key"},
       ExecuteActionRequest{PinRequest{ResultSelection::specific(9)}, "pin-key"},
       ExecuteActionRequest{SaveRequest{ResultSelection::specific(9), L"D:\\图片\\截图.png"}, "save-key"},

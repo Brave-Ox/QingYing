@@ -30,6 +30,21 @@ std::wstring wide(const Json& value, std::size_t limit) {
     throw std::invalid_argument("invalid UTF-8 string");
   return output;
 }
+std::string utf8(const std::wstring& value, std::size_t limit) {
+  if (value.size() > limit || value.size() > INT_MAX)
+    throw std::invalid_argument("invalid UTF-16 string");
+  if (value.empty()) return {};
+  const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+      value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr,
+      nullptr);
+  if (bytes <= 0) throw std::invalid_argument("invalid UTF-16 string");
+  std::string output(static_cast<std::size_t>(bytes), '\0');
+  if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+      static_cast<int>(value.size()), output.data(), bytes, nullptr,
+      nullptr) != bytes)
+    throw std::invalid_argument("invalid UTF-16 string");
+  return output;
+}
 Json handleSchema(std::size_t limit) {
   return {{"type", "string"}, {"minLength", 1}, {"maxLength", limit},
           {"pattern", "^[A-Za-z0-9_-]+$"}};
@@ -38,9 +53,10 @@ Json handleSchema(std::size_t limit) {
 Json toolFailure(int code, const std::string& message) {
   return result({{"error", {{"code", std::string(errorCodeSymbol(code))}, {"message", message}}}}, true);
 }
-const std::array<Tool, 6>& tools() {
-  static const std::array<Tool, 6> catalog{{
+const std::array<Tool, 7>& tools() {
+  static const std::array<Tool, 7> catalog{{
     {"status", "Query desktop automation availability and limits", "", ToolKind::Status},
+    {"capture_window", "Capture visible desktop pixels for one matching window", "", ToolKind::CaptureWindow},
     {"crop_center", "Capture the physical center of the primary display", "", ToolKind::CropCenter},
     {"save", "Save a connection-owned result as a PNG file", "", ToolKind::Save},
     {"get_operation", "Query a connection-owned operation", "operation_id", ToolKind::GetOperation},
@@ -55,7 +71,16 @@ const Tool* findTool(const std::string& name) {
 Json Tool::descriptor(const AutomationLimits& limits) const {
   Json schema{{"type", "object"}, {"properties", Json::object()},
               {"required", Json::array()}, {"additionalProperties", false}};
-  if (kind == ToolKind::CropCenter) {
+  if (kind == ToolKind::CaptureWindow) {
+    schema["properties"] = {
+      {"query", {{"type", "string"}, {"minLength", 1},
+                 {"maxLength", limits.max_window_query_utf16_units}}},
+      {"match", {{"type", "string"}, {"enum", {"contains", "exact"}},
+                 {"default", "contains"}}},
+      {"process_id", {{"type", "integer"}, {"minimum", 1},
+                      {"maximum", UINT32_MAX}}}};
+    schema["required"] = {"query"};
+  } else if (kind == ToolKind::CropCenter) {
     schema["properties"] = {{"width", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}},
                             {"height", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}}};
     schema["required"] = {"width", "height"};
@@ -77,6 +102,40 @@ Json Tool::descriptor(const AutomationLimits& limits) const {
 }
 AutomationRequest Tool::decode(const Json& arguments, RequestId id, const AutomationLimits& limits) const {
   if (!arguments.is_object()) throw std::invalid_argument("arguments do not match inputSchema");
+  if (kind == ToolKind::CaptureWindow) {
+    if (arguments.size() < 1 || arguments.size() > 3 ||
+        !arguments.contains("query"))
+      throw std::invalid_argument("arguments do not match inputSchema");
+    for (const auto& item : arguments.items())
+      if (item.key() != "query" && item.key() != "match" &&
+          item.key() != "process_id")
+        throw std::invalid_argument("arguments do not match inputSchema");
+    CaptureWindowRequest window;
+    window.window_query = wide(arguments.at("query"),
+                               limits.max_window_query_utf16_units);
+    if (arguments.contains("match")) {
+      if (!arguments["match"].is_string())
+        throw std::invalid_argument("match must be a string");
+      const auto match = arguments["match"].get<std::string>();
+      if (match != "contains" && match != "exact")
+        throw std::invalid_argument("invalid window match mode");
+      window.match = match == "exact" ? WindowMatchMode::Exact
+                                      : WindowMatchMode::Contains;
+    }
+    if (arguments.contains("process_id")) {
+      if (!arguments["process_id"].is_number_unsigned() &&
+          !arguments["process_id"].is_number_integer())
+        throw std::invalid_argument("process_id must be an integer");
+      const auto pid = arguments["process_id"].get<std::int64_t>();
+      if (pid <= 0 || pid > UINT32_MAX)
+        throw std::invalid_argument("invalid process_id");
+      window.process_id = static_cast<std::uint32_t>(pid);
+    }
+    AutomationRequest request;
+    request.request_id = id;
+    request.payload = ExecuteActionRequest{std::move(window)};
+    return request;
+  }
   if (kind == ToolKind::CropCenter) {
     if (arguments.size() != 2 || !arguments.contains("width") || !arguments.contains("height") ||
         !arguments["width"].is_number_integer() || !arguments["height"].is_number_integer())
@@ -148,7 +207,29 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
       return result({{"reachable", false}, {"app_running", nullptr}, {"automation_enabled", nullptr},
           {"busy", nullptr}, {"limits", nullptr}, {"connection_reason", response.result.message.empty()
               ? std::string(errorCodeSymbol(response.result.error_code)) : response.result.message}}, false);
-    return toolFailure(response.result.error_code, response.result.message);
+    if (kind != ToolKind::CaptureWindow ||
+        !std::holds_alternative<WindowCandidates>(response.result.output))
+      return toolFailure(response.result.error_code, response.result.message);
+    const auto& output = std::get<WindowCandidates>(response.result.output);
+    if (output.candidates.size() > 64)
+      return toolFailure(ErrorCode::kUnknown, "Invalid window candidates");
+    Json data{{"candidates", Json::array()}, {"truncated", output.truncated},
+              {"error", {{"code", std::string(errorCodeSymbol(response.result.error_code))},
+                         {"message", response.result.message}}}};
+    for (const auto& candidate : output.candidates) {
+      if (candidate.process_id == 0 || !candidate.bounds.valid() ||
+          !opaque(Json(candidate.window_token), limits))
+        return toolFailure(ErrorCode::kUnknown, "Invalid window candidate");
+      data["candidates"].push_back({
+          {"title", utf8(candidate.title,
+                         limits.max_window_query_utf16_units)},
+          {"process_id", candidate.process_id},
+          {"bounds", {{"x", candidate.bounds.x}, {"y", candidate.bounds.y},
+                      {"width", candidate.bounds.width},
+                      {"height", candidate.bounds.height}}},
+          {"window_token", candidate.window_token}});
+    }
+    return result(std::move(data), true);
   }
   ipc::WireResponse wire; wire.response = response;
   const auto frame = ipc::encodeFrame(wire, limits);
@@ -160,6 +241,7 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
       if (!std::holds_alternative<StatusInfo>(response.result.output)) return toolFailure(ErrorCode::kUnknown, "Expected status output");
       data = serialized.at("result").at("output"); data.erase("kind"); break;
     case ToolKind::CropCenter:
+    case ToolKind::CaptureWindow:
       if (!std::holds_alternative<CapturedResult>(response.result.output) || !response.result_handle || !response.operation_handle)
         return toolFailure(ErrorCode::kUnknown, "Expected captured result handles");
       data = serialized.at("result").at("output"); data.erase("kind");

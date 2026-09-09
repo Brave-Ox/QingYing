@@ -3,6 +3,7 @@
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
 #include "qingying/app/interaction_gate.h"
+#include "qingying/window/window_resolver.h"
 
 #include <functional>
 #include <optional>
@@ -26,7 +27,8 @@ class CaptureService final {
   CaptureService(CaptureEngine& capture, ResultStore& results,
                  PinManager& pins, InteractionGate& gate,
                  CaptureInvoker capture_invoker = {},
-                 PrimaryMonitorProvider primary_monitor = {});
+                 PrimaryMonitorProvider primary_monitor = {},
+                 WindowResolver::Catalog window_catalog = {});
 
   CaptureService(const CaptureService&) = delete;
   CaptureService& operator=(const CaptureService&) = delete;
@@ -38,6 +40,9 @@ class CaptureService final {
                        const InteractionGate::Guard* interaction_owner = nullptr);
   ActionResult cropCenter(
       const ActionRequest& request, int width, int height,
+      const InteractionGate::Guard* interaction_owner = nullptr);
+  ActionResult captureWindow(
+      const ActionRequest& request, const CaptureWindowRequest& window,
       const InteractionGate::Guard* interaction_owner = nullptr);
 
   static std::optional<ScreenPhysicalRect> centeredRect(
@@ -53,6 +58,7 @@ class CaptureService final {
   InteractionGate& gate_;
   CaptureInvoker capture_invoker_;
   PrimaryMonitorProvider primary_monitor_;
+  WindowResolver window_resolver_;
   std::thread::id ui_thread_{std::this_thread::get_id()};
 };
 
