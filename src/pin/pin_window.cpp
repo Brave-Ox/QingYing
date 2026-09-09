@@ -64,7 +64,8 @@ void PinWindow::computeInitialClientSize(const Image& image, int& width,
   height = (std::max)(1, height);
 }
 
-PinWindow::PinWindow(Image image) : image_(std::move(image)) {}
+PinWindow::PinWindow(Image image, PinId pin_id, PinSource source)
+    : image_(std::move(image)), pin_id_(pin_id), source_(source) {}
 
 PinWindow::~PinWindow() {
   close();

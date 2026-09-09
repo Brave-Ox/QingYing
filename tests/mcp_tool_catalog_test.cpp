@@ -4,7 +4,7 @@ using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
 TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
-  ASSERT_EQ(tools().size(), 8);
+  ASSERT_EQ(tools().size(), 9);
   for (const auto& tool : tools()) {
     const auto descriptor = tool.descriptor({});
     EXPECT_EQ(descriptor["name"], tool.name);
@@ -14,6 +14,8 @@ TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
         : tool.kind == ToolKind::CropCenter
         ? Json{{"width", 32}, {"height", 24}}
         : tool.kind == ToolKind::Copy
+            ? Json{{"result_id", "opaque_123"}}
+        : tool.kind == ToolKind::Pin
             ? Json{{"result_id", "opaque_123"}}
         : tool.kind == ToolKind::Save
             ? Json{{"result_id", "opaque_123"}, {"path", "C:\\shots"},
@@ -30,7 +32,7 @@ TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
   EXPECT_EQ(findTool("capture_region"), nullptr);
   EXPECT_NE(findTool("capture_window"), nullptr);
   EXPECT_NE(findTool("copy"), nullptr);
-  EXPECT_EQ(findTool("pin"), nullptr);
+  EXPECT_NE(findTool("pin"), nullptr);
   EXPECT_EQ(findTool("longshot_select"), nullptr);
 }
 
@@ -101,6 +103,30 @@ TEST(McpToolCatalogTest, CopyRequiresOpaqueResultAndSupportsIdempotencyKey) {
   EXPECT_THROW(copy->decode(Json::object(), 1, {}), std::invalid_argument);
   EXPECT_THROW(copy->decode({{"result_id", "owned"}, {"extra", true}}, 1, {}),
                std::invalid_argument);
+}
+
+TEST(McpToolCatalogTest, PinRequiresOpaqueResultAndReturnsStablePinId) {
+  const auto* pin = findTool("pin"); ASSERT_NE(pin, nullptr);
+  EXPECT_EQ(pin->descriptor({})["inputSchema"]["required"], Json{"result_id"});
+  auto request = pin->decode({{"result_id", "owned"},
+                              {"request_key", "pin-once"}}, 9, {});
+  const auto& execute = std::get<ExecuteActionRequest>(request.payload);
+  EXPECT_EQ(std::get<PinRequest>(execute.payload).result.kind,
+            ResultSelectionKind::Current);
+  ASSERT_TRUE(execute.result_handle);
+  EXPECT_EQ(execute.result_handle->value, "owned");
+  EXPECT_EQ(execute.request_key, "pin-once");
+
+  AutomationResponse response;
+  response.result.ok = true;
+  response.result.error_code = ErrorCode::kOk;
+  response.result.output = PinnedResult{17, 23};
+  response.operation_handle = OperationHandle{"pin-operation"};
+  const auto output = pin->encode(response, {{"result_id", "owned"}}, {});
+  EXPECT_EQ(output["structuredContent"]["result_id"], "owned");
+  EXPECT_EQ(output["structuredContent"]["operation_id"], "pin-operation");
+  EXPECT_EQ(output["structuredContent"]["pin_id"], 23);
+  EXPECT_EQ(output.dump().find("\"result_id\":17"), std::string::npos);
 }
 
 TEST(McpToolCatalogTest, CaptureCopyAndSaveOutputsExposeOnlyOpaqueIds) {

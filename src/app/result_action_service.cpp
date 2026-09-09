@@ -188,7 +188,17 @@ ActionResult ResultActionService::pin(
   auto guard = gate_.acquire(InteractionKind::Pin, owner);
   if (!guard) return unavailable();
   const auto lease = results_.acquire(scope, selection);
-  return lease ? pinImage(*lease.image()) : noResult("pin");
+  return lease ? pinImage(*lease.image(), lease.metadata().result_id,
+                          PinSource::Gui)
+               : noResult("pin");
+}
+ActionResult ResultActionService::pinAdmitted(
+    ResultScopeId scope, const ResultSelection& selection,
+    CommitAuthorization authorize_commit) {
+  const auto lease = results_.acquire(scope, selection);
+  return lease ? pinImage(*lease.image(), lease.metadata().result_id,
+                          PinSource::Agent, std::move(authorize_commit))
+               : resultUnavailable(results_, scope, selection, "pin");
 }
 
 ActionResult ResultActionService::savePinImage(const Image& image) {
@@ -282,12 +292,21 @@ ActionResult ResultActionService::saveImageWithDialog(
   return result;
 }
 
-ActionResult ResultActionService::pinImage(const Image& image) {
-  if (!pin_manager_.show(image)) {
+ActionResult ResultActionService::pinImage(
+    const Image& image, ResultId result_id, PinSource source,
+    CommitAuthorization authorize_commit) {
+  const auto created = source == PinSource::Agent
+      ? pin_manager_.showAgent(image, std::move(authorize_commit))
+      : pin_manager_.showGui(image);
+  if (!created) {
     ActionResult result;
     result.ok = false;
-    result.error_code = ErrorCode::kUnknown;
-    result.message = "failed to create pin window";
+    result.error_code = created.error_code;
+    result.message = created.error_code == ErrorCode::kResourceLimit
+        ? "agent pin budget exceeded"
+        : created.error_code == ErrorCode::kCancelled
+        ? "pin cancelled before window commit"
+        : "failed to create pin window";
     return result;
   }
 
@@ -295,6 +314,7 @@ ActionResult ResultActionService::pinImage(const Image& image) {
   result.ok = true;
   result.error_code = ErrorCode::kOk;
   result.message = "capture pinned";
+  result.output = PinnedResult{result_id, created.pin_id};
   return result;
 }
 

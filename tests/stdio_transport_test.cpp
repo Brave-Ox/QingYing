@@ -108,7 +108,7 @@ TEST(StdioTransportTest, InitializeListAndOfflineStatusShareInheritedStream) {
       "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n"
       "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"status\"}}\n");
   EXPECT_EQ(nlohmann::json::parse(pipes.line(pipes.receive.get()))["result"]["protocolVersion"], "2025-11-25");
-  EXPECT_EQ(nlohmann::json::parse(pipes.line(pipes.receive.get()))["result"]["tools"].size(), 8);
+  EXPECT_EQ(nlohmann::json::parse(pipes.line(pipes.receive.get()))["result"]["tools"].size(), 9);
   EXPECT_EQ(nlohmann::json::parse(pipes.line(pipes.receive.get()))["result"]["structuredContent"]["reachable"], false);
   pipes.send.reset(); ASSERT_EQ(run.wait_for(2s), std::future_status::ready);
   EXPECT_TRUE(run.get()); EXPECT_EQ(bridge.clientInfo().name, "stdio-fixture");

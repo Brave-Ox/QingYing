@@ -27,6 +27,11 @@ constexpr ResultScopeId kInvalidResultScopeId = 0;
 constexpr ResultScopeId kGuiResultScopeId = 1;
 constexpr PinId kInvalidPinId = 0;
 
+enum class PinSource {
+  Gui,
+  Agent,
+};
+
 // The trusted application entry point supplies the scope. It is not a
 // client-controlled action argument; existing GUI callers keep their scope.
 struct ActionContext {

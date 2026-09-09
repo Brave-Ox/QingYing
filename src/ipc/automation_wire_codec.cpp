@@ -359,7 +359,8 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
     else {
       require(value.result.kind == ResultSelectionKind::Explicit ||
               ((std::is_same_v<T, SaveRequest> ||
-                std::is_same_v<T, CopyRequest>) && execute.result_handle &&
+                std::is_same_v<T, CopyRequest> ||
+                std::is_same_v<T, PinRequest>) && execute.result_handle &&
                value.result.kind == ResultSelectionKind::Current));
       if constexpr (std::is_same_v<T, SaveRequest>) {
         path(value.path, limits);
@@ -374,7 +375,8 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
         return save;
       } else {
         Json consumer{{"action", std::is_same_v<T, CopyRequest> ? "copy" : "pin"}};
-        if constexpr (std::is_same_v<T, CopyRequest>) {
+        if constexpr (std::is_same_v<T, CopyRequest> ||
+                      std::is_same_v<T, PinRequest>) {
           if (execute.result_handle)
             consumer["result_handle"] = textJson(execute.result_handle->value,
                 limits.max_opaque_handle_bytes, false);
@@ -416,12 +418,12 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
     result.payload = CropCenterRequest{integer(value.at("width")), integer(value.at("height"))};
   } else if (name == "copy" || name == "pin" || name == "save") {
     const bool save = name == "save";
-    const bool opaque_consumer = save || name == "copy";
+    const bool opaque_consumer = save || name == "copy" || name == "pin";
     if (save) {
       fields(value, {"action", "path"},
              {"request_key", "result_id", "result_handle", "overwrite"});
       require(value.contains("result_id") != value.contains("result_handle"));
-    } else if (name == "copy") {
+    } else if (name == "copy" || name == "pin") {
       fields(value, {"action"},
              {"request_key", "result_id", "result_handle"});
       require(value.contains("result_id") != value.contains("result_handle"));
@@ -441,7 +443,9 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
             id(value.at("result_id"))), std::move(full_path), overwrite};
       }
     } else if (opaque_consumer && value.contains("result_handle")) {
-      result.payload = CopyRequest{ResultSelection::current()};
+      result.payload = name == "copy"
+          ? ActionPayload{CopyRequest{ResultSelection::current()}}
+          : ActionPayload{PinRequest{ResultSelection::current()}};
       result.result_handle = ResultHandle{string(value.at("result_handle"),
           limits.max_opaque_handle_bytes, false)};
     } else {

@@ -137,6 +137,43 @@ TEST(ResultActionServiceTest, ExpiredExternalCopyIsRejectedBeforeClipboardWrite)
   EXPECT_EQ(expired.error_code, ErrorCode::kResultExpired);
   EXPECT_EQ(clipboard_writes, 0);
 }
+
+TEST(ResultActionServiceTest, AgentPinOwnsImageAfterResultExpiryAndRelease) {
+  auto now = std::chrono::steady_clock::now();
+  ResultStore store({}, [&] { return now; });
+  ExportService exporter;
+  PinManager pins({}, [](PinWindow&, int, int) { return true; });
+  ResultActionService actions(store, exporter, pins);
+  constexpr ResultScopeId scope = 11;
+  const auto id = store.publish(scope, Image{2, 1,
+      {0xFF010203u, 0xFF040506u}});
+  const auto pinned = actions.pinAdmitted(scope,
+      ResultSelection::specific(id), [] { return true; });
+  ASSERT_TRUE(pinned.ok);
+  const auto metadata = std::get<PinnedResult>(pinned.output);
+  EXPECT_NE(metadata.pin_id, kInvalidPinId);
+  EXPECT_TRUE(pins.contains(metadata.pin_id));
+  EXPECT_EQ(pins.source(metadata.pin_id), PinSource::Agent);
+
+  EXPECT_EQ(store.releaseResult(scope, id), ErrorCode::kOk);
+  EXPECT_FALSE(store.acquire(scope, id));
+  EXPECT_TRUE(pins.contains(metadata.pin_id));
+
+  const auto expiring_id = store.publish(scope, Image{2, 1,
+      {0xFF070809u, 0xFF0A0B0Cu}});
+  const auto expiring_pin = actions.pinAdmitted(scope,
+      ResultSelection::specific(expiring_id), [] { return true; });
+  ASSERT_TRUE(expiring_pin.ok);
+  const auto expiring_metadata = std::get<PinnedResult>(expiring_pin.output);
+  now += std::chrono::seconds{61};
+  store.sweep();
+  EXPECT_FALSE(store.acquire(scope, expiring_id));
+  EXPECT_TRUE(pins.contains(metadata.pin_id));
+  EXPECT_TRUE(pins.contains(expiring_metadata.pin_id));
+  EXPECT_EQ(pins.agentUsage().count, 2u);
+  EXPECT_EQ(pins.agentUsage().bytes, 16u);
+  pins.closeAll();
+}
 TEST(ResultActionServiceTest, CancelledDialogAllowsReentrantClearWithoutWriting) {
   ResultStore store;
   ExportService exporter;

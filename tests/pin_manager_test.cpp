@@ -95,3 +95,75 @@ TEST(PinManagerTest, NewPinsAreLaidOutWithoutOverlap) {
 
   manager.closeAll();
 }
+
+TEST(PinManagerTest, AgentPinsHaveStableIdsAndSeparateGlobalUsage) {
+  using namespace qingying;
+  PinManager manager({}, [](PinWindow&, int, int) { return true; });
+  const auto gui = manager.showGui(makeImage(1, 1));
+  const auto first = manager.showAgent(makeImage(2, 1), [] { return true; });
+  const auto second = manager.showAgent(makeImage(1, 2), [] { return true; });
+  ASSERT_TRUE(gui);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  EXPECT_NE(gui.pin_id, first.pin_id);
+  EXPECT_NE(first.pin_id, second.pin_id);
+  EXPECT_EQ(manager.source(gui.pin_id), PinSource::Gui);
+  EXPECT_EQ(manager.source(first.pin_id), PinSource::Agent);
+  EXPECT_EQ(manager.agentUsage().count, 2u);
+  EXPECT_EQ(manager.agentUsage().bytes, 16u);
+  manager.closeAll();
+  EXPECT_EQ(manager.agentUsage().count, 0u);
+  EXPECT_EQ(manager.agentUsage().bytes, 0u);
+}
+
+TEST(PinManagerTest, NinthAgentPinIsRejectedBeforeWindowCreation) {
+  using namespace qingying;
+  int presentations = 0;
+  PinManager manager({}, [&](PinWindow&, int, int) {
+    ++presentations;
+    return true;
+  });
+  for (int i = 0; i < 8; ++i)
+    ASSERT_TRUE(manager.showAgent(makeImage(1, 1), [] { return true; }));
+  const auto ninth = manager.showAgent(makeImage(1, 1), [] { return true; });
+  EXPECT_EQ(ninth.error_code, ErrorCode::kResourceLimit);
+  EXPECT_EQ(presentations, 8);
+  EXPECT_EQ(manager.agentUsage().count, 8u);
+}
+
+TEST(PinManagerTest, AgentByteLimitAndFailedCreationRefundReservation) {
+  using namespace qingying;
+  AutomationLimits limits;
+  limits.max_agent_pin_bytes = 8;
+  int presentations = 0;
+  PinManager manager(limits, [&](PinWindow&, int, int) {
+    ++presentations;
+    return presentations != 2;
+  });
+  ASSERT_TRUE(manager.showAgent(makeImage(1, 1), [] { return true; }));
+  const auto failed = manager.showAgent(makeImage(1, 1), [] { return true; });
+  EXPECT_EQ(failed.error_code, ErrorCode::kUnknown);
+  EXPECT_EQ(manager.agentUsage().count, 1u);
+  EXPECT_EQ(manager.agentUsage().bytes, 4u);
+  const auto oversized = manager.showAgent(makeImage(2, 1), [] { return true; });
+  EXPECT_EQ(oversized.error_code, ErrorCode::kResourceLimit);
+  EXPECT_EQ(presentations, 2);
+}
+
+TEST(PinManagerTest, CancellationAndRepeatedCloseRefundAtMostOnce) {
+  using namespace qingying;
+  int presentations = 0;
+  PinManager manager({}, [&](PinWindow&, int, int) {
+    ++presentations;
+    return true;
+  });
+  const auto cancelled = manager.showAgent(makeImage(1, 1), [] { return false; });
+  EXPECT_EQ(cancelled.error_code, ErrorCode::kCancelled);
+  EXPECT_EQ(presentations, 0);
+  EXPECT_EQ(manager.agentUsage().count, 0u);
+  ASSERT_TRUE(manager.showAgent(makeImage(1, 1), [] { return true; }));
+  manager.closeAll();
+  manager.closeAll();
+  EXPECT_EQ(manager.agentUsage().count, 0u);
+  EXPECT_EQ(manager.agentUsage().bytes, 0u);
+}

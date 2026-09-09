@@ -361,6 +361,26 @@ TEST(AutomationWireCodecTest, CopyOpaqueResultAndRequestKeyRoundtrip) {
   EXPECT_EQ(decoded_execute.result_handle->value, "result_owned");
   EXPECT_EQ(decoded_execute.request_key, "copy-once");
 }
+TEST(AutomationWireCodecTest, PinOpaqueResultAndRequestKeyRoundtrip) {
+  WireRequest wire;
+  wire.request.request_id = 78;
+  ExecuteActionRequest execute;
+  execute.payload = PinRequest{ResultSelection::current()};
+  execute.result_handle = ResultHandle{"result_owned"};
+  execute.request_key = "pin-once";
+  wire.request.payload = execute;
+  const auto encoded = encodeFrame(wire);
+  ASSERT_TRUE(encoded);
+  const auto decoded = decodeBody(std::string_view(encoded.bytes).substr(4));
+  ASSERT_TRUE(decoded);
+  const auto& decoded_execute = std::get<ExecuteActionRequest>(
+      std::get<WireRequest>(*decoded.message).request.payload);
+  EXPECT_EQ(std::get<PinRequest>(decoded_execute.payload).result.kind,
+            ResultSelectionKind::Current);
+  ASSERT_TRUE(decoded_execute.result_handle);
+  EXPECT_EQ(decoded_execute.result_handle->value, "result_owned");
+  EXPECT_EQ(decoded_execute.request_key, "pin-once");
+}
 TEST(AutomationWireCodecTest, RectangleArithmeticAndRelativeTimeCannotOverflow) {
   EXPECT_FALSE(decodeBody(requestWith(R"({"action":"capture_region","region":{"x":2147483647,"y":0,"width":1,"height":1}})")));
   EXPECT_FALSE(decodeBody(status, {}, (WireClock::time_point::max)()));

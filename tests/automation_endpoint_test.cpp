@@ -82,6 +82,7 @@ class AutomationEndpointTest : public ::testing::Test {
   RequestId next_request{1};
   void initialize(bool ready = false) {
     AutomationEndpoint::ExecutionPolicy policy;
+    policy.agent_pin_usage = [] { return std::make_pair(3u, 12ULL); };
     if (ready) {
       policy.ready_actions = {ActionType::Copy, ActionType::CaptureRegion};
       policy.stop_producers = [this] {
@@ -144,6 +145,8 @@ TEST_F(AutomationEndpointTest, TruthfulStatusIncludesOccupancyQueuesBudgetAndSaf
   ASSERT_TRUE(info.resources);
   EXPECT_EQ(info.resources->result_bytes, 4u);
   EXPECT_EQ(info.resources->reserved_result_bytes, 16u);
+  EXPECT_EQ(info.resources->agent_pin_count, 3u);
+  EXPECT_EQ(info.resources->agent_pin_bytes, 12u);
   ASSERT_TRUE(info.queues);
   EXPECT_EQ(info.queues->running, 1u);
   EXPECT_EQ(info.capabilities, (std::vector<std::string>{"status", "get_operation", "cancel_operation", "release_result"}));

@@ -112,8 +112,12 @@ struct Application::Impl {
             operation_registry_, scheduler_, interaction_gate_, {},
             AutomationEndpoint::ExecutionPolicy{
                 {ActionType::CaptureWindow, ActionType::CropCenter,
-                 ActionType::Copy, ActionType::Save},
-                [this] { export_executor_.shutdown(); }, false}),
+                 ActionType::Copy, ActionType::Save, ActionType::Pin},
+                [this] { export_executor_.shutdown(); }, false,
+                [this] {
+                  const auto usage = pin_manager_.agentUsage();
+                  return std::make_pair(usage.count, usage.bytes);
+                }}),
         automation_runtime_(automation_endpoint_, scheduler_, [this] {
           ipc::PipeOptions options;
           options.test_suffix = test_namespace_;

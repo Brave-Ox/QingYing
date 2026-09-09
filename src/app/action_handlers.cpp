@@ -159,7 +159,12 @@ class PinHandler final : public IActionHandler {
     if (payload == nullptr) {
       return invalidPayload("pin");
     }
-    return result_actions_.pin(request.context.result_scope, payload->result);
+    if (!request.operation_control)
+      return result_actions_.pin(request.context.result_scope, payload->result);
+    ResultActionService::CommitAuthorization authorize_commit =
+        [control = request.operation_control] { return control->tryCommit(); };
+    return result_actions_.pinAdmitted(request.context.result_scope,
+        payload->result, std::move(authorize_commit));
   }
 
  private:

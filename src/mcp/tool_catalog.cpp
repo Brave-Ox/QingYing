@@ -53,13 +53,14 @@ Json handleSchema(std::size_t limit) {
 Json toolFailure(int code, const std::string& message) {
   return result({{"error", {{"code", std::string(errorCodeSymbol(code))}, {"message", message}}}}, true);
 }
-const std::array<Tool, 8>& tools() {
-  static const std::array<Tool, 8> catalog{{
+const std::array<Tool, 9>& tools() {
+  static const std::array<Tool, 9> catalog{{
     {"status", "Query desktop automation availability and limits", "", ToolKind::Status},
     {"capture_window", "Capture visible desktop pixels for one matching window", "", ToolKind::CaptureWindow},
     {"crop_center", "Capture the physical center of the primary display", "", ToolKind::CropCenter},
     {"copy", "Copy a connection-owned result to the clipboard", "", ToolKind::Copy},
     {"save", "Save a connection-owned result as a PNG file", "", ToolKind::Save},
+    {"pin", "Create a persistent topmost window from a connection-owned result", "", ToolKind::Pin},
     {"get_operation", "Query a connection-owned operation", "operation_id", ToolKind::GetOperation},
     {"cancel_operation", "Request cancellation of a connection-owned operation", "operation_id", ToolKind::CancelOperation},
     {"release_result", "Release a connection-owned result", "result_id", ToolKind::ReleaseResult}}};
@@ -85,7 +86,7 @@ Json Tool::descriptor(const AutomationLimits& limits) const {
     schema["properties"] = {{"width", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}},
                             {"height", {{"type", "integer"}, {"minimum", 1}, {"maximum", INT_MAX}}}};
     schema["required"] = {"width", "height"};
-  } else if (kind == ToolKind::Copy) {
+  } else if (kind == ToolKind::Copy || kind == ToolKind::Pin) {
     schema["properties"] = {
       {"result_id", handleSchema(limits.max_opaque_handle_bytes)},
       {"request_key", {{"type", "string"}, {"minLength", 1},
@@ -155,7 +156,7 @@ AutomationRequest Tool::decode(const Json& arguments, RequestId id, const Automa
     request.payload = ExecuteActionRequest{CropCenterRequest{static_cast<int>(width), static_cast<int>(height)}};
     return request;
   }
-  if (kind == ToolKind::Copy) {
+  if (kind == ToolKind::Copy || kind == ToolKind::Pin) {
     if (arguments.empty() || arguments.size() > 2 ||
         !arguments.contains("result_id") ||
         !opaque(arguments.at("result_id"), limits))
@@ -173,7 +174,9 @@ AutomationRequest Tool::decode(const Json& arguments, RequestId id, const Automa
         throw std::invalid_argument("invalid request_key");
     }
     ExecuteActionRequest execute;
-    execute.payload = CopyRequest{ResultSelection::current()};
+    execute.payload = kind == ToolKind::Copy
+        ? ActionPayload{CopyRequest{ResultSelection::current()}}
+        : ActionPayload{PinRequest{ResultSelection::current()}};
     execute.request_key = std::move(key);
     execute.result_handle = ResultHandle{arguments["result_id"].get<std::string>()};
     AutomationRequest request;
@@ -264,12 +267,18 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
     }
     return result(std::move(data), true);
   }
-  if (kind == ToolKind::Copy) {
-    if (!std::holds_alternative<CopiedResult>(response.result.output) ||
+  if (kind == ToolKind::Copy || kind == ToolKind::Pin) {
+    const bool valid_output = kind == ToolKind::Copy
+        ? std::holds_alternative<CopiedResult>(response.result.output)
+        : std::holds_alternative<PinnedResult>(response.result.output);
+    if (!valid_output ||
         !response.operation_handle)
-      return toolFailure(ErrorCode::kUnknown, "Expected copied result handle");
-    return result({{"result_id", arguments.at("result_id")},
-                   {"operation_id", response.operation_handle->value}}, false);
+      return toolFailure(ErrorCode::kUnknown, "Expected result action handles");
+    Json data{{"result_id", arguments.at("result_id")},
+              {"operation_id", response.operation_handle->value}};
+    if (kind == ToolKind::Pin)
+      data["pin_id"] = std::get<PinnedResult>(response.result.output).pin_id;
+    return result(std::move(data), false);
   }
   ipc::WireResponse wire; wire.response = response;
   const auto frame = ipc::encodeFrame(wire, limits);
@@ -287,6 +296,7 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
       data = serialized.at("result").at("output"); data.erase("kind");
       data["result_id"] = response.result_handle->value; data["operation_id"] = response.operation_handle->value; break;
     case ToolKind::Copy:
+    case ToolKind::Pin:
       break;
     case ToolKind::Save:
       if (!std::holds_alternative<SavedResult>(response.result.output) || !response.operation_handle)

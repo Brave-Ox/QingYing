@@ -14,7 +14,7 @@ class PinWindow {
   using ClosedCallback = std::function<void(PinWindow*)>;
   using ImageActionCallback = std::function<ActionResult(const Image&)>;
 
-  explicit PinWindow(Image image);
+  PinWindow(Image image, PinId pin_id, PinSource source);
   ~PinWindow();
 
   PinWindow(const PinWindow&) = delete;
@@ -25,6 +25,8 @@ class PinWindow {
 
   HWND hwnd() const { return hwnd_; }
   const Image& image() const { return image_; }
+  PinId pinId() const noexcept { return pin_id_; }
+  PinSource source() const noexcept { return source_; }
 
   // 按图片比例计算钉图初始客户区尺寸（max 800x600 / min 160x120，保持宽高比）。
   // 供 PinManager 在创建前估算窗口尺寸以计算不重叠的摆放位置。
@@ -51,6 +53,8 @@ class PinWindow {
                          const wchar_t* error_title);
 
   Image image_;
+  PinId pin_id_{kInvalidPinId};
+  PinSource source_{PinSource::Gui};
   HWND hwnd_{nullptr};
   bool closing_{false};
   ClosedCallback closed_callback_;

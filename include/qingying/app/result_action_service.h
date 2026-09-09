@@ -67,6 +67,9 @@ class ResultActionService final {
                     const InteractionGate::Guard* owner = nullptr);
   ActionResult pin(ResultScopeId scope, const ResultSelection& selection,
                    const InteractionGate::Guard* owner = nullptr);
+  ActionResult pinAdmitted(ResultScopeId scope,
+                           const ResultSelection& selection,
+                           CommitAuthorization authorize_commit);
   // Pin owns this image independently of ResultStore; also guards its modal UI.
   ActionResult savePinImage(const Image& image);
   ActionResult prepareSave(ResultScopeId scope,
@@ -85,7 +88,9 @@ class ResultActionService final {
                          CommitAuthorization authorize_commit = {});
   ActionResult saveImageWithDialog(const Image& image,
                                    bool show_error_message);
-  ActionResult pinImage(const Image& image);
+  ActionResult pinImage(const Image& image, ResultId result_id,
+                        PinSource source,
+                        CommitAuthorization authorize_commit = {});
   ActionResult noResult(const char* action) const;
   ActionResult unavailable() const;
   void showSaveUnavailableMessage() const;

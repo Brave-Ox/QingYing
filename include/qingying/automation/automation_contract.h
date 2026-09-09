@@ -290,13 +290,15 @@ inline ActionValidationResult validateAutomationRequest(
                                        type == ActionType::Pin;
           if (payload.result_handle) {
             const bool handle_target =
-                (type == ActionType::Save || type == ActionType::Copy) &&
+                (type == ActionType::Save || type == ActionType::Copy ||
+                 type == ActionType::Pin) &&
                 payload.result_handle->valid() &&
                 payload.result_handle->value.size() <= limits.max_opaque_handle_bytes;
             const bool current_target = std::visit([](const auto& action) {
               using Action = std::decay_t<decltype(action)>;
               if constexpr (std::is_same_v<Action, SaveRequest> ||
-                            std::is_same_v<Action, CopyRequest>) {
+                            std::is_same_v<Action, CopyRequest> ||
+                            std::is_same_v<Action, PinRequest>) {
                 return action.result.kind == ResultSelectionKind::Current;
               } else {
                 return false;

@@ -5,7 +5,9 @@
 #include <dwmapi.h>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace qingying {
@@ -36,49 +38,104 @@ PinManager::CaptureGuard::~CaptureGuard() {
   }
 }
 
+PinManager::PinManager(AutomationLimits limits, WindowPresenter presenter)
+    : limits_(limits), presenter_(std::move(presenter)) {
+  if (!limits_.valid()) throw std::invalid_argument("pin limits");
+}
+
 PinManager::~PinManager() {
   closeAll();
 }
 
 bool PinManager::show(const Image& image) {
+  return static_cast<bool>(showGui(image));
+}
+
+PinManager::CreationResult PinManager::showGui(const Image& image) {
+  return create(image, PinSource::Gui, {});
+}
+
+PinManager::CreationResult PinManager::showAgent(
+    const Image& image, CommitAuthorization authorize_commit) {
+  return create(image, PinSource::Agent, std::move(authorize_commit));
+}
+
+PinManager::CreationResult PinManager::create(
+    const Image& image, PinSource source,
+    CommitAuthorization authorize_commit) {
   if (image.width <= 0 || image.height <= 0 || image.pixels.empty()) {
-    return false;
+    return {ErrorCode::kInvalidArgument};
   }
 
   const std::size_t expected_pixels =
       static_cast<std::size_t>(image.width) *
       static_cast<std::size_t>(image.height);
   if (image.pixels.size() != expected_pixels) {
-    return false;
+    return {ErrorCode::kInvalidArgument};
   }
 
-  auto window = std::make_unique<PinWindow>(image);
-  PinWindow* raw_window = window.get();
-  raw_window->setClosedCallback(
-      [this](PinWindow* closed_window) { onWindowClosed(closed_window); });
-  raw_window->setActionCallbacks(copy_callback_, save_callback_);
-
-  // 先按图片比例估算窗口尺寸，再计算不与已有钉图重叠的初始位置
-  // （右侧依次排列），避免多个钉图叠放在同一处。
-  int width = 0;
-  int height = 0;
-  PinWindow::computeInitialClientSize(image, width, height);
-  int x = 0;
-  int y = 0;
-  computeNextPinPosition(width, height, x, y);
-
-  if (!raw_window->show(x, y)) {
-    return false;
+  const bool agent = source == PinSource::Agent;
+  std::uint64_t agent_bytes = 0;
+  if (agent) {
+    if (image.pixels.size() >
+        (std::numeric_limits<std::uint64_t>::max)() / sizeof(std::uint32_t))
+      return {ErrorCode::kResourceLimit};
+    agent_bytes = static_cast<std::uint64_t>(image.pixels.size()) *
+                  sizeof(std::uint32_t);
+    if (agent_usage_.count >= limits_.max_agent_pins ||
+        agent_usage_.bytes > limits_.max_agent_pin_bytes ||
+        agent_bytes > limits_.max_agent_pin_bytes - agent_usage_.bytes)
+      return {ErrorCode::kResourceLimit};
+    ++agent_usage_.count;
+    agent_usage_.bytes += agent_bytes;
   }
 
-  windows_.push_back(std::move(window));
-  return true;
+  if (authorize_commit && !authorize_commit()) {
+    if (agent) releaseAgentBudget(agent_bytes);
+    return {ErrorCode::kCancelled};
+  }
+
+  try {
+    const PinId pin_id = allocatePinId();
+    if (pin_id == kInvalidPinId) {
+      if (agent) releaseAgentBudget(agent_bytes);
+      return {ErrorCode::kResourceLimit};
+    }
+    auto window = std::make_unique<PinWindow>(image, pin_id, source);
+    PinWindow* raw_window = window.get();
+    raw_window->setClosedCallback(
+        [this](PinWindow* closed_window) { onWindowClosed(closed_window); });
+    raw_window->setActionCallbacks(copy_callback_, save_callback_);
+
+    // 先按图片比例估算窗口尺寸，再计算不与已有钉图重叠的初始位置
+    // （右侧依次排列），避免多个钉图叠放在同一处。
+    int width = 0;
+    int height = 0;
+    PinWindow::computeInitialClientSize(image, width, height);
+    int x = 0;
+    int y = 0;
+    computeNextPinPosition(width, height, x, y);
+
+    const bool shown = presenter_ ? presenter_(*raw_window, x, y)
+                                  : raw_window->show(x, y);
+    if (!shown) {
+      if (agent) releaseAgentBudget(agent_bytes);
+      return {ErrorCode::kUnknown};
+    }
+
+    windows_.push_back({std::move(window), agent_bytes, agent});
+    return {ErrorCode::kOk, pin_id};
+  } catch (...) {
+    if (agent) releaseAgentBudget(agent_bytes);
+    return {ErrorCode::kUnknown};
+  }
 }
 
 std::vector<RECT> PinManager::windowRects() const {
   std::vector<RECT> rects;
   rects.reserve(windows_.size());
-  for (const auto& window : windows_) {
+  for (const auto& entry : windows_) {
+    const auto& window = entry.window;
     RECT rect{};
     if (window->hwnd() != nullptr && GetWindowRect(window->hwnd(), &rect)) {
       rects.push_back(rect);
@@ -112,7 +169,8 @@ void PinManager::computeNextPinPosition(int width, int height, int& out_x,
 
     const RECT candidate{x, y, x + width, y + height};
     bool overlap = false;
-    for (const auto& existing : windows_) {
+    for (const auto& entry : windows_) {
+      const auto& existing = entry.window;
       if (existing->hwnd() == nullptr) {
         continue;
       }
@@ -138,9 +196,10 @@ void PinManager::computeNextPinPosition(int width, int height, int& out_x,
 
 void PinManager::closeAll() {
   while (!windows_.empty()) {
-    std::unique_ptr<PinWindow> window = std::move(windows_.back());
+    Entry entry = std::move(windows_.back());
     windows_.pop_back();
-    window->close();
+    if (entry.agent_accounted) releaseAgentBudget(entry.agent_bytes);
+    entry.window->close();
   }
 }
 
@@ -148,12 +207,28 @@ int PinManager::count() const {
   return static_cast<int>(windows_.size());
 }
 
+bool PinManager::contains(PinId pin_id) const noexcept {
+  return std::any_of(windows_.begin(), windows_.end(),
+      [pin_id](const Entry& entry) {
+        return entry.window->pinId() == pin_id;
+      });
+}
+
+std::optional<PinSource> PinManager::source(PinId pin_id) const noexcept {
+  const auto it = std::find_if(windows_.begin(), windows_.end(),
+      [pin_id](const Entry& entry) {
+        return entry.window->pinId() == pin_id;
+      });
+  return it == windows_.end() ? std::nullopt
+                              : std::optional<PinSource>{it->window->source()};
+}
+
 void PinManager::setActionCallbacks(ImageActionCallback copy_callback,
                                     ImageActionCallback save_callback) {
   copy_callback_ = std::move(copy_callback);
   save_callback_ = std::move(save_callback);
-  for (const auto& window : windows_) {
-    window->setActionCallbacks(copy_callback_, save_callback_);
+  for (const auto& entry : windows_) {
+    entry.window->setActionCallbacks(copy_callback_, save_callback_);
   }
 }
 
@@ -168,8 +243,8 @@ void PinManager::beginCaptureExclusion() {
   }
 
   hidden_windows_.clear();
-  for (const auto& window : windows_) {
-    const HWND hwnd = window->hwnd();
+  for (const auto& entry : windows_) {
+    const HWND hwnd = entry.window->hwnd();
     if (hwnd == nullptr || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
       continue;
     }
@@ -205,12 +280,24 @@ void PinManager::endCaptureExclusion() {
 void PinManager::onWindowClosed(PinWindow* window) {
   const auto it = std::find_if(
       windows_.begin(), windows_.end(),
-      [window](const std::unique_ptr<PinWindow>& item) {
-        return item.get() == window;
+      [window](const Entry& item) {
+        return item.window.get() == window;
       });
   if (it != windows_.end()) {
+    if (it->agent_accounted) releaseAgentBudget(it->agent_bytes);
     windows_.erase(it);
   }
+}
+
+PinId PinManager::allocatePinId() noexcept {
+  if (next_pin_id_ == kInvalidPinId) return kInvalidPinId;
+  return next_pin_id_++;
+}
+
+void PinManager::releaseAgentBudget(std::uint64_t bytes) noexcept {
+  if (agent_usage_.count == 0 || bytes > agent_usage_.bytes) return;
+  --agent_usage_.count;
+  agent_usage_.bytes -= bytes;
 }
 
 }  // namespace qingying

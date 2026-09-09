@@ -101,6 +101,11 @@ StatusInfo AutomationEndpoint::status() const {
   ResourceUsage resources;
   resources.result_bytes = budget.retained_bytes;
   resources.reserved_result_bytes = budget.reserved_bytes;
+  if (policy_.agent_pin_usage) {
+    const auto usage = policy_.agent_pin_usage();
+    resources.agent_pin_count = usage.first;
+    resources.agent_pin_bytes = usage.second;
+  }
   info.resources = resources;
   info.queues = scheduler_.queueUsage();
   return info;
@@ -183,6 +188,8 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
       save->result = ResultSelection::specific(*resolved);
     else if (auto* copy = std::get_if<CopyRequest>(&action->payload))
       copy->result = ResultSelection::specific(*resolved);
+    else if (auto* pin = std::get_if<PinRequest>(&action->payload))
+      pin->result = ResultSelection::specific(*resolved);
     else { reply(responseWith(ErrorCode::kInvalidArgument)); return; }
     action->result_handle.reset();
     if (!validateAutomationRequest(resolved_request, limits_).valid) {

@@ -918,17 +918,21 @@ stdio 使用复制的继承同步句柄，独立读写 worker、有界逐行缓�
 
 ### F9-19：增加 PinId、来源与全应用预算后开放 pin
 
-**状态：未开始；前置：F9-04、F9-05、F9-07、F9-15。** 建议提交：`feat(f9-19): bound agent pins and expose stable pin results`。
+**状态：已完成（2026-09-09）；前置：F9-04、F9-05、F9-07、F9-15。** 建议提交：`feat(f9-19): bound agent pins and expose stable pin results`。
 
 **文件范围：** 修改 `include/qingying/pin/pin_manager.hpp`、`src/pin/pin_manager.cpp`、`include/qingying/pin/pin_window.hpp`、`src/pin/pin_window.cpp`、ResultActionService、PinHandler、catalog 和 Endpoint。
 
-- [ ] 新增稳定 PinId、GUI/Agent 来源及创建返回元数据，保留旧 GUI bool show 适配；成功输出必须包含真实 PinId。
-- [ ] 全部 Agent Pin 合计限制 8 个、64 MiB，在复制图像/创建窗口前预留预算，失败退还，关闭时只归还一次；不把 GUI Pin 混入 Agent 限额。
-- [ ] Pin 拥有独立图像，release_result/TTL/断连不关闭既有 Pin；重连不能重置全应用 Agent Pin 数量和字节计数。
-- [ ] 在 UI 上创建窗口，执行前检查 busy/幂等，通过 F9-05 仲裁取消与提交，执行后返回实际结果；status 分别披露结果池与 Pin 池用量。
-- [ ] 完成 schema/codec/capability 后才开放 pin。
+- [x] 新增稳定 PinId、GUI/Agent 来源及创建返回元数据，保留旧 GUI bool show 适配；成功输出必须包含真实 PinId。
+- [x] 全部 Agent Pin 合计限制 8 个、64 MiB，在复制图像/创建窗口前预留预算，失败退还，关闭时只归还一次；不把 GUI Pin 混入 Agent 限额。
+- [x] Pin 拥有独立图像，release_result/TTL/断连不关闭既有 Pin；重连不能重置全应用 Agent Pin 数量和字节计数。
+- [x] 在 UI 上创建窗口，执行前检查 busy/幂等，通过 F9-05 仲裁取消与提交，执行后返回实际结果；status 分别披露结果池与 Pin 池用量。
+- [x] 完成 schema/codec/capability 后才开放 pin。
 
 **验收：** 扩展 `tests/pin_manager_test.cpp` 和 result_action_service 测试；覆盖第九个 Pin、字节上限、创建失败、关闭两次、断连重连绕限额、原 lease 到期但 Pin 存活、复制前就拒绝超限。真实窗口布局与恢复交由 F9-24。
+
+**完成记录：** PinManager 现为每个窗口分配稳定 PinId，并记录 GUI/Agent 来源；保留原 GUI `bool show` 入口，同时让 MCP `pin` 返回真实 PinId。Agent Pin 使用进程级共享计数与字节预算，默认上限为 8 个、64 MiB；预算在图像复制和窗口创建前预留，取消、创建失败及异常均回退，窗口关闭只归还一次，GUI Pin 不计入该预算。PinWindow 持有独立图像，因此结果释放、TTL 到期和连接清理不会关闭既有 Pin，重新连接也不能重置 PinManager 的全应用用量。ToolCatalog、stdio、私有 Pipe codec、Endpoint 句柄解析和生产 capability 已同步开放 `pin`；操作通过既有交互准入、request_key 幂等和提交仲裁执行，`status` 分别返回结果池与 Agent Pin 池用量。
+
+**验证记录：** 2026-09-09 新增 PinManager、ResultActionService、PinHandler、Endpoint、私有 codec、ToolCatalog 和 stdio 专项测试，覆盖稳定 PinId、来源区分、第九个 Pin、字节上限、创建失败与异常回退、提交前取消、重复关闭、结果主动释放和 TTL 到期后 Pin 存活、公开不透明 result_id、真实 pin_id，以及 status 的独立 Pin 用量。F9-19 相关专项 117/117 通过；完整 Release 构建成功，751/751 通过。真实窗口布局与恢复按计划保留为 F9-24 桌面验收。
 
 ### F9-20：为 LongShotController 增加 generation 与取消原因
 

@@ -105,6 +105,43 @@ TEST(AppActionHandlersTest, CopyHandlerUsesOperationCommitBeforeClipboardWrite) 
   EXPECT_EQ(std::get<CopiedResult>(copied.output).result_id, id);
 }
 
+TEST(AppActionHandlersTest, PinHandlerUsesCommitAndReturnsRealPinId) {
+  using namespace qingying;
+  ActionDispatcher dispatcher;
+  CaptureEngine capture;
+  ExportService exporter;
+  ResultStore store;
+  int presentations = 0;
+  PinManager pins({}, [&](PinWindow&, int, int) {
+    ++presentations;
+    return true;
+  });
+  InteractionGate gate;
+  CaptureService capture_service(capture, store, pins, gate);
+  ResultActionService actions(store, exporter, pins);
+  registerAppHandlers(dispatcher, capture_service, store, actions);
+  constexpr ResultScopeId scope = 10;
+  const auto id = store.publish(scope, Image{1, 1, {0xFF010203u}});
+  ActionRequest request{PinRequest{ResultSelection::specific(id)}};
+  request.context.result_scope = scope;
+
+  auto denied = std::make_shared<CopyCommitControl>(false);
+  request.operation_control = denied;
+  EXPECT_EQ(dispatcher.dispatch(request).error_code, ErrorCode::kCancelled);
+  EXPECT_EQ(presentations, 0);
+  EXPECT_EQ(pins.agentUsage().count, 0u);
+
+  auto allowed = std::make_shared<CopyCommitControl>(true);
+  request.operation_control = allowed;
+  const auto pinned = dispatcher.dispatch(request);
+  ASSERT_TRUE(pinned.ok);
+  const auto metadata = std::get<PinnedResult>(pinned.output);
+  EXPECT_EQ(metadata.result_id, id);
+  EXPECT_NE(metadata.pin_id, kInvalidPinId);
+  EXPECT_EQ(presentations, 1);
+  EXPECT_EQ(pins.agentUsage().count, 1u);
+}
+
 TEST(AppActionHandlersTest, SuccessfulCapturePublishesExplicitResult) {
   qingying::ActionDispatcher dispatcher;
   qingying::CaptureEngine capture;

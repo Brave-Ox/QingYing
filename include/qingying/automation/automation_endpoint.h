@@ -20,6 +20,7 @@ class AutomationEndpoint final {
     // Stop/join all additional business producers before scheduler reclamation.
     std::function<void()> stop_producers;
     bool transport_enabled{false};
+    std::function<std::pair<std::uint32_t, std::uint64_t>()> agent_pin_usage;
   };
   AutomationEndpoint(ActionDispatcher& dispatcher, CaptureWorkflow& workflow,
       ResultStore& results, OperationRegistry& registry,
