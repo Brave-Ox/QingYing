@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "known_content_locator.hpp"
+#include "msaa_region_locator.hpp"
 #include "uia_region_locator.hpp"
 #include "visual_region_locator.hpp"
 
@@ -16,6 +17,7 @@ constexpr int kMinimumCandidateHeight = 16;
 constexpr std::uint8_t kMinimumVisualConfidence = 70;
 constexpr std::int64_t kLargeGenericCandidatePercent = 85;
 constexpr int kSourceScoreUia = 4000;
+constexpr int kSourceScoreMsaa = 3750;
 constexpr int kSourceScoreVisual = 3500;
 constexpr int kSourceScoreKnownContent = 3000;
 constexpr int kSourceScoreClientArea = 1000;
@@ -141,10 +143,17 @@ SmartRegionCandidateRejection candidateRejection(
   const std::int64_t candidate_area = areaOf(candidate.rect);
   const bool is_generic = candidate.semantic == SmartRegionSemantic::Unknown ||
                           candidate.semantic == SmartRegionSemantic::Fallback;
-  const bool is_dynamic_source =
-      candidate.source == SmartRegionDiagnosticSource::Uia ||
-      candidate.source == SmartRegionDiagnosticSource::Visual;
-  if (owner_area > 0 && is_generic && is_dynamic_source &&
+  const bool is_accessibility_content_surface =
+      (candidate.source == SmartRegionDiagnosticSource::Uia ||
+       candidate.source == SmartRegionDiagnosticSource::Msaa) &&
+      candidate.semantic == SmartRegionSemantic::ContentSurface;
+  const bool is_dynamic_generic =
+      is_generic &&
+      (candidate.source == SmartRegionDiagnosticSource::Uia ||
+       candidate.source == SmartRegionDiagnosticSource::Msaa ||
+       candidate.source == SmartRegionDiagnosticSource::Visual);
+  if (owner_area > 0 &&
+      (is_dynamic_generic || is_accessibility_content_surface) &&
       candidate_area * 100 >= owner_area * kLargeGenericCandidatePercent) {
     return SmartRegionCandidateRejection::GenericTooLarge;
   }
@@ -156,6 +165,8 @@ int sourceScore(SmartRegionDiagnosticSource source) noexcept
   switch (source) {
     case SmartRegionDiagnosticSource::Uia:
       return kSourceScoreUia;
+    case SmartRegionDiagnosticSource::Msaa:
+      return kSourceScoreMsaa;
     case SmartRegionDiagnosticSource::KnownContent:
       return kSourceScoreKnownContent;
     case SmartRegionDiagnosticSource::Visual:
@@ -233,6 +244,16 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
       SmartRegionCandidateDiagnostic& diagnostic =
           diagnostics->candidates[index];
       diagnostic.candidate = candidate;
+      diagnostic.area = areaOf(candidate.rect);
+      const std::int64_t owner_area = areaOf(owner_rect);
+      if (diagnostic.area > 0 && owner_area > 0)
+      {
+        const long double coverage =
+            static_cast<long double>(diagnostic.area) * 100.0L /
+            static_cast<long double>(owner_area);
+        diagnostic.owner_coverage_percent = static_cast<std::uint8_t>(
+            (std::min)(100.0L, coverage));
+      }
       diagnostic.rejection = rejection;
     }
     if (rejection != SmartRegionCandidateRejection::None) {
@@ -309,6 +330,31 @@ bool SmartRegionCandidateSelector::selectBest(
                             owner_rect, out, &diagnostics);
 }
 
+bool SmartRegionCandidateSelector::hasValidLocalCandidate(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    int screen_x, int screen_y, const WindowRect& owner_rect,
+    SmartRegionDiagnosticSource source) noexcept
+{
+  if (candidates == nullptr || owner_rect.empty())
+  {
+    return false;
+  }
+  for (std::size_t index = 0; index < candidate_count; ++index)
+  {
+    const SmartRegionCandidate& candidate = candidates[index];
+    const bool local_semantic =
+        candidate.semantic == SmartRegionSemantic::ActionableControl ||
+        candidate.semantic == SmartRegionSemantic::ContentSurface;
+    if (candidate.source == source && local_semantic &&
+        candidateRejection(candidate, screen_x, screen_y, owner_rect) ==
+            SmartRegionCandidateRejection::None)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 void SmartRegionDiagnosticTrace::setEnabled(bool enabled) noexcept
 {
   m_enabled = enabled;
@@ -371,6 +417,8 @@ const wchar_t* smartRegionDiagnosticSourceName(
   switch (source) {
     case SmartRegionDiagnosticSource::Uia:
       return L"uia";
+    case SmartRegionDiagnosticSource::Msaa:
+      return L"msaa";
     case SmartRegionDiagnosticSource::KnownContent:
       return L"known-content";
     case SmartRegionDiagnosticSource::Visual:
@@ -559,7 +607,38 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
       uia_candidate_count));
   candidate_count = uia_candidate_count;
   if (diagnostic_enabled) {
+    diagnostic_event.uia_lookup_attempted = true;
     diagnostic_event.uia_lookup_ms = GetTickCount64() - uia_lookup_begin_ms;
+  }
+  const bool has_valid_local_uia_candidate =
+      SmartRegionCandidateSelector::hasValidLocalCandidate(
+          candidates, uia_candidate_count, screen_x, screen_y, window_rect,
+          SmartRegionDiagnosticSource::Uia);
+  if (diagnostic_enabled)
+  {
+    diagnostic_event.uia_has_valid_local_candidate =
+        has_valid_local_uia_candidate;
+  }
+
+  if (!has_valid_local_uia_candidate &&
+      candidate_count < SmartRegionMaxCandidates)
+  {
+    SmartRegionCandidate msaa_candidate;
+    const std::uint64_t msaa_lookup_begin_ms =
+        diagnostic_enabled ? GetTickCount64() : 0;
+    const bool found_msaa_candidate = window_detail::locateMsaaCandidate(
+        root_window, screen_point, msaa_candidate);
+    if (diagnostic_enabled)
+    {
+      diagnostic_event.msaa_lookup_attempted = true;
+      diagnostic_event.msaa_candidate_found = found_msaa_candidate;
+      diagnostic_event.msaa_lookup_ms =
+          GetTickCount64() - msaa_lookup_begin_ms;
+    }
+    if (found_msaa_candidate)
+    {
+      candidates[candidate_count++] = msaa_candidate;
+    }
   }
   SmartRegionCandidate known_content;
   const std::uint64_t known_content_lookup_begin_ms =
@@ -573,6 +652,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     }
   }
   if (diagnostic_enabled) {
+    diagnostic_event.known_content_lookup_attempted = true;
     diagnostic_event.known_content_lookup_ms =
         GetTickCount64() - known_content_lookup_begin_ms;
   }
@@ -589,6 +669,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
         reinterpret_cast<std::uintptr_t>(root_window), visual_candidate,
         diagnostic_enabled ? &visual_diagnostic : nullptr);
     if (diagnostic_enabled) {
+      diagnostic_event.visual_lookup_attempted = true;
       diagnostic_event.visual_lookup_ms =
           GetTickCount64() - visual_lookup_begin_ms;
       diagnostic_event.visual_edge_mask = visual_diagnostic.edge_mask;

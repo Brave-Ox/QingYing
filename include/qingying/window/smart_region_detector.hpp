@@ -20,6 +20,7 @@ enum class SmartRegionKind : std::uint8_t {
 enum class SmartRegionDiagnosticSource : std::uint8_t {
   None,
   Uia,
+  Msaa,
   KnownContent,
   Visual,
   ClientArea,
@@ -61,8 +62,8 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
   LowerScore,
 };
 
-// UIA 最多保留命中元素和三个父级，另有已知内容、视觉、客户区和窗口兜底。
-constexpr std::size_t SmartRegionMaxCandidates = 8;
+// UIA 最多保留命中元素和三个父级，另有 MSAA、已知内容、视觉、客户区和窗口兜底。
+constexpr std::size_t SmartRegionMaxCandidates = 9;
 constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
     SmartRegionMaxCandidates;
 
@@ -70,6 +71,8 @@ constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
 struct SmartRegionCandidateDiagnostic {
   SmartRegionCandidate candidate;
   int score{0};
+  std::int64_t area{0};
+  std::uint8_t owner_coverage_percent{0};
   SmartRegionCandidateRejection rejection{
       SmartRegionCandidateRejection::None};
   bool selected{false};
@@ -82,6 +85,7 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t elapsed_ms{0};
   std::uint64_t window_detection_ms{0};
   std::uint64_t uia_lookup_ms{0};
+  std::uint64_t msaa_lookup_ms{0};
   std::uint64_t known_content_lookup_ms{0};
   std::uint64_t visual_lookup_ms{0};
   std::uint64_t selection_ms{0};
@@ -89,6 +93,12 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t stabilization_delay_ms{0};
   std::uint8_t visual_edge_mask{0};
   bool window_detection_attempted{false};
+  bool uia_lookup_attempted{false};
+  bool uia_has_valid_local_candidate{false};
+  bool msaa_lookup_attempted{false};
+  bool msaa_candidate_found{false};
+  bool known_content_lookup_attempted{false};
+  bool visual_lookup_attempted{false};
   SmartRegionCandidateDiagnostic candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t candidate_count{0};
 };
@@ -113,6 +123,10 @@ class SmartRegionCandidateSelector {
                          int screen_y, const WindowRect& owner_rect,
                          SmartRegionCandidate& out,
                          SmartRegionDiagnosticEvent& diagnostics) noexcept;
+  static bool hasValidLocalCandidate(
+      const SmartRegionCandidate* candidates, std::size_t candidate_count,
+      int screen_x, int screen_y, const WindowRect& owner_rect,
+      SmartRegionDiagnosticSource source) noexcept;
 };
 
 // 不分配内存、不持有窗口或图像的诊断开关与最近一次记录。

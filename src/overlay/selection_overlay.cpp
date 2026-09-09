@@ -101,13 +101,18 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
   if (FAILED(StringCchPrintfW(
           message, std::size(message),
           L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) total=%llu ms "
-          L"window=%llu uia=%llu known=%llu visual=%llu select=%llu "
-          L"render=%llu settle=%llu edges=0x%02X candidates=%llu\n",
+          L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
+          L"msaaFound=%d known=%llu visual=%llu select=%llu render=%llu "
+          L"settle=%llu edges=0x%02X candidates=%llu\n",
           smartRegionDiagnosticSourceName(event.source), event.rect.left,
           event.rect.top, event.rect.right, event.rect.bottom,
           static_cast<unsigned long long>(event.elapsed_ms),
           static_cast<unsigned long long>(event.window_detection_ms),
           static_cast<unsigned long long>(event.uia_lookup_ms),
+          event.uia_has_valid_local_candidate ? 1 : 0,
+          event.msaa_lookup_attempted ? 1 : 0,
+          static_cast<unsigned long long>(event.msaa_lookup_ms),
+          event.msaa_candidate_found ? 1 : 0,
           static_cast<unsigned long long>(event.known_content_lookup_ms),
           static_cast<unsigned long long>(event.visual_lookup_ms),
           static_cast<unsigned long long>(event.selection_ms),
@@ -123,12 +128,15 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
     if (FAILED(StringCchPrintfW(
             candidate_message, std::size(candidate_message),
             L"  candidate[%llu] source=%s semantic=%u rect=(%d,%d,%d,%d) "
-            L"confidence=%u score=%d selected=%d reason=%s\n",
+            L"area=%lld coverage=%u confidence=%u score=%d selected=%d "
+            L"reason=%s\n",
             static_cast<unsigned long long>(index),
             smartRegionDiagnosticSourceName(candidate.candidate.source),
             static_cast<unsigned int>(candidate.candidate.semantic),
             candidate.candidate.rect.left, candidate.candidate.rect.top,
             candidate.candidate.rect.right, candidate.candidate.rect.bottom,
+            static_cast<long long>(candidate.area),
+            static_cast<unsigned int>(candidate.owner_coverage_percent),
             static_cast<unsigned int>(
                 candidate.candidate.visual_confidence),
             candidate.score, candidate.selected ? 1 : 0,

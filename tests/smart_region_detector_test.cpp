@@ -1,10 +1,12 @@
 ﻿#include <cstdint>
 #include <Windows.h>
+#include <oleacc.h>
 
 #include <gtest/gtest.h>
 
 #include "qingying/window/smart_region_detector.hpp"
 #include "known_content_locator.hpp"
+#include "msaa_region_locator.hpp"
 #include "uia_region_locator.hpp"
 
 namespace qingying {
@@ -314,6 +316,8 @@ TEST(SmartRegionDiagnosticTraceTest, AppendsOverlayAndStabilizationTimings)
   EXPECT_EQ(trace.latestEvent().overlay_render_ms, 24U);
   EXPECT_EQ(trace.latestEvent().stabilization_delay_ms,
             SmartRegionHoverStabilizer::CandidateSwitchDelayMs);
+  EXPECT_FALSE(trace.latestEvent().msaa_lookup_attempted);
+  EXPECT_EQ(trace.latestEvent().msaa_lookup_ms, 0U);
 }
 
 TEST(SmartRegionCandidateSelectorTest,
@@ -365,6 +369,8 @@ TEST(SmartRegionCandidateSelectorTest,
   EXPECT_EQ(diagnostic.visual_edge_mask, 0x0FU);
   ASSERT_EQ(diagnostic.candidate_count, 1U);
   EXPECT_TRUE(diagnostic.candidates[0].selected);
+  EXPECT_EQ(diagnostic.candidates[0].area, 480000);
+  EXPECT_EQ(diagnostic.candidates[0].owner_coverage_percent, 60U);
 }
 
 TEST(SmartRegionCandidateSelectorTest,
@@ -410,6 +416,84 @@ TEST(SmartRegionCandidateSelectorTest,
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::KnownContent);
   EXPECT_EQ(selected.rect.left, 0);
   EXPECT_EQ(selected.rect.right, 1200);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     RejectsWindowSizedUiaContentSurfaceInFavorOfKnownContent)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate document{1, 1, {0, 0, 1200, 800},
+                                SmartRegionKind::KnownContent};
+  document.source = SmartRegionDiagnosticSource::Uia;
+  document.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate content{1, 2, {0, 100, 1200, 800},
+                               SmartRegionKind::KnownContent};
+  content.source = SmartRegionDiagnosticSource::KnownContent;
+  content.semantic = SmartRegionSemantic::ContentSurface;
+  const SmartRegionCandidate candidates[] = {document, content};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 500, 300, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 2U);
+  EXPECT_EQ(diagnostic.candidates[0].rejection,
+            SmartRegionCandidateRejection::GenericTooLarge);
+  EXPECT_TRUE(diagnostic.candidates[1].selected);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     FindsNoValidLocalUiaCandidateWhenOnlyWindowSizedDocumentExists)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate document{1, 1, owner_rect,
+                                SmartRegionKind::KnownContent};
+  document.source = SmartRegionDiagnosticSource::Uia;
+  document.semantic = SmartRegionSemantic::ContentSurface;
+
+  EXPECT_FALSE(SmartRegionCandidateSelector::hasValidLocalCandidate(
+      &document, 1, 500, 300, owner_rect,
+      SmartRegionDiagnosticSource::Uia));
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     FindsValidLocalUiaCandidateForActionableControl)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate button{1, 1, {200, 180, 320, 220},
+                              SmartRegionKind::KnownContent};
+  button.source = SmartRegionDiagnosticSource::Uia;
+  button.semantic = SmartRegionSemantic::ActionableControl;
+
+  EXPECT_TRUE(SmartRegionCandidateSelector::hasValidLocalCandidate(
+      &button, 1, 250, 200, owner_rect,
+      SmartRegionDiagnosticSource::Uia));
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     PrefersMsaaActionableWhenWindowSizedUiaContentIsRejected)
+{
+  const WindowRect owner_rect{0, 0, 1200, 800};
+  SmartRegionCandidate document{1, 1, owner_rect,
+                                SmartRegionKind::KnownContent};
+  document.source = SmartRegionDiagnosticSource::Uia;
+  document.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate button{1, 2, {200, 180, 320, 220},
+                              SmartRegionKind::KnownContent};
+  button.source = SmartRegionDiagnosticSource::Msaa;
+  button.semantic = SmartRegionSemantic::ActionableControl;
+  const SmartRegionCandidate candidates[] = {document, button};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 250, 200, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 2U);
+  EXPECT_EQ(diagnostic.candidates[0].rejection,
+            SmartRegionCandidateRejection::GenericTooLarge);
+  EXPECT_TRUE(diagnostic.candidates[1].selected);
 }
 
 TEST(SmartRegionCandidateSelectorTest, RejectsInvalidCandidatesAndKeepsEditor)
@@ -542,6 +626,36 @@ TEST(UiaRegionLocatorTest, RejectsUnknownOrOutOfBoundsElement)
   EXPECT_FALSE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {520, 220}, list_item, candidate));
   EXPECT_FALSE(candidate.valid());
+}
+
+TEST(MsaaRegionLocatorTest, MapsFocusableTextToActionableCandidate)
+{
+  const window_detail::MsaaRegionProperties properties{
+      {100, 200, 500, 240}, ROLE_SYSTEM_TEXT, STATE_SYSTEM_FOCUSABLE};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeMsaaCandidate(
+      reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(2), {180, 220},
+      properties, candidate));
+  EXPECT_EQ(candidate.source, SmartRegionDiagnosticSource::Msaa);
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+  EXPECT_EQ(candidate.target_window, 2U);
+}
+
+TEST(MsaaRegionLocatorTest, RejectsInvisibleOrPointerOutsideObject)
+{
+  const window_detail::MsaaRegionProperties invisible{
+      {100, 200, 500, 240}, ROLE_SYSTEM_PUSHBUTTON, STATE_SYSTEM_INVISIBLE};
+  const window_detail::MsaaRegionProperties visible{
+      {100, 200, 500, 240}, ROLE_SYSTEM_PUSHBUTTON, 0};
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeMsaaCandidate(
+      reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(2), {180, 220},
+      invisible, candidate));
+  EXPECT_FALSE(window_detail::makeMsaaCandidate(
+      reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(2), {520, 220},
+      visible, candidate));
 }
 
 }  // namespace
