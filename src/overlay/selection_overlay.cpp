@@ -77,6 +77,7 @@ struct OverlayWindowData {
   std::uint64_t uia_request_id{0};
   bool has_hover{false};
   bool has_pending_hover_update{false};
+  bool first_frame_committed{false};
   int pending_hover_x{0};
   int pending_hover_y{0};
   OverlayClientRect hover_rect;
@@ -705,6 +706,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
+      data->first_frame_committed = true;
       // 首帧已绘制后再读取持久化模式，避免注册表访问进入唤起热路径。
       data->smart_region_mode = data->smart_region_mode_settings.load();
       if (data->uia_query_worker != nullptr)
@@ -720,6 +722,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         }
       }
       return 0;
+    }
+    case WM_QINGYING_SELECTION_OVERLAY_FIRST_FRAME_QUERY:
+    {
+      return data != nullptr && data->first_frame_committed ? 1 : 0;
     }
     case WM_QINGYING_SELECTION_LONGSHOT_PREVIEW: {
       if (data != nullptr && data->message_channel != nullptr) {

@@ -1,13 +1,56 @@
-﻿#include "qingying/overlay/selection_overlay.hpp"
-
 #include <Windows.h>
 
 #include <gtest/gtest.h>
 
-#include <cstdint>
+#include <cwchar>
+
+#include "qingying/app/app_messages.hpp"
+#include "qingying/overlay/selection_overlay.hpp"
 
 namespace qingying {
 namespace {
+
+struct WindowSearchContext
+{
+  DWORD process_id{0};
+  const wchar_t* class_name{nullptr};
+  HWND window{nullptr};
+};
+
+BOOL CALLBACK findProcessWindow(HWND hwnd, LPARAM lparam)
+{
+  WindowSearchContext* context =
+      reinterpret_cast<WindowSearchContext*>(lparam);
+  if (context == nullptr || context->class_name == nullptr)
+  {
+    return FALSE;
+  }
+
+  DWORD process_id = 0;
+  static_cast<void>(GetWindowThreadProcessId(hwnd, &process_id));
+  if (process_id != context->process_id)
+  {
+    return TRUE;
+  }
+
+  wchar_t class_name[128]{};
+  if (GetClassNameW(hwnd, class_name, ARRAYSIZE(class_name)) <= 0 ||
+      std::wcscmp(class_name, context->class_name) != 0)
+  {
+    return TRUE;
+  }
+
+  context->window = hwnd;
+  return FALSE;
+}
+
+HWND findCurrentProcessWindow(const wchar_t* class_name)
+{
+  WindowSearchContext context{GetCurrentProcessId(), class_name, nullptr};
+  static_cast<void>(
+      EnumWindows(findProcessWindow, reinterpret_cast<LPARAM>(&context)));
+  return context.window;
+}
 
 TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   SelectionOverlay overlay;
@@ -108,6 +151,31 @@ TEST(SelectionOverlayTest, ManualDragRemainsTheFinalSelection)
   EXPECT_FALSE(result.cancelled);
   EXPECT_EQ(result.width, 160);
   EXPECT_EQ(result.height, 120);
+}
+
+TEST(SelectionOverlayTest, FirstFrameQueryTurnsTrueOnlyAfterLayeredCommit)
+{
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+  const HWND hwnd =
+      findCurrentProcessWindow(L"QingYingSelectionOverlay");
+  ASSERT_NE(hwnd, nullptr);
+
+  EXPECT_EQ(SendMessageW(
+                hwnd, WM_QINGYING_SELECTION_OVERLAY_FIRST_FRAME_QUERY, 0, 0),
+            0);
+
+  MSG message{};
+  while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE)
+  {
+    TranslateMessage(&message);
+    DispatchMessageW(&message);
+  }
+
+  EXPECT_EQ(SendMessageW(
+                hwnd, WM_QINGYING_SELECTION_OVERLAY_FIRST_FRAME_QUERY, 0, 0),
+            1);
+  overlay.hide();
 }
 
 }  // namespace

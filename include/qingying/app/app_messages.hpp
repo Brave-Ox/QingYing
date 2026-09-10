@@ -31,6 +31,10 @@ constexpr UINT WM_QINGYING_SELECTION_OVERLAY_ABORT = WM_APP + 8;
 constexpr UINT WM_QINGYING_ANNOTATION_CANCEL = WM_APP + 9;
 constexpr UINT WM_QINGYING_AUTOMATION_REQUEST = WM_APP + 10;
 constexpr UINT WM_QINGYING_AUTOMATION_COMPLETE = WM_APP + 11;
+// Read-only diagnostic query. Returns 1 only after the first layered frame
+// has been successfully committed through UpdateLayeredWindow; it never
+// changes Overlay state.
+constexpr UINT WM_QINGYING_SELECTION_OVERLAY_FIRST_FRAME_QUERY = WM_APP + 12;
 
 struct AutomationRequestMessage {};
 struct AutomationCompletionMessage {
