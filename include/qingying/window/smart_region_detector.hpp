@@ -68,6 +68,27 @@ constexpr std::size_t SmartRegionMaxCandidates = 9;
 constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
     SmartRegionMaxCandidates;
 
+// 保存鼠标位置下的有效候选层级。固定容量避免悬停热路径动态分配。
+class SmartRegionCandidateCollection
+{
+ public:
+  void replace(const SmartRegionCandidate* candidates,
+               std::size_t candidate_count, int screen_x, int screen_y,
+               const WindowRect& owner_rect,
+               const SmartRegionCandidate& selected) noexcept;
+  bool cycle(int direction) noexcept;
+  void clear() noexcept;
+  bool empty() const noexcept;
+  std::size_t count() const noexcept;
+  const SmartRegionCandidate& current() const noexcept;
+  const SmartRegionCandidate& candidateAt(std::size_t index) const noexcept;
+
+ private:
+  SmartRegionCandidate m_candidates[SmartRegionMaxCandidates];
+  std::size_t m_count{0};
+  std::size_t m_current_index{0};
+};
+
 // 单个候选的诊断快照；固定容量，避免在鼠标移动路径上额外分配内存。
 struct SmartRegionCandidateDiagnostic {
   SmartRegionCandidate candidate;
@@ -122,6 +143,7 @@ enum class SmartRegionDetectionPolicy : std::uint8_t
 {
   Complete,
   FastFallbackOnly,
+  WindowOnly,
 };
 
 // 从同一点命中的多个候选中选择最小且可独立操作的有效区域。
@@ -220,7 +242,8 @@ class SmartRegionDetector {
                 SmartRegionDiagnosticTrace* diagnostics = nullptr,
                 const SmartRegionVisualContext* visual_context = nullptr,
                 SmartRegionDetectionPolicy policy =
-                    SmartRegionDetectionPolicy::Complete)
+                    SmartRegionDetectionPolicy::Complete,
+                SmartRegionCandidateCollection* collection = nullptr)
       const noexcept;
 };
 

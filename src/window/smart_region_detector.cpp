@@ -504,6 +504,154 @@ bool SmartRegionCandidate::contains(int screen_x, int screen_y) const noexcept
          screen_y >= rect.top && screen_y < rect.bottom;
 }
 
+void SmartRegionCandidateCollection::replace(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    int screen_x, int screen_y, const WindowRect& owner_rect,
+    const SmartRegionCandidate& selected) noexcept
+{
+  clear();
+  if (candidates == nullptr || owner_rect.empty())
+  {
+    return;
+  }
+
+  const std::size_t input_count =
+      (std::min)(candidate_count, SmartRegionMaxCandidates);
+  for (std::size_t input_index = 0; input_index < input_count; ++input_index)
+  {
+    const SmartRegionCandidate& candidate = candidates[input_index];
+    if (candidateRejection(candidate, screen_x, screen_y, owner_rect) !=
+        SmartRegionCandidateRejection::None)
+    {
+      continue;
+    }
+    bool duplicate = false;
+    for (std::size_t existing_index = 0; existing_index < m_count;
+         ++existing_index)
+    {
+      if (candidate.kind == m_candidates[existing_index].kind &&
+          candidate.semantic == m_candidates[existing_index].semantic &&
+          rectanglesAreNearDuplicates(candidate.rect,
+                                      m_candidates[existing_index].rect))
+      {
+        duplicate = true;
+        if (candidatesEqual(candidate, selected))
+        {
+          m_candidates[existing_index] = candidate;
+        }
+        break;
+      }
+    }
+    if (!duplicate)
+    {
+      m_candidates[m_count++] = candidate;
+    }
+  }
+
+  const auto hierarchy_rank = [](const SmartRegionCandidate& candidate)
+  {
+    if (candidate.kind == SmartRegionKind::Window)
+    {
+      return 4;
+    }
+    if (candidate.kind == SmartRegionKind::ClientArea)
+    {
+      return 3;
+    }
+    if (candidate.semantic == SmartRegionSemantic::ContentSurface)
+    {
+      return 2;
+    }
+    if (candidate.semantic == SmartRegionSemantic::ActionableControl)
+    {
+      return 0;
+    }
+    return 1;
+  };
+  std::sort(m_candidates, m_candidates + m_count,
+            [&hierarchy_rank](const SmartRegionCandidate& left,
+                              const SmartRegionCandidate& right)
+            {
+              const int left_rank = hierarchy_rank(left);
+              const int right_rank = hierarchy_rank(right);
+              if (left_rank != right_rank)
+              {
+                return left_rank < right_rank;
+              }
+              const std::int64_t left_area = areaOf(left.rect);
+              const std::int64_t right_area = areaOf(right.rect);
+              if (left_area != right_area)
+              {
+                return left_area < right_area;
+              }
+              return left.target_window < right.target_window;
+            });
+  for (std::size_t index = 0; index < m_count; ++index)
+  {
+    const bool same_hierarchy =
+        m_candidates[index].kind == selected.kind &&
+        m_candidates[index].semantic == selected.semantic;
+    if (same_hierarchy &&
+        (candidatesEqual(m_candidates[index], selected) ||
+         rectanglesAreNearDuplicates(m_candidates[index].rect,
+                                     selected.rect)))
+    {
+      m_current_index = index;
+      break;
+    }
+  }
+}
+
+bool SmartRegionCandidateCollection::cycle(int direction) noexcept
+{
+  if (m_count < 2 || direction == 0)
+  {
+    return false;
+  }
+  if (direction > 0)
+  {
+    m_current_index = (m_current_index + 1) % m_count;
+  }
+  else
+  {
+    m_current_index = (m_current_index + m_count - 1) % m_count;
+  }
+  return true;
+}
+
+void SmartRegionCandidateCollection::clear() noexcept
+{
+  for (SmartRegionCandidate& candidate : m_candidates)
+  {
+    candidate = SmartRegionCandidate{};
+  }
+  m_count = 0;
+  m_current_index = 0;
+}
+
+bool SmartRegionCandidateCollection::empty() const noexcept
+{
+  return m_count == 0;
+}
+
+std::size_t SmartRegionCandidateCollection::count() const noexcept
+{
+  return m_count;
+}
+
+const SmartRegionCandidate& SmartRegionCandidateCollection::current()
+    const noexcept
+{
+  return candidateAt(m_current_index);
+}
+
+const SmartRegionCandidate& SmartRegionCandidateCollection::candidateAt(
+    std::size_t index) const noexcept
+{
+  static const SmartRegionCandidate EmptyCandidate;
+  return index < m_count ? m_candidates[index] : EmptyCandidate;
+}
+
 bool SmartRegionVisualContext::valid() const noexcept
 {
   return background != nullptr && !background->empty() &&
@@ -782,7 +930,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                                    SmartRegionCandidate& out,
                                    SmartRegionDiagnosticTrace* diagnostics,
                                    const SmartRegionVisualContext* visual_context,
-                                   SmartRegionDetectionPolicy policy)
+                                   SmartRegionDetectionPolicy policy,
+                                   SmartRegionCandidateCollection* collection)
     const noexcept
 {
   const std::uint64_t begin_ms = GetTickCount64();
@@ -861,24 +1010,28 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
       }
     }
   }
-  SmartRegionCandidate known_content;
-  const std::uint64_t known_content_lookup_begin_ms =
-      diagnostic_enabled ? GetTickCount64() : 0;
-  if (window_detail::locateKnownContent(root_window, screen_point,
-                                        known_content)) {
-    known_content.source = SmartRegionDiagnosticSource::KnownContent;
-    known_content.semantic = SmartRegionSemantic::ContentSurface;
-    if (candidate_count < SmartRegionMaxCandidates) {
-      candidates[candidate_count++] = known_content;
+  if (policy != SmartRegionDetectionPolicy::WindowOnly)
+  {
+    SmartRegionCandidate known_content;
+    const std::uint64_t known_content_lookup_begin_ms =
+        diagnostic_enabled ? GetTickCount64() : 0;
+    if (window_detail::locateKnownContent(root_window, screen_point,
+                                          known_content)) {
+      known_content.source = SmartRegionDiagnosticSource::KnownContent;
+      known_content.semantic = SmartRegionSemantic::ContentSurface;
+      if (candidate_count < SmartRegionMaxCandidates) {
+        candidates[candidate_count++] = known_content;
+      }
+    }
+    if (diagnostic_enabled) {
+      diagnostic_event.known_content_lookup_attempted = true;
+      diagnostic_event.known_content_lookup_ms =
+          GetTickCount64() - known_content_lookup_begin_ms;
     }
   }
-  if (diagnostic_enabled) {
-    diagnostic_event.known_content_lookup_attempted = true;
-    diagnostic_event.known_content_lookup_ms =
-        GetTickCount64() - known_content_lookup_begin_ms;
-  }
 
-  if (visual_context != nullptr && visual_context->valid() &&
+  if (policy != SmartRegionDetectionPolicy::WindowOnly &&
+      visual_context != nullptr && visual_context->valid() &&
       has_client_rect) {
     window_detail::VisualRegionDiagnostic visual_diagnostic;
     SmartRegionCandidate visual_candidate;
@@ -929,6 +1082,11 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                 out);
   if (diagnostic_enabled) {
     diagnostic_event.selection_ms = GetTickCount64() - selection_begin_ms;
+  }
+  if (collection != nullptr)
+  {
+    collection->replace(candidates, candidate_count, screen_x, screen_y,
+                        window_rect, out);
   }
   recordDetection(diagnostics, out, diagnostic_event, begin_ms);
   return detected;

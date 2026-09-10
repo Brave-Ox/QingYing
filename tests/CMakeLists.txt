@@ -70,6 +70,7 @@ add_executable(qingying_tests
   window_detector_test.cpp
   window_resolver_test.cpp
   smart_region_detector_test.cpp
+  smart_region_mode_test.cpp
   visual_region_locator_test.cpp
   tray_notify_icon_test.cpp
   tray_context_menu_test.cpp

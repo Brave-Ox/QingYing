@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,6 +18,7 @@
 #include "qingying/overlay/selection_handles.hpp"
 #include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/window/smart_region_detector.hpp"
+#include "qingying/window/smart_region_mode.hpp"
 #include "qingying/window/window_detector.hpp"
 #include "../window/uia_region_query_worker.hpp"
 
@@ -27,6 +29,11 @@ namespace {
 // 截图期间临时注册热键：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，因此通过 WM_HOTKEY 接收截图操作。
 constexpr int kEscapeHotkeyId = 2;
+constexpr int kCandidateNextHotkeyId = 7;
+constexpr int kCandidatePreviousHotkeyId = 8;
+constexpr int kDetectElementsModeHotkeyId = 9;
+constexpr int kWindowOnlyModeHotkeyId = 10;
+constexpr int kDisableSmartRegionHotkeyId = 11;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
 constexpr UINT_PTR kUiaResultPollTimerId = 5;
@@ -64,6 +71,9 @@ struct OverlayWindowData {
   window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
   SmartRegionCandidate hover_candidate;
   SmartRegionCandidate fast_hover_candidate;
+  SmartRegionCandidateCollection hover_candidates;
+  SmartRegionModeSettings smart_region_mode_settings;
+  SmartRegionMode smart_region_mode{SmartRegionMode::DetectElements};
   std::uint64_t uia_request_id{0};
   bool has_hover{false};
   bool has_pending_hover_update{false};
@@ -86,6 +96,8 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
                  const coord::VirtualScreenRect& screen);
 void handleToolbarCommand(OverlayWindowData* data,
                           SelectionToolbarCommand command);
+void requestHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
+                        int client_y);
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
 
@@ -178,6 +190,7 @@ void clearHover(OverlayWindowData* data) noexcept
   data->hover_update_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
   data->fast_hover_candidate = SmartRegionCandidate{};
+  data->hover_candidates.clear();
   data->hover_rect = OverlayClientRect{};
   data->has_hover = false;
   data->has_pending_hover_update = false;
@@ -424,11 +437,33 @@ void applyHoverCandidate(OverlayWindowData* data,
   static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
 }
 
+bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
+                         int direction) noexcept
+{
+  if (data == nullptr || data->phase != OverlayPhase::Sniffing ||
+      data->drag != DragKind::None ||
+      data->smart_region_mode != SmartRegionMode::DetectElements ||
+      !data->hover_candidates.cycle(direction))
+  {
+    return false;
+  }
+
+  static_cast<void>(KillTimer(hwnd, kHoverStabilizeTimerId));
+  data->hover_stabilizer.clear();
+  applyHoverCandidate(data, data->hover_candidates.current());
+  if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
+  {
+    static_cast<void>(updateOverlay(hwnd, data));
+  }
+  return true;
+}
+
 // UI 线程只执行本地窗口、已知区域和冻结截图视觉检测。跨进程 UIA/MSAA
 // 由专用工作线程补充，避免无响应提供方阻塞 Overlay 消息循环。
 void updateHover(OverlayWindowData* data, int client_x, int client_y)
 {
-  if (data == nullptr)
+  if (data == nullptr ||
+      data->smart_region_mode == SmartRegionMode::Disabled)
   {
     return;
   }
@@ -441,15 +476,24 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
                                                 image_screen_rect};
 
   SmartRegionCandidate candidate;
+  const SmartRegionDetectionPolicy policy =
+      data->smart_region_mode == SmartRegionMode::WindowOnly
+          ? SmartRegionDetectionPolicy::WindowOnly
+          : SmartRegionDetectionPolicy::FastFallbackOnly;
   if (!data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
-          &visual_context, SmartRegionDetectionPolicy::FastFallbackOnly))
+          &visual_context, policy, &data->hover_candidates))
   {
     clearHover(data);
     return;
   }
   data->fast_hover_candidate = candidate;
   applyHoverCandidate(data, candidate);
+
+  if (data->smart_region_mode != SmartRegionMode::DetectElements)
+  {
+    return;
+  }
 
   WindowDetector window_detector;
   HWND root_window = nullptr;
@@ -472,7 +516,9 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
 
 void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
 {
-  if (data == nullptr || data->uia_query_worker == nullptr)
+  if (data == nullptr || data->uia_query_worker == nullptr ||
+      data->smart_region_mode != SmartRegionMode::DetectElements ||
+      data->phase != OverlayPhase::Sniffing || data->drag != DragKind::None)
   {
     return;
   }
@@ -485,6 +531,24 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     if (window_detail::selectUiaQueryCandidate(
             result, data->fast_hover_candidate, candidate))
     {
+      SmartRegionCandidate combined[SmartRegionMaxCandidates];
+      std::size_t combined_count = 0;
+      const std::size_t result_count =
+          (std::min)(result.candidate_count, SmartRegionMaxCandidates);
+      for (std::size_t index = 0; index < result_count; ++index)
+      {
+        combined[combined_count++] = result.candidates[index];
+      }
+      for (std::size_t index = 0;
+           index < data->hover_candidates.count() &&
+           combined_count < SmartRegionMaxCandidates;
+           ++index)
+      {
+        combined[combined_count++] = data->hover_candidates.candidateAt(index);
+      }
+      data->hover_candidates.replace(
+          combined, combined_count, result.screen_point.x,
+          result.screen_point.y, result.owner_rect, candidate);
       applyHoverCandidate(data, candidate);
       if (data->hover_render_gate.update(data->hover_candidate,
                                          data->has_hover))
@@ -496,6 +560,32 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
   if (!data->uia_query_worker->hasPendingWork())
   {
     static_cast<void>(KillTimer(hwnd, kUiaResultPollTimerId));
+  }
+}
+
+void setSmartRegionMode(HWND hwnd, OverlayWindowData* data,
+                        SmartRegionMode mode)
+{
+  if (data == nullptr || data->smart_region_mode == mode)
+  {
+    return;
+  }
+
+  clearHover(data);
+  data->smart_region_mode = mode;
+  // A persistence failure must not block the selected mode in this session.
+  static_cast<void>(data->smart_region_mode_settings.save(mode));
+  static_cast<void>(updateOverlay(hwnd, data));
+  if (mode == SmartRegionMode::Disabled ||
+      data->phase != OverlayPhase::Sniffing)
+  {
+    return;
+  }
+
+  POINT point{};
+  if (GetCursorPos(&point) && ScreenToClient(hwnd, &point))
+  {
+    requestHoverUpdate(hwnd, data, point.x, point.y);
   }
 }
 
@@ -615,6 +705,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
       }
+      // 首帧已绘制后再读取持久化模式，避免注册表访问进入唤起热路径。
+      data->smart_region_mode = data->smart_region_mode_settings.load();
       if (data->uia_query_worker != nullptr)
       {
         static_cast<void>(data->uia_query_worker->start());
@@ -798,6 +890,15 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       updateOverlay(hwnd, data);
       return 0;
     }
+    case WM_MOUSEWHEEL:
+    {
+      const int direction = GET_WHEEL_DELTA_WPARAM(wparam) < 0 ? 1 : -1;
+      if (cycleHoverCandidate(hwnd, data, direction))
+      {
+        return 0;
+      }
+      return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
     case WM_TIMER: {
       if (data == nullptr) {
         return 0;
@@ -929,6 +1030,31 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         return 0;
       }
+      if (wparam == kCandidateNextHotkeyId)
+      {
+        static_cast<void>(cycleHoverCandidate(hwnd, data, 1));
+        return 0;
+      }
+      if (wparam == kCandidatePreviousHotkeyId)
+      {
+        static_cast<void>(cycleHoverCandidate(hwnd, data, -1));
+        return 0;
+      }
+      if (wparam == kDetectElementsModeHotkeyId)
+      {
+        setSmartRegionMode(hwnd, data, SmartRegionMode::DetectElements);
+        return 0;
+      }
+      if (wparam == kWindowOnlyModeHotkeyId)
+      {
+        setSmartRegionMode(hwnd, data, SmartRegionMode::WindowOnly);
+        return 0;
+      }
+      if (wparam == kDisableSmartRegionHotkeyId)
+      {
+        setSmartRegionMode(hwnd, data, SmartRegionMode::Disabled);
+        return 0;
+      }
       SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
       if (selectionToolbarHotkeyCommand(data->phase, static_cast<int>(wparam),
                                         command))
@@ -996,6 +1122,11 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           data->message_channel->drain();
         }
         UnregisterHotKey(hwnd, kEscapeHotkeyId);
+        UnregisterHotKey(hwnd, kCandidateNextHotkeyId);
+        UnregisterHotKey(hwnd, kCandidatePreviousHotkeyId);
+        UnregisterHotKey(hwnd, kDetectElementsModeHotkeyId);
+        UnregisterHotKey(hwnd, kWindowOnlyModeHotkeyId);
+        UnregisterHotKey(hwnd, kDisableSmartRegionHotkeyId);
         UnregisterHotKey(hwnd, SelectionToolbarCopyHotkeyId);
         UnregisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId);
         if (callback && result.action != SelectionAction::LongShot) {
@@ -1126,6 +1257,15 @@ bool SelectionOverlay::show(const Image& background,
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
   // 键盘操作改由截图期间的临时热键提供，窗口销毁时统一注销。
   (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
+  (void)RegisterHotKey(hwnd, kCandidateNextHotkeyId, MOD_NOREPEAT, VK_TAB);
+  (void)RegisterHotKey(hwnd, kCandidatePreviousHotkeyId,
+                       MOD_SHIFT | MOD_NOREPEAT, VK_TAB);
+  (void)RegisterHotKey(hwnd, kDetectElementsModeHotkeyId,
+                       MOD_CONTROL | MOD_NOREPEAT, '1');
+  (void)RegisterHotKey(hwnd, kWindowOnlyModeHotkeyId,
+                       MOD_CONTROL | MOD_NOREPEAT, '2');
+  (void)RegisterHotKey(hwnd, kDisableSmartRegionHotkeyId,
+                       MOD_CONTROL | MOD_NOREPEAT, '3');
   (void)RegisterHotKey(hwnd, SelectionToolbarCopyHotkeyId,
                        MOD_CONTROL | MOD_NOREPEAT,
                        SelectionToolbarCopyShortcutVirtualKey);

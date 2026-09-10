@@ -846,6 +846,119 @@ TEST(UiaRegionQueryWorkerTest, SubmitDoesNotBlockAndBurstKeepsLatestRequest)
   EXPECT_EQ(context.call_count, 2);
 }
 
+TEST(UiaRegionQueryWorkerTest, ClearDiscardsAnInFlightResult)
+{
+  BlockingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runBlockingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    ASSERT_TRUE(context.condition.wait_for(
+        lock, std::chrono::seconds(1),
+        [&context]() { return context.first_query_entered; }));
+  }
+
+  worker.clear();
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.release_first_query = true;
+  }
+  context.condition.notify_all();
+
+  for (int attempt = 0; attempt < 100; ++attempt)
+  {
+    if (!worker.hasPendingWork())
+    {
+      break;
+    }
+    Sleep(1);
+  }
+  window_detail::UiaRegionQueryResult result;
+  EXPECT_FALSE(worker.tryTakeLatest(result));
+}
+
+TEST(SmartRegionCandidateCollectionTest,
+     KeepsMeaningfulHierarchyAndCyclesInBothDirections)
+{
+  SmartRegionCandidate control{1, 11, {120, 120, 240, 180},
+                               SmartRegionKind::KnownContent};
+  control.source = SmartRegionDiagnosticSource::Uia;
+  control.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate content{1, 12, {80, 80, 700, 600},
+                               SmartRegionKind::KnownContent};
+  content.source = SmartRegionDiagnosticSource::KnownContent;
+  content.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate duplicate = control;
+  duplicate.source = SmartRegionDiagnosticSource::Msaa;
+  SmartRegionCandidate client{1, 1, {20, 20, 980, 780},
+                              SmartRegionKind::ClientArea};
+  client.source = SmartRegionDiagnosticSource::ClientArea;
+  client.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate window{1, 1, {0, 0, 1000, 800},
+                              SmartRegionKind::Window};
+  window.source = SmartRegionDiagnosticSource::Window;
+  window.semantic = SmartRegionSemantic::Fallback;
+  const SmartRegionCandidate candidates[] = {
+      window, content, duplicate, client, control};
+  SmartRegionCandidateCollection collection;
+
+  collection.replace(candidates, std::size(candidates), 160, 150,
+                     {0, 0, 1000, 800}, control);
+
+  ASSERT_EQ(collection.count(), 4U);
+  EXPECT_EQ(collection.current().target_window, 11U);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().target_window, 12U);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().kind, SmartRegionKind::ClientArea);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().kind, SmartRegionKind::Window);
+  ASSERT_TRUE(collection.cycle(-1));
+  EXPECT_EQ(collection.current().kind, SmartRegionKind::ClientArea);
+}
+
+TEST(SmartRegionCandidateCollectionTest,
+     ClearDropsTheCandidateChainAndDisablesCycling)
+{
+  SmartRegionCandidate candidate{1, 2, {20, 20, 220, 120},
+                                 SmartRegionKind::KnownContent};
+  candidate.source = SmartRegionDiagnosticSource::KnownContent;
+  candidate.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidateCollection collection;
+  collection.replace(&candidate, 1, 40, 40, {0, 0, 800, 600}, candidate);
+  ASSERT_EQ(collection.count(), 1U);
+
+  collection.clear();
+
+  EXPECT_TRUE(collection.empty());
+  EXPECT_FALSE(collection.current().valid());
+  EXPECT_FALSE(collection.cycle(1));
+}
+
+TEST(SmartRegionCandidateCollectionTest,
+     NearSizedWindowSelectionDoesNotStartAtClientArea)
+{
+  SmartRegionCandidate client{1, 1, {20, 20, 980, 780},
+                              SmartRegionKind::ClientArea};
+  client.source = SmartRegionDiagnosticSource::ClientArea;
+  client.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate window{1, 1, {0, 0, 1000, 800},
+                              SmartRegionKind::Window};
+  window.source = SmartRegionDiagnosticSource::Window;
+  window.semantic = SmartRegionSemantic::Fallback;
+  const SmartRegionCandidate candidates[] = {client, window};
+  SmartRegionCandidateCollection collection;
+
+  collection.replace(candidates, std::size(candidates), 200, 200,
+                     {0, 0, 1000, 800}, window);
+
+  ASSERT_EQ(collection.count(), 2U);
+  EXPECT_EQ(collection.current().kind, SmartRegionKind::Window);
+}
+
 TEST(UiaRegionQueryWorkerTest, ReusesRecentResultForNearbyPointer)
 {
   CountingUiaQueryContext context;

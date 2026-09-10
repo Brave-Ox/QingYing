@@ -84,5 +84,31 @@ TEST(SelectionOverlayTest, WindowDestroyedBeforeOwnerIsSafe) {
   overlay.hide();
 }
 
+TEST(SelectionOverlayTest, ManualDragRemainsTheFinalSelection)
+{
+  SelectionOverlay overlay;
+  SelectionIntent result;
+  bool callback_invoked = false;
+  ASSERT_TRUE(overlay.show(
+      Image{},
+      [&result, &callback_invoked](const SelectionIntent& selection)
+      {
+        result = selection;
+        callback_invoked = true;
+      }));
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(20, 30));
+  SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(180, 150));
+  SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(180, 150));
+  SendMessageW(hwnd, WM_CLOSE, 0, 0);
+
+  ASSERT_TRUE(callback_invoked);
+  EXPECT_FALSE(result.cancelled);
+  EXPECT_EQ(result.width, 160);
+  EXPECT_EQ(result.height, 120);
+}
+
 }  // namespace
 }  // namespace qingying
