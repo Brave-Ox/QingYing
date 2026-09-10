@@ -118,6 +118,12 @@ struct SmartRegionVisualContext {
   bool valid() const noexcept;
 };
 
+enum class SmartRegionDetectionPolicy : std::uint8_t
+{
+  Complete,
+  FastFallbackOnly,
+};
+
 // 从同一点命中的多个候选中选择最小且可独立操作的有效区域。
 class SmartRegionCandidateSelector {
  public:
@@ -212,7 +218,9 @@ class SmartRegionDetector {
   bool detectAt(int screen_x, int screen_y,
                 SmartRegionCandidate& out,
                 SmartRegionDiagnosticTrace* diagnostics = nullptr,
-                const SmartRegionVisualContext* visual_context = nullptr)
+                const SmartRegionVisualContext* visual_context = nullptr,
+                SmartRegionDetectionPolicy policy =
+                    SmartRegionDetectionPolicy::Complete)
       const noexcept;
 };
 

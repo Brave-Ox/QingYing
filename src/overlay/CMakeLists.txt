@@ -11,6 +11,7 @@ add_library(qingying_overlay STATIC
   ${PROJECT_SOURCE_DIR}/src/window/known_content_locator.cpp
   ${PROJECT_SOURCE_DIR}/src/window/msaa_region_locator.cpp
   ${PROJECT_SOURCE_DIR}/src/window/uia_region_locator.cpp
+  ${PROJECT_SOURCE_DIR}/src/window/uia_region_query_worker.cpp
   ${PROJECT_SOURCE_DIR}/src/window/visual_region_locator.cpp
 )
 

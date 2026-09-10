@@ -17,6 +17,8 @@
 #include "qingying/overlay/selection_handles.hpp"
 #include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/window/smart_region_detector.hpp"
+#include "qingying/window/window_detector.hpp"
+#include "../window/uia_region_query_worker.hpp"
 
 namespace qingying {
 
@@ -27,7 +29,9 @@ namespace {
 constexpr int kEscapeHotkeyId = 2;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
+constexpr UINT_PTR kUiaResultPollTimerId = 5;
 constexpr UINT kMinimumTimerDelayMs = 1;
+constexpr UINT kUiaResultPollIntervalMs = 8;
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
@@ -57,7 +61,10 @@ struct OverlayWindowData {
   SmartRegionHoverStabilizer hover_stabilizer;
   SmartRegionHoverRenderGate hover_render_gate;
   SmartRegionUpdateGate hover_update_gate;
+  window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
   SmartRegionCandidate hover_candidate;
+  SmartRegionCandidate fast_hover_candidate;
+  std::uint64_t uia_request_id{0};
   bool has_hover{false};
   bool has_pending_hover_update{false};
   int pending_hover_x{0};
@@ -161,10 +168,16 @@ void clearHover(OverlayWindowData* data) noexcept
     // 销毁窗口或结束交互时无需依赖计时器返回值；状态已由下面字段清空。
     static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
     static_cast<void>(KillTimer(data->overlay, kHoverUpdateTimerId));
+    static_cast<void>(KillTimer(data->overlay, kUiaResultPollTimerId));
+  }
+  if (data->uia_query_worker != nullptr)
+  {
+    data->uia_query_worker->clear();
   }
   data->hover_stabilizer.clear();
   data->hover_update_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
+  data->fast_hover_candidate = SmartRegionCandidate{};
   data->hover_rect = OverlayClientRect{};
   data->has_hover = false;
   data->has_pending_hover_update = false;
@@ -372,25 +385,11 @@ OverlayClientRect screenRectToOverlayClient(
           screen_rect.width(), screen_rect.height()};
 }
 
-// 智能吸附悬停检测：优先选择受支持应用的精确内容区，其他应用回退客户区。
-void updateHover(OverlayWindowData* data, int client_x, int client_y)
+void applyHoverCandidate(OverlayWindowData* data,
+                         const SmartRegionCandidate& candidate)
 {
-  if (data == nullptr) {
-    return;
-  }
-  const int screen_x = coord::clientToScreenX(client_x, data->screen);
-  const int screen_y = coord::clientToScreenY(client_y, data->screen);
-  const WindowRect image_screen_rect{data->screen.x, data->screen.y,
-                                     data->screen.right(),
-                                     data->screen.bottom()};
-  const SmartRegionVisualContext visual_context{&data->background,
-                                                image_screen_rect};
-
-  SmartRegionCandidate candidate;
-  if (!data->smart_region_detector.detectAt(
-          screen_x, screen_y, candidate, &data->smart_region_diagnostics,
-          &visual_context)) {
-    clearHover(data);
+  if (data == nullptr || !candidate.valid())
+  {
     return;
   }
 
@@ -423,6 +422,81 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   }
   // 候选已稳定，不保留后台定时器，避免空闲覆盖层周期性重绘。
   static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
+}
+
+// UI 线程只执行本地窗口、已知区域和冻结截图视觉检测。跨进程 UIA/MSAA
+// 由专用工作线程补充，避免无响应提供方阻塞 Overlay 消息循环。
+void updateHover(OverlayWindowData* data, int client_x, int client_y)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+  const int screen_x = coord::clientToScreenX(client_x, data->screen);
+  const int screen_y = coord::clientToScreenY(client_y, data->screen);
+  const WindowRect image_screen_rect{data->screen.x, data->screen.y,
+                                     data->screen.right(),
+                                     data->screen.bottom()};
+  const SmartRegionVisualContext visual_context{&data->background,
+                                                image_screen_rect};
+
+  SmartRegionCandidate candidate;
+  if (!data->smart_region_detector.detectAt(
+          screen_x, screen_y, candidate, &data->smart_region_diagnostics,
+          &visual_context, SmartRegionDetectionPolicy::FastFallbackOnly))
+  {
+    clearHover(data);
+    return;
+  }
+  data->fast_hover_candidate = candidate;
+  applyHoverCandidate(data, candidate);
+
+  WindowDetector window_detector;
+  HWND root_window = nullptr;
+  WindowRect owner_rect;
+  if (data->uia_query_worker == nullptr ||
+      !window_detector.detectAt(screen_x, screen_y, root_window, owner_rect))
+  {
+    return;
+  }
+  ++data->uia_request_id;
+  const window_detail::UiaRegionQueryRequest request{
+      data->uia_request_id, root_window, {screen_x, screen_y}, owner_rect,
+      GetTickCount64()};
+  if (data->uia_query_worker->request(request))
+  {
+    static_cast<void>(SetTimer(data->overlay, kUiaResultPollTimerId,
+                               kUiaResultPollIntervalMs, nullptr));
+  }
+}
+
+void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
+{
+  if (data == nullptr || data->uia_query_worker == nullptr)
+  {
+    return;
+  }
+
+  window_detail::UiaRegionQueryResult result;
+  if (data->uia_query_worker->tryTakeLatest(result) &&
+      result.request_id == data->uia_request_id)
+  {
+    SmartRegionCandidate candidate;
+    if (window_detail::selectUiaQueryCandidate(
+            result, data->fast_hover_candidate, candidate))
+    {
+      applyHoverCandidate(data, candidate);
+      if (data->hover_render_gate.update(data->hover_candidate,
+                                         data->has_hover))
+      {
+        static_cast<void>(updateOverlay(hwnd, data));
+      }
+    }
+  }
+  if (!data->uia_query_worker->hasPendingWork())
+  {
+    static_cast<void>(KillTimer(hwnd, kUiaResultPollTimerId));
+  }
 }
 
 void processHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
@@ -540,6 +614,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (!updateOverlay(hwnd, data)) {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return 0;
+      }
+      if (data->uia_query_worker != nullptr)
+      {
+        static_cast<void>(data->uia_query_worker->start());
       }
       if (data->phase == OverlayPhase::Selected) {
         const SelectionIntent selection_screen =
@@ -722,6 +800,21 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_TIMER: {
       if (data == nullptr) {
+        return 0;
+      }
+      if (wparam == kUiaResultPollTimerId)
+      {
+        if (data->phase != OverlayPhase::Sniffing ||
+            data->drag != DragKind::None)
+        {
+          static_cast<void>(KillTimer(hwnd, kUiaResultPollTimerId));
+          if (data->uia_query_worker != nullptr)
+          {
+            data->uia_query_worker->clear();
+          }
+          return 0;
+        }
+        processUiaQueryResult(hwnd, data);
         return 0;
       }
       if (wparam == kHoverUpdateTimerId) {
@@ -917,6 +1010,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_NCDESTROY: {
       if (data != nullptr) {
         data->window_destroyed = true;
+        if (data->uia_query_worker != nullptr)
+        {
+          data->uia_query_worker->clear();
+        }
         if (data->accepting_messages != nullptr) {
           data->accepting_messages->store(false);
         }
@@ -937,6 +1034,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 }  // namespace
 
 struct SelectionOverlay::Impl {
+  window_detail::UiaRegionQueryWorker uia_query_worker;
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<bool> accepting_messages{false};
@@ -982,6 +1080,7 @@ bool SelectionOverlay::show(const Image& background,
   }
 
   auto data = std::make_unique<OverlayWindowData>();
+  data->uia_query_worker = &impl_->uia_query_worker;
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());

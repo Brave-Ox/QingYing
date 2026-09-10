@@ -279,6 +279,29 @@ Image makeTexturedPhotoWithInternalRoadEdges()
   return image;
 }
 
+Image makeWideRowWithLocallyVisibleRoundedTop()
+{
+  Image image;
+  image.width = 1600;
+  image.height = 900;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+
+  for (int y = 250; y < 550; ++y)
+  {
+    const int left = y < 270 ? 700 : 200;
+    const int right = y < 270 ? 900 : 1400;
+    for (int x = left; x < right; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
 TEST(VisualRegionLocatorTest,
      RejectsCandidateWhenAnySideFallsBackToTheOwnerClientArea)
 {
@@ -518,6 +541,22 @@ TEST(VisualRegionLocatorTest,
   EXPECT_EQ(result.top, kPhotoTop);
   EXPECT_EQ(result.right, kPhotoRight);
   EXPECT_EQ(result.bottom, kPhotoBottom);
+}
+
+TEST(VisualRegionLocatorTest,
+     KeepsWideRegionWhoseBoundaryIsOnlyVisibleNearPointer)
+{
+  const Image image = makeWideRowWithLocallyVisibleRoundedTop();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 400}, result));
+  EXPECT_EQ(result.left, 200);
+  EXPECT_EQ(result.top, 250);
+  EXPECT_EQ(result.right, 1400);
+  EXPECT_EQ(result.bottom, 550);
 }
 
 TEST(VisualRegionLocatorTest,

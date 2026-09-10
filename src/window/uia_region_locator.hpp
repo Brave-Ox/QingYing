@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include <Windows.h>
 
@@ -14,6 +15,7 @@ enum class UiaControlType : std::uint8_t {
   Unknown,
   Button,
   CheckBox,
+  RadioButton,
   ComboBox,
   DataItem,
   Edit,
@@ -28,6 +30,9 @@ enum class UiaControlType : std::uint8_t {
   Tree,
   DataGrid,
   Table,
+  Pane,
+  Group,
+  Custom,
 };
 
 struct UiaRegionProperties {
@@ -35,7 +40,23 @@ struct UiaRegionProperties {
   UiaControlType control_type{UiaControlType::Unknown};
   bool is_control{false};
   bool is_content{false};
+  bool is_enabled{true};
+  bool is_keyboard_focusable{false};
+  bool has_name{false};
+  HWND native_window{nullptr};
 };
+
+bool selectSmallestUiaChildAtPoint(
+    const UiaRegionProperties* children, std::size_t child_count,
+    POINT screen_point, std::size_t& out_index) noexcept;
+
+bool uiaPathBelongsToRoot(const UiaRegionProperties* path,
+                          std::size_t path_count,
+                          HWND root_window) noexcept;
+
+bool isUsefulRootScopedUiaCandidate(
+    const SmartRegionCandidate& candidate,
+    const WindowRect& owner_rect) noexcept;
 
 bool makeUiaCandidate(HWND root_window, POINT screen_point,
                       const UiaRegionProperties& properties,
@@ -46,6 +67,26 @@ std::size_t collectUiaCandidates(
     HWND root_window, POINT screen_point,
     const UiaRegionProperties* properties, std::size_t property_count,
     SmartRegionCandidate* out_candidates, std::size_t capacity) noexcept;
+
+// 一个实例只能由创建它的 COM 线程使用。会话复用 Automation、TreeWalker
+// 和 CacheRequest，避免连续鼠标移动期间重复创建跨进程 UIA 对象。
+class UiaRegionLocatorSession
+{
+ public:
+  UiaRegionLocatorSession();
+  ~UiaRegionLocatorSession();
+
+  UiaRegionLocatorSession(const UiaRegionLocatorSession&) = delete;
+  UiaRegionLocatorSession& operator=(const UiaRegionLocatorSession&) = delete;
+
+  bool locate(HWND root_window, POINT screen_point,
+              SmartRegionCandidate* out_candidates, std::size_t capacity,
+              std::size_t& out_count) noexcept;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
+};
 
 // 仅查询鼠标下元素和有限父级；UIA 服务不可用或超时时返回 false。
 bool locateUiaCandidates(HWND root_window, POINT screen_point,

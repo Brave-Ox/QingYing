@@ -1,4 +1,8 @@
 ﻿#include <cstdint>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+
 #include <Windows.h>
 #include <oleacc.h>
 
@@ -7,10 +11,102 @@
 #include "qingying/window/smart_region_detector.hpp"
 #include "known_content_locator.hpp"
 #include "msaa_region_locator.hpp"
+#include "uia_region_query_worker.hpp"
 #include "uia_region_locator.hpp"
 
 namespace qingying {
 namespace {
+
+struct BlockingUiaQueryContext
+{
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool first_query_entered{false};
+  bool release_first_query{false};
+  int call_count{0};
+};
+
+struct CountingUiaQueryContext
+{
+  int call_count{0};
+  bool succeed{true};
+};
+
+void runBlockingUiaQuery(
+    const window_detail::UiaRegionQueryRequest& request,
+    window_detail::UiaRegionQueryResult& result, void* context) noexcept
+{
+  BlockingUiaQueryContext* query_context =
+      static_cast<BlockingUiaQueryContext*>(context);
+  if (query_context == nullptr)
+  {
+    return;
+  }
+
+  {
+    std::unique_lock<std::mutex> lock(query_context->mutex);
+    ++query_context->call_count;
+    if (query_context->call_count == 1)
+    {
+      query_context->first_query_entered = true;
+      query_context->condition.notify_all();
+      query_context->condition.wait(
+          lock, [query_context]() {
+            return query_context->release_first_query;
+          });
+    }
+  }
+
+  result.succeeded = true;
+  result.candidate_count = 1;
+  result.candidates[0] = {
+      reinterpret_cast<std::uintptr_t>(request.root_window),
+      request.request_id,
+      {request.screen_point.x - 20, request.screen_point.y - 20,
+       request.screen_point.x + 20, request.screen_point.y + 20},
+      SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+}
+
+void runCountingUiaQuery(
+    const window_detail::UiaRegionQueryRequest& request,
+    window_detail::UiaRegionQueryResult& result, void* context) noexcept
+{
+  CountingUiaQueryContext* query_context =
+      static_cast<CountingUiaQueryContext*>(context);
+  if (query_context == nullptr)
+  {
+    return;
+  }
+  ++query_context->call_count;
+  result.succeeded = query_context->succeed;
+  if (!result.succeeded)
+  {
+    return;
+  }
+  result.candidate_count = 1;
+  result.candidates[0] = {
+      reinterpret_cast<std::uintptr_t>(request.root_window), 7,
+      {80, 80, 180, 180}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+}
+
+bool waitForUiaQueryResult(window_detail::UiaRegionQueryWorker& worker,
+                           window_detail::UiaRegionQueryResult& result)
+{
+  constexpr int MaximumAttempts = 500;
+  for (int attempt = 0; attempt < MaximumAttempts; ++attempt)
+  {
+    if (worker.tryTakeLatest(result))
+    {
+      return true;
+    }
+    Sleep(1);
+  }
+  return false;
+}
 
 bool ensureWindowClass(const wchar_t* class_name)
 {
@@ -712,6 +808,109 @@ TEST(SmartRegionCandidateSelectorTest,
                L"lower-score");
 }
 
+TEST(UiaRegionQueryWorkerTest, SubmitDoesNotBlockAndBurstKeepsLatestRequest)
+{
+  BlockingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runBlockingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+
+  const std::uint64_t begin_ms = GetTickCount64();
+  EXPECT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  EXPECT_LT(GetTickCount64() - begin_ms, 50U);
+
+  bool entered = false;
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    entered = context.condition.wait_for(
+        lock, std::chrono::seconds(1),
+        [&context]() { return context.first_query_entered; });
+  }
+  EXPECT_TRUE(entered);
+
+  EXPECT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {120, 120},
+                              {0, 0, 1000, 800}, 110}));
+  EXPECT_TRUE(worker.request({3, reinterpret_cast<HWND>(1), {140, 140},
+                              {0, 0, 1000, 800}, 120}));
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.release_first_query = true;
+  }
+  context.condition.notify_all();
+
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_EQ(result.request_id, 3U);
+  ASSERT_EQ(result.candidate_count, 1U);
+  EXPECT_EQ(result.candidates[0].target_window, 3U);
+  EXPECT_EQ(context.call_count, 2);
+}
+
+TEST(UiaRegionQueryWorkerTest, ReusesRecentResultForNearbyPointer)
+{
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {103, 102},
+                              {0, 0, 1000, 800}, 140}));
+  window_detail::UiaRegionQueryResult cached_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, cached_result));
+  EXPECT_EQ(cached_result.request_id, 2U);
+  EXPECT_TRUE(cached_result.cache_hit);
+  EXPECT_EQ(context.call_count, 1);
+}
+
+TEST(UiaRegionQueryWorkerTest, CoolsDownRepeatedFailureForTheSameWindow)
+{
+  CountingUiaQueryContext context;
+  context.succeed = false;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+  EXPECT_FALSE(first_result.succeeded);
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {140, 140},
+                              {0, 0, 1000, 800}, 140}));
+  window_detail::UiaRegionQueryResult cooled_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, cooled_result));
+  EXPECT_EQ(cooled_result.request_id, 2U);
+  EXPECT_TRUE(cooled_result.suppressed_by_cooldown);
+  EXPECT_EQ(context.call_count, 1);
+}
+
+TEST(UiaRegionQueryWorkerTest, AccessibilityCandidateCompetesWithFastFallback)
+{
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 1;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {150, 150};
+  result.owner_rect = {0, 0, 1000, 800};
+  result.succeeded = true;
+  result.candidate_count = 1;
+  result.candidates[0] = {
+      1, 2, {100, 100, 220, 190}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate fast_fallback{
+      1, 1, {0, 0, 1000, 800}, SmartRegionKind::Window};
+  fast_fallback.source = SmartRegionDiagnosticSource::Window;
+  fast_fallback.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(window_detail::selectUiaQueryCandidate(
+      result, fast_fallback, selected));
+  EXPECT_EQ(selected.target_window, 2U);
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Uia);
+}
+
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)
 {
   const window_detail::UiaRegionProperties properties{
@@ -740,6 +939,118 @@ TEST(UiaRegionLocatorTest, MapsImageElementToContentSurfaceCandidate)
   EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ContentSurface);
   EXPECT_EQ(candidate.rect.left, 100);
   EXPECT_EQ(candidate.rect.bottom, 440);
+}
+
+TEST(UiaRegionLocatorTest, MapsRadioButtonToActionableCandidate)
+{
+  const window_detail::UiaRegionProperties properties{
+      {100, 200, 260, 240}, window_detail::UiaControlType::RadioButton, true,
+      true, true, true, true};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(UiaRegionLocatorTest, MapsNamedFocusableCustomControlToActionableCandidate)
+{
+  const window_detail::UiaRegionProperties properties{
+      {100, 200, 300, 250}, window_detail::UiaControlType::Custom, true,
+      true, true, true, true};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(UiaRegionLocatorTest, RejectsUnnamedOrTinyGenericContainers)
+{
+  const window_detail::UiaRegionProperties unnamed_group{
+      {100, 200, 500, 400}, window_detail::UiaControlType::Group, true,
+      true, true, false, false};
+  const window_detail::UiaRegionProperties tiny_pane{
+      {100, 200, 120, 216}, window_detail::UiaControlType::Pane, true,
+      true, true, false, true};
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, unnamed_group, candidate));
+  EXPECT_FALSE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {110, 208}, tiny_pane, candidate));
+}
+
+TEST(UiaRegionLocatorTest, MapsNamedContentPaneToContentSurfaceCandidate)
+{
+  const window_detail::UiaRegionProperties properties{
+      {100, 200, 500, 400}, window_detail::UiaControlType::Pane, true,
+      true, true, false, true};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ContentSurface);
+}
+
+TEST(UiaRegionLocatorTest, SelectsSmallestChildContainingPointer)
+{
+  const window_detail::UiaRegionProperties children[] = {
+      {{0, 0, 1000, 800}, window_detail::UiaControlType::Pane, true, true},
+      {{100, 100, 140, 136}, window_detail::UiaControlType::Button, true,
+       true},
+      {{500, 100, 700, 300}, window_detail::UiaControlType::Group, true,
+       true},
+  };
+  std::size_t selected_index = 0;
+
+  ASSERT_TRUE(window_detail::selectSmallestUiaChildAtPoint(
+      children, std::size(children), {120, 118}, selected_index));
+  EXPECT_EQ(selected_index, 1U);
+}
+
+TEST(UiaRegionLocatorTest, DetectsHitPathOutsideRequestedRootWindow)
+{
+  window_detail::UiaRegionProperties path[] = {
+      {{0, 0, 1920, 1080}, window_detail::UiaControlType::Pane, true, true},
+      {{0, 0, 1920, 1080}, window_detail::UiaControlType::Pane, true,
+       true},
+  };
+  path[1].native_window = reinterpret_cast<HWND>(2);
+
+  EXPECT_FALSE(window_detail::uiaPathBelongsToRoot(
+      path, std::size(path), reinterpret_cast<HWND>(1)));
+  path[1].native_window = reinterpret_cast<HWND>(1);
+  EXPECT_TRUE(window_detail::uiaPathBelongsToRoot(
+      path, std::size(path), reinterpret_cast<HWND>(1)));
+}
+
+TEST(UiaRegionLocatorTest, RootScopedFallbackRejectsLargeGenericControl)
+{
+  SmartRegionCandidate candidate{
+      1, 1, {100, 100, 1700, 900}, SmartRegionKind::KnownContent};
+  candidate.source = SmartRegionDiagnosticSource::Uia;
+  candidate.semantic = SmartRegionSemantic::ActionableControl;
+
+  EXPECT_FALSE(window_detail::isUsefulRootScopedUiaCandidate(
+      candidate, {0, 0, 1920, 1080}));
+}
+
+TEST(UiaRegionLocatorTest, RootScopedFallbackKeepsSmallControlAndNarrowRow)
+{
+  SmartRegionCandidate button{
+      1, 1, {100, 100, 148, 132}, SmartRegionKind::KnownContent};
+  button.source = SmartRegionDiagnosticSource::Uia;
+  button.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate row{
+      1, 1, {300, 400, 1700, 480}, SmartRegionKind::KnownContent};
+  row.source = SmartRegionDiagnosticSource::Uia;
+  row.semantic = SmartRegionSemantic::ContentSurface;
+
+  EXPECT_TRUE(window_detail::isUsefulRootScopedUiaCandidate(
+      button, {0, 0, 1920, 1080}));
+  EXPECT_TRUE(window_detail::isUsefulRootScopedUiaCandidate(
+      row, {0, 0, 1920, 1080}));
 }
 
 TEST(UiaRegionLocatorTest,

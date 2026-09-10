@@ -781,7 +781,8 @@ void SmartRegionUpdateGate::reset() noexcept
 bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                                    SmartRegionCandidate& out,
                                    SmartRegionDiagnosticTrace* diagnostics,
-                                   const SmartRegionVisualContext* visual_context)
+                                   const SmartRegionVisualContext* visual_context,
+                                   SmartRegionDetectionPolicy policy)
     const noexcept
 {
   const std::uint64_t begin_ms = GetTickCount64();
@@ -815,45 +816,49 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   WindowRect client_rect;
   const bool has_client_rect =
       getRootClientScreenRect(root_window, client_rect);
-  const std::uint64_t uia_lookup_begin_ms =
-      diagnostic_enabled ? GetTickCount64() : 0;
   std::size_t uia_candidate_count = 0;
-  static_cast<void>(window_detail::locateUiaCandidates(
-      root_window, screen_point, candidates, SmartRegionMaxCandidates,
-      uia_candidate_count));
-  candidate_count = uia_candidate_count;
-  if (diagnostic_enabled) {
-    diagnostic_event.uia_lookup_attempted = true;
-    diagnostic_event.uia_lookup_ms = GetTickCount64() - uia_lookup_begin_ms;
-  }
-  const bool has_valid_local_uia_candidate =
-      SmartRegionCandidateSelector::hasValidLocalCandidate(
-          candidates, uia_candidate_count, screen_x, screen_y, window_rect,
-          SmartRegionDiagnosticSource::Uia);
-  if (diagnostic_enabled)
+  if (policy == SmartRegionDetectionPolicy::Complete)
   {
-    diagnostic_event.uia_has_valid_local_candidate =
-        has_valid_local_uia_candidate;
-  }
-
-  if (!has_valid_local_uia_candidate &&
-      candidate_count < SmartRegionMaxCandidates)
-  {
-    SmartRegionCandidate msaa_candidate;
-    const std::uint64_t msaa_lookup_begin_ms =
+    const std::uint64_t uia_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
-    const bool found_msaa_candidate = window_detail::locateMsaaCandidate(
-        root_window, screen_point, msaa_candidate);
+    static_cast<void>(window_detail::locateUiaCandidates(
+        root_window, screen_point, candidates, SmartRegionMaxCandidates,
+        uia_candidate_count));
+    candidate_count = uia_candidate_count;
     if (diagnostic_enabled)
     {
-      diagnostic_event.msaa_lookup_attempted = true;
-      diagnostic_event.msaa_candidate_found = found_msaa_candidate;
-      diagnostic_event.msaa_lookup_ms =
-          GetTickCount64() - msaa_lookup_begin_ms;
+      diagnostic_event.uia_lookup_attempted = true;
+      diagnostic_event.uia_lookup_ms = GetTickCount64() - uia_lookup_begin_ms;
     }
-    if (found_msaa_candidate)
+    const bool has_valid_local_uia_candidate =
+        SmartRegionCandidateSelector::hasValidLocalCandidate(
+            candidates, uia_candidate_count, screen_x, screen_y, window_rect,
+            SmartRegionDiagnosticSource::Uia);
+    if (diagnostic_enabled)
     {
-      candidates[candidate_count++] = msaa_candidate;
+      diagnostic_event.uia_has_valid_local_candidate =
+          has_valid_local_uia_candidate;
+    }
+
+    if (!has_valid_local_uia_candidate &&
+        candidate_count < SmartRegionMaxCandidates)
+    {
+      SmartRegionCandidate msaa_candidate;
+      const std::uint64_t msaa_lookup_begin_ms =
+          diagnostic_enabled ? GetTickCount64() : 0;
+      const bool found_msaa_candidate = window_detail::locateMsaaCandidate(
+          root_window, screen_point, msaa_candidate);
+      if (diagnostic_enabled)
+      {
+        diagnostic_event.msaa_lookup_attempted = true;
+        diagnostic_event.msaa_candidate_found = found_msaa_candidate;
+        diagnostic_event.msaa_lookup_ms =
+            GetTickCount64() - msaa_lookup_begin_ms;
+      }
+      if (found_msaa_candidate)
+      {
+        candidates[candidate_count++] = msaa_candidate;
+      }
     }
   }
   SmartRegionCandidate known_content;
