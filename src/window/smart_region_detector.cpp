@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdint>
 
+#include <Windows.h>
+
 #include "known_content_locator.hpp"
 #include "msaa_region_locator.hpp"
 #include "uia_region_locator.hpp"
@@ -110,6 +112,101 @@ SmartRegionDiagnosticSource diagnosticSourceFor(
       break;
   }
   return SmartRegionDiagnosticSource::None;
+}
+
+class ScopedProcessHandle
+{
+ public:
+  explicit ScopedProcessHandle(HANDLE handle) noexcept : m_handle(handle)
+  {
+  }
+
+  ~ScopedProcessHandle()
+  {
+    if (m_handle != nullptr)
+    {
+      static_cast<void>(CloseHandle(m_handle));
+    }
+  }
+
+  ScopedProcessHandle(const ScopedProcessHandle&) = delete;
+  ScopedProcessHandle& operator=(const ScopedProcessHandle&) = delete;
+
+  HANDLE get() const noexcept
+  {
+    return m_handle;
+  }
+
+ private:
+  HANDLE m_handle{nullptr};
+};
+
+void copyDiagnosticString(const wchar_t* source, wchar_t* destination,
+                          std::size_t capacity) noexcept
+{
+  if (source == nullptr || destination == nullptr || capacity == 0)
+  {
+    return;
+  }
+
+  std::size_t index = 0;
+  for (; index + 1 < capacity && source[index] != L'\0'; ++index)
+  {
+    destination[index] = source[index];
+  }
+  destination[index] = L'\0';
+}
+
+void recordWindowContext(SmartRegionDiagnosticEvent& event, HWND root_window,
+                         int screen_x, int screen_y) noexcept
+{
+  event.root_window = reinterpret_cast<std::uintptr_t>(root_window);
+  event.cursor_x = screen_x;
+  event.cursor_y = screen_y;
+  if (root_window == nullptr)
+  {
+    return;
+  }
+
+  static_cast<void>(GetClassNameW(
+      root_window, event.window_class,
+      static_cast<int>(SmartRegionDiagnosticWindowClassCapacity)));
+
+  DWORD process_id = 0;
+  static_cast<void>(GetWindowThreadProcessId(root_window, &process_id));
+  event.process_id = process_id;
+  if (process_id == 0)
+  {
+    return;
+  }
+
+  ScopedProcessHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                          FALSE, process_id));
+  if (process.get() == nullptr)
+  {
+    return;
+  }
+
+  wchar_t image_path[SmartRegionDiagnosticProcessNameCapacity]{};
+  DWORD image_path_length =
+      static_cast<DWORD>(SmartRegionDiagnosticProcessNameCapacity);
+  if (!QueryFullProcessImageNameW(process.get(), 0, image_path,
+                                  &image_path_length))
+  {
+    return;
+  }
+
+  const wchar_t* process_name = image_path;
+  for (const wchar_t* character = image_path;
+       *character != L'\0'; ++character)
+  {
+    if (*character == L'\\' || *character == L'/')
+    {
+      process_name = character + 1;
+    }
+  }
+  copyDiagnosticString(process_name, event.process_name,
+                       SmartRegionDiagnosticProcessNameCapacity);
 }
 
 void recordDetection(SmartRegionDiagnosticTrace* diagnostics,
@@ -748,6 +845,27 @@ bool SmartRegionDiagnosticTrace::recordStabilizationDelay(
   return true;
 }
 
+bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
+    std::uint64_t request_id, std::uint64_t elapsed_ms,
+    std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
+    bool cache_hit, bool suppressed_by_cooldown, bool applied) noexcept
+{
+  if (!m_enabled || !m_has_latest_event)
+  {
+    return false;
+  }
+  m_latest_event.uia_async_result_received = true;
+  m_latest_event.uia_async_request_id = request_id;
+  m_latest_event.uia_async_elapsed_ms = elapsed_ms;
+  m_latest_event.uia_async_age_ms = age_ms;
+  m_latest_event.uia_async_result_succeeded = succeeded;
+  m_latest_event.uia_async_msaa_attempted = msaa_attempted;
+  m_latest_event.uia_async_cache_hit = cache_hit;
+  m_latest_event.uia_async_suppressed_by_cooldown = suppressed_by_cooldown;
+  m_latest_event.uia_async_result_applied = applied;
+  return true;
+}
+
 bool SmartRegionDiagnosticTrace::hasLatestEvent() const noexcept
 {
   return m_has_latest_event;
@@ -957,6 +1075,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     diagnostic_event.window_detection_attempted = true;
     diagnostic_event.window_detection_ms =
         GetTickCount64() - window_detection_begin_ms;
+    recordWindowContext(diagnostic_event, root_window, screen_x, screen_y);
   }
 
   const POINT screen_point{screen_x, screen_y};

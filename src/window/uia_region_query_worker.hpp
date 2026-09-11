@@ -27,6 +27,7 @@ struct UiaRegionQueryResult
   WindowRect owner_rect;
   SmartRegionCandidate candidates[SmartRegionMaxCandidates];
   std::size_t candidate_count{0};
+  std::uint64_t requested_at_ms{0};
   std::uint64_t elapsed_ms{0};
   bool succeeded{false};
   bool msaa_attempted{false};

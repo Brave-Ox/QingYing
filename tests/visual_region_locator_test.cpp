@@ -249,6 +249,46 @@ Image makeSmallRoundedControlImage(std::uint32_t background_pixel,
   return image;
 }
 
+Image makeBookmarkLinkImage()
+{
+  Image image;
+  image.width = 400;
+  image.height = 180;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 72; y < 96; ++y)
+  {
+    for (int x = 100; x < 260; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
+Image makeCompactIconButtonImage()
+{
+  Image image;
+  image.width = 240;
+  image.height = 180;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 80; y < 100; ++y)
+  {
+    for (int x = 110; x < 130; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  return image;
+}
+
 Image makeTexturedPhotoWithInternalRoadEdges()
 {
   Image image;
@@ -450,6 +490,34 @@ TEST(VisualRegionLocatorTest, RejectsTextGlyphsAsRegionBoundaries)
 
   EXPECT_FALSE(window_detail::findVisualRegion(
       image, image_screen_rect, owner_client_rect, {168, 138}, result));
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest, FindsBookmarkLinkSizedVisualFixture)
+{
+  const Image image = makeBookmarkLinkImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {180, 84}, result));
+  EXPECT_EQ(result.left, 100);
+  EXPECT_EQ(result.top, 72);
+  EXPECT_EQ(result.right, 260);
+  EXPECT_EQ(result.bottom, 96);
+}
+
+TEST(VisualRegionLocatorTest,
+     RejectsTwentyPixelIconFixtureWithoutAccessibilitySemantics)
+{
+  const Image image = makeCompactIconButtonImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  EXPECT_FALSE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {120, 90}, result));
   EXPECT_TRUE(result.empty());
 }
 

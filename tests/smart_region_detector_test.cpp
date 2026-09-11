@@ -407,8 +407,10 @@ TEST(SmartRegionCandidateTest, KnownContentRemainsMoreSpecificThanClientArea)
 TEST(SmartRegionDiagnosticTraceTest, RecordsOnlyWhenExplicitlyEnabled)
 {
   SmartRegionDiagnosticTrace trace;
-  const SmartRegionDiagnosticEvent event{
-      SmartRegionDiagnosticSource::KnownContent, {20, 30, 220, 130}, 7};
+  SmartRegionDiagnosticEvent event;
+  event.source = SmartRegionDiagnosticSource::KnownContent;
+  event.rect = {20, 30, 220, 130};
+  event.elapsed_ms = 7;
 
   EXPECT_FALSE(trace.enabled());
   EXPECT_FALSE(trace.record(event));
@@ -453,6 +455,63 @@ TEST(SmartRegionDiagnosticTraceTest, AppendsOverlayAndStabilizationTimings)
             SmartRegionHoverStabilizer::CandidateSwitchDelayMs);
   EXPECT_FALSE(trace.latestEvent().msaa_lookup_attempted);
   EXPECT_EQ(trace.latestEvent().msaa_lookup_ms, 0U);
+}
+
+TEST(SmartRegionDiagnosticTraceTest,
+     AppendsWindowAndAsynchronousUiaQueryContext)
+{
+  SmartRegionDiagnosticTrace trace;
+  SmartRegionDiagnosticEvent event;
+  event.root_window = 42;
+  event.cursor_x = 320;
+  event.cursor_y = 180;
+  event.process_id = 100;
+  event.window_class[0] = L'C';
+  event.window_class[1] = L'h';
+  event.window_class[2] = L'r';
+  event.window_class[3] = L'o';
+  event.window_class[4] = L'm';
+  event.window_class[5] = L'e';
+  event.process_name[0] = L'c';
+  event.process_name[1] = L'h';
+  event.process_name[2] = L'r';
+  event.process_name[3] = L'o';
+  event.process_name[4] = L'm';
+  event.process_name[5] = L'e';
+  trace.setEnabled(true);
+  ASSERT_TRUE(trace.record(event));
+
+  ASSERT_TRUE(trace.recordAsyncUiaResult(9, 11, 17, true, true, true,
+                                         false, true));
+  const SmartRegionDiagnosticEvent& recorded = trace.latestEvent();
+  EXPECT_EQ(recorded.root_window, 42U);
+  EXPECT_EQ(recorded.cursor_x, 320);
+  EXPECT_EQ(recorded.cursor_y, 180);
+  EXPECT_EQ(recorded.process_id, 100U);
+  EXPECT_STREQ(recorded.window_class, L"Chrome");
+  EXPECT_STREQ(recorded.process_name, L"chrome");
+  EXPECT_TRUE(recorded.uia_async_result_received);
+  EXPECT_EQ(recorded.uia_async_request_id, 9U);
+  EXPECT_EQ(recorded.uia_async_elapsed_ms, 11U);
+  EXPECT_EQ(recorded.uia_async_age_ms, 17U);
+  EXPECT_TRUE(recorded.uia_async_result_succeeded);
+  EXPECT_TRUE(recorded.uia_async_msaa_attempted);
+  EXPECT_TRUE(recorded.uia_async_cache_hit);
+  EXPECT_FALSE(recorded.uia_async_suppressed_by_cooldown);
+  EXPECT_TRUE(recorded.uia_async_result_applied);
+}
+
+TEST(SmartRegionWin32FixtureTest, CreatesCompactBrowserChromeLikeChildWindow)
+{
+  TestWindowTree window_tree(L"QingYingBrowserChromeFixtureRoot",
+                             L"QingYingBrowserChromeFixtureChild", 24, 12,
+                             18, 24, WS_TABSTOP);
+
+  ASSERT_NE(window_tree.root(), nullptr);
+  ASSERT_NE(window_tree.content(), nullptr);
+  const RECT child_rect = window_tree.contentRect();
+  EXPECT_EQ(child_rect.right - child_rect.left, 18);
+  EXPECT_EQ(child_rect.bottom - child_rect.top, 24);
 }
 
 TEST(SmartRegionCandidateSelectorTest,
@@ -974,6 +1033,7 @@ TEST(UiaRegionQueryWorkerTest, ReusesRecentResultForNearbyPointer)
   window_detail::UiaRegionQueryResult cached_result;
   ASSERT_TRUE(waitForUiaQueryResult(worker, cached_result));
   EXPECT_EQ(cached_result.request_id, 2U);
+  EXPECT_EQ(cached_result.requested_at_ms, 140U);
   EXPECT_TRUE(cached_result.cache_hit);
   EXPECT_EQ(context.call_count, 1);
 }
@@ -1076,6 +1136,37 @@ TEST(UiaRegionLocatorTest, MapsNamedFocusableCustomControlToActionableCandidate)
   ASSERT_TRUE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
   EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(UiaRegionLocatorTest,
+     KeepsCompactBrowserChromeControlsAsSemanticFixtureCandidates)
+{
+  const window_detail::UiaRegionProperties tab_item{
+      {100, 8, 260, 40}, window_detail::UiaControlType::TabItem, true, true,
+      true, true, true};
+  const window_detail::UiaRegionProperties icon_button{
+      {204, 14, 216, 32}, window_detail::UiaControlType::Button, true, true,
+      true, true, false};
+  const window_detail::UiaRegionProperties bookmark_link{
+      {320, 52, 440, 76}, window_detail::UiaControlType::Hyperlink, true,
+      true, true, false, true};
+  const window_detail::UiaRegionProperties narrow_row{
+      {500, 100, 1080, 122}, window_detail::UiaControlType::ListItem, true,
+      true, true, true, true};
+  const window_detail::UiaRegionProperties properties[] = {
+      tab_item, icon_button, bookmark_link, narrow_row};
+  const POINT screen_points[] = {{180, 20}, {210, 22}, {360, 64},
+                                 {640, 110}};
+
+  for (std::size_t index = 0; index < std::size(properties); ++index)
+  {
+    SmartRegionCandidate candidate;
+    ASSERT_TRUE(window_detail::makeUiaCandidate(
+        reinterpret_cast<HWND>(1), screen_points[index], properties[index],
+        candidate));
+    EXPECT_EQ(candidate.source, SmartRegionDiagnosticSource::Uia);
+    EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+  }
 }
 
 TEST(UiaRegionLocatorTest, RejectsUnnamedOrTinyGenericContainers)

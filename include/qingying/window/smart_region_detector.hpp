@@ -67,6 +67,8 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
 constexpr std::size_t SmartRegionMaxCandidates = 9;
 constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
     SmartRegionMaxCandidates;
+constexpr std::size_t SmartRegionDiagnosticWindowClassCapacity = 128;
+constexpr std::size_t SmartRegionDiagnosticProcessNameCapacity = 260;
 
 // 保存鼠标位置下的有效候选层级。固定容量避免悬停热路径动态分配。
 class SmartRegionCandidateCollection
@@ -110,6 +112,12 @@ struct SmartRegionCandidateDiagnostic {
 struct SmartRegionDiagnosticEvent {
   SmartRegionDiagnosticSource source{SmartRegionDiagnosticSource::None};
   WindowRect rect;
+  std::uintptr_t root_window{0};
+  int cursor_x{0};
+  int cursor_y{0};
+  std::uint32_t process_id{0};
+  wchar_t window_class[SmartRegionDiagnosticWindowClassCapacity]{};
+  wchar_t process_name[SmartRegionDiagnosticProcessNameCapacity]{};
   std::uint64_t elapsed_ms{0};
   std::uint64_t window_detection_ms{0};
   std::uint64_t uia_lookup_ms{0};
@@ -119,6 +127,9 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t selection_ms{0};
   std::uint64_t overlay_render_ms{0};
   std::uint64_t stabilization_delay_ms{0};
+  std::uint64_t uia_async_request_id{0};
+  std::uint64_t uia_async_elapsed_ms{0};
+  std::uint64_t uia_async_age_ms{0};
   std::uint8_t visual_edge_mask{0};
   bool window_detection_attempted{false};
   bool uia_lookup_attempted{false};
@@ -127,6 +138,12 @@ struct SmartRegionDiagnosticEvent {
   bool msaa_candidate_found{false};
   bool known_content_lookup_attempted{false};
   bool visual_lookup_attempted{false};
+  bool uia_async_result_received{false};
+  bool uia_async_result_succeeded{false};
+  bool uia_async_msaa_attempted{false};
+  bool uia_async_cache_hit{false};
+  bool uia_async_suppressed_by_cooldown{false};
+  bool uia_async_result_applied{false};
   SmartRegionCandidateDiagnostic candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t candidate_count{0};
 };
@@ -172,6 +189,11 @@ class SmartRegionDiagnosticTrace {
   bool record(const SmartRegionDiagnosticEvent& event) noexcept;
   bool recordOverlayRenderElapsed(std::uint64_t elapsed_ms) noexcept;
   bool recordStabilizationDelay(std::uint64_t delay_ms) noexcept;
+  bool recordAsyncUiaResult(
+      std::uint64_t request_id, std::uint64_t elapsed_ms,
+      std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
+      bool cache_hit, bool suppressed_by_cooldown,
+      bool applied) noexcept;
   bool hasLatestEvent() const noexcept;
   const SmartRegionDiagnosticEvent& latestEvent() const noexcept;
 

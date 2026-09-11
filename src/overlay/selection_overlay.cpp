@@ -120,12 +120,19 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
   wchar_t message[4096]{};
   if (FAILED(StringCchPrintfW(
           message, std::size(message),
-          L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) total=%llu ms "
+          L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) root=%p "
+          L"cursor=(%d,%d) pid=%lu process=%s class=%s total=%llu ms "
           L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
           L"msaaFound=%d known=%llu visual=%llu select=%llu render=%llu "
-          L"settle=%llu edges=0x%02X candidates=%llu\n",
+          L"settle=%llu edges=0x%02X asyncUia=(received:%d request:%llu "
+          L"elapsed:%llu age:%llu succeeded:%d msaa:%d cache:%d cooldown:%d "
+          L"applied:%d) candidates=%llu\n",
           smartRegionDiagnosticSourceName(event.source), event.rect.left,
           event.rect.top, event.rect.right, event.rect.bottom,
+          reinterpret_cast<void*>(event.root_window), event.cursor_x,
+          event.cursor_y, static_cast<unsigned long>(event.process_id),
+          event.process_name[0] != L'\0' ? event.process_name : L"<unknown>",
+          event.window_class[0] != L'\0' ? event.window_class : L"<unknown>",
           static_cast<unsigned long long>(event.elapsed_ms),
           static_cast<unsigned long long>(event.window_detection_ms),
           static_cast<unsigned long long>(event.uia_lookup_ms),
@@ -139,6 +146,15 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           static_cast<unsigned long long>(event.overlay_render_ms),
           static_cast<unsigned long long>(event.stabilization_delay_ms),
           static_cast<unsigned int>(event.visual_edge_mask),
+          event.uia_async_result_received ? 1 : 0,
+          static_cast<unsigned long long>(event.uia_async_request_id),
+          static_cast<unsigned long long>(event.uia_async_elapsed_ms),
+          static_cast<unsigned long long>(event.uia_async_age_ms),
+          event.uia_async_result_succeeded ? 1 : 0,
+          event.uia_async_msaa_attempted ? 1 : 0,
+          event.uia_async_cache_hit ? 1 : 0,
+          event.uia_async_suppressed_by_cooldown ? 1 : 0,
+          event.uia_async_result_applied ? 1 : 0,
           static_cast<unsigned long long>(event.candidate_count)))) {
     return;
   }
@@ -525,36 +541,50 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
   }
 
   window_detail::UiaRegionQueryResult result;
-  if (data->uia_query_worker->tryTakeLatest(result) &&
-      result.request_id == data->uia_request_id)
+  if (data->uia_query_worker->tryTakeLatest(result))
   {
-    SmartRegionCandidate candidate;
-    if (window_detail::selectUiaQueryCandidate(
-            result, data->fast_hover_candidate, candidate))
+    const bool applies_to_current_request =
+        result.request_id == data->uia_request_id;
+    const std::uint64_t now_ms = GetTickCount64();
+    const std::uint64_t result_age_ms =
+        now_ms >= result.requested_at_ms
+            ? now_ms - result.requested_at_ms
+            : 0;
+    static_cast<void>(data->smart_region_diagnostics.recordAsyncUiaResult(
+        result.request_id, result.elapsed_ms, result_age_ms, result.succeeded,
+        result.msaa_attempted, result.cache_hit,
+        result.suppressed_by_cooldown, applies_to_current_request));
+    if (applies_to_current_request)
     {
-      SmartRegionCandidate combined[SmartRegionMaxCandidates];
-      std::size_t combined_count = 0;
-      const std::size_t result_count =
-          (std::min)(result.candidate_count, SmartRegionMaxCandidates);
-      for (std::size_t index = 0; index < result_count; ++index)
+      SmartRegionCandidate candidate;
+      if (window_detail::selectUiaQueryCandidate(
+              result, data->fast_hover_candidate, candidate))
       {
-        combined[combined_count++] = result.candidates[index];
-      }
-      for (std::size_t index = 0;
-           index < data->hover_candidates.count() &&
-           combined_count < SmartRegionMaxCandidates;
-           ++index)
-      {
-        combined[combined_count++] = data->hover_candidates.candidateAt(index);
-      }
-      data->hover_candidates.replace(
-          combined, combined_count, result.screen_point.x,
-          result.screen_point.y, result.owner_rect, candidate);
-      applyHoverCandidate(data, candidate);
-      if (data->hover_render_gate.update(data->hover_candidate,
-                                         data->has_hover))
-      {
-        static_cast<void>(updateOverlay(hwnd, data));
+        SmartRegionCandidate combined[SmartRegionMaxCandidates];
+        std::size_t combined_count = 0;
+        const std::size_t result_count =
+            (std::min)(result.candidate_count, SmartRegionMaxCandidates);
+        for (std::size_t index = 0; index < result_count; ++index)
+        {
+          combined[combined_count++] = result.candidates[index];
+        }
+        for (std::size_t index = 0;
+             index < data->hover_candidates.count() &&
+             combined_count < SmartRegionMaxCandidates;
+             ++index)
+        {
+          combined[combined_count++] =
+              data->hover_candidates.candidateAt(index);
+        }
+        data->hover_candidates.replace(
+            combined, combined_count, result.screen_point.x,
+            result.screen_point.y, result.owner_rect, candidate);
+        applyHoverCandidate(data, candidate);
+        if (data->hover_render_gate.update(data->hover_candidate,
+                                           data->has_hover))
+        {
+          static_cast<void>(updateOverlay(hwnd, data));
+        }
       }
     }
   }

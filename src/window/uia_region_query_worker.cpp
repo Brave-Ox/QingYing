@@ -176,6 +176,7 @@ struct UiaRegionQueryWorker::Impl
       query_result.root_window = request.value.root_window;
       query_result.screen_point = request.value.screen_point;
       query_result.owner_rect = request.value.owner_rect;
+      query_result.requested_at_ms = request.value.requested_at_ms;
       query_result.elapsed_ms = GetTickCount64() - begin_ms;
 
       {
