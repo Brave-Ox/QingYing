@@ -70,7 +70,7 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
   std::size_t uia_candidate_count = 0;
   static_cast<void>(session.locate(
       request.root_window, request.screen_point, result.candidates,
-      SmartRegionMaxCandidates, uia_candidate_count));
+      SmartRegionMaxUiaCandidates, uia_candidate_count));
   result.candidate_count = uia_candidate_count;
 
   const bool has_local_uia =
@@ -79,7 +79,7 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
           request.screen_point.y, request.owner_rect,
           SmartRegionDiagnosticSource::Uia);
   if (!has_local_uia &&
-      result.candidate_count < SmartRegionMaxCandidates)
+      result.candidate_count < SmartRegionMaxAccessibilityCandidates)
   {
     result.msaa_attempted = true;
     SmartRegionCandidate msaa_candidate;
@@ -248,12 +248,9 @@ bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
                              SmartRegionCandidate& out) noexcept
 {
   SmartRegionCandidate candidates[SmartRegionMaxCandidates];
-  std::size_t candidate_count = (std::min)(
-      result.candidate_count, SmartRegionMaxCandidates);
-  for (std::size_t index = 0; index < candidate_count; ++index)
-  {
-    candidates[index] = result.candidates[index];
-  }
+  std::size_t candidate_count = retainAccessibilityCandidates(
+      result.candidates, result.candidate_count, candidates,
+      std::size(candidates));
   if (fast_candidate.valid() && candidate_count < SmartRegionMaxCandidates)
   {
     candidates[candidate_count++] = fast_candidate;
@@ -261,6 +258,41 @@ bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
   return SmartRegionCandidateSelector::selectBest(
       candidates, candidate_count, result.screen_point.x,
       result.screen_point.y, result.owner_rect, out);
+}
+
+std::size_t retainAccessibilityCandidates(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    SmartRegionCandidate* out_candidates, std::size_t capacity) noexcept
+{
+  if (candidates == nullptr || out_candidates == nullptr || capacity == 0)
+  {
+    return 0;
+  }
+
+  const std::size_t input_count =
+      (std::min)(candidate_count, SmartRegionMaxCandidates);
+  const std::size_t output_capacity =
+      (std::min)(capacity, SmartRegionMaxAccessibilityCandidates);
+  std::size_t retained_count = 0;
+  std::size_t uia_count = 0;
+  for (std::size_t index = 0; index < input_count; ++index)
+  {
+    const SmartRegionCandidate& candidate = candidates[index];
+    if (candidate.source == SmartRegionDiagnosticSource::Uia)
+    {
+      if (uia_count >= SmartRegionMaxUiaCandidates)
+      {
+        continue;
+      }
+      ++uia_count;
+    }
+    if (retained_count >= output_capacity)
+    {
+      break;
+    }
+    out_candidates[retained_count++] = candidate;
+  }
+  return retained_count;
 }
 
 bool UiaRegionQueryWorker::start() noexcept

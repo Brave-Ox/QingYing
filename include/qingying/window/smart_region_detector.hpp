@@ -63,8 +63,14 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
   LowerScore,
 };
 
-// UIA 最多保留命中元素和三个父级，另有 MSAA、已知内容、视觉、客户区和窗口兜底。
+// 固定容量中始终为已知内容/视觉、客户区和窗口保留四个回退槽。
 constexpr std::size_t SmartRegionMaxCandidates = 9;
+constexpr std::size_t SmartRegionReservedFallbackCandidates = 4;
+// UIA 保留命中元素和三个父级，剩余一个无障碍槽只供 MSAA 兜底使用。
+constexpr std::size_t SmartRegionMaxAccessibilityCandidates =
+    SmartRegionMaxCandidates - SmartRegionReservedFallbackCandidates;
+constexpr std::size_t SmartRegionMaxUiaCandidates =
+    SmartRegionMaxAccessibilityCandidates - 1;
 constexpr std::size_t SmartRegionDiagnosticMaxCandidates =
     SmartRegionMaxCandidates;
 constexpr std::size_t SmartRegionDiagnosticWindowClassCapacity = 128;
@@ -130,6 +136,7 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t uia_async_request_id{0};
   std::uint64_t uia_async_elapsed_ms{0};
   std::uint64_t uia_async_age_ms{0};
+  std::size_t uia_async_candidate_count{0};
   std::uint8_t visual_edge_mask{0};
   bool window_detection_attempted{false};
   bool uia_lookup_attempted{false};
@@ -143,6 +150,7 @@ struct SmartRegionDiagnosticEvent {
   bool uia_async_msaa_attempted{false};
   bool uia_async_cache_hit{false};
   bool uia_async_suppressed_by_cooldown{false};
+  bool uia_async_matches_current_request{false};
   bool uia_async_result_applied{false};
   SmartRegionCandidateDiagnostic candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t candidate_count{0};
@@ -193,6 +201,7 @@ class SmartRegionDiagnosticTrace {
       std::uint64_t request_id, std::uint64_t elapsed_ms,
       std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
       bool cache_hit, bool suppressed_by_cooldown,
+      std::size_t candidate_count, bool matches_current_request,
       bool applied) noexcept;
   bool hasLatestEvent() const noexcept;
   const SmartRegionDiagnosticEvent& latestEvent() const noexcept;

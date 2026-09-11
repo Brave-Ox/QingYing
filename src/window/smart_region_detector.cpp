@@ -848,7 +848,9 @@ bool SmartRegionDiagnosticTrace::recordStabilizationDelay(
 bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
     std::uint64_t request_id, std::uint64_t elapsed_ms,
     std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
-    bool cache_hit, bool suppressed_by_cooldown, bool applied) noexcept
+    bool cache_hit, bool suppressed_by_cooldown,
+    std::size_t candidate_count, bool matches_current_request,
+    bool applied) noexcept
 {
   if (!m_enabled || !m_has_latest_event)
   {
@@ -858,10 +860,13 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
   m_latest_event.uia_async_request_id = request_id;
   m_latest_event.uia_async_elapsed_ms = elapsed_ms;
   m_latest_event.uia_async_age_ms = age_ms;
+  m_latest_event.uia_async_candidate_count = candidate_count;
   m_latest_event.uia_async_result_succeeded = succeeded;
   m_latest_event.uia_async_msaa_attempted = msaa_attempted;
   m_latest_event.uia_async_cache_hit = cache_hit;
   m_latest_event.uia_async_suppressed_by_cooldown = suppressed_by_cooldown;
+  m_latest_event.uia_async_matches_current_request =
+      matches_current_request;
   m_latest_event.uia_async_result_applied = applied;
   return true;
 }
@@ -1090,7 +1095,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     const std::uint64_t uia_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
     static_cast<void>(window_detail::locateUiaCandidates(
-        root_window, screen_point, candidates, SmartRegionMaxCandidates,
+        root_window, screen_point, candidates, SmartRegionMaxUiaCandidates,
         uia_candidate_count));
     candidate_count = uia_candidate_count;
     if (diagnostic_enabled)
@@ -1109,7 +1114,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     }
 
     if (!has_valid_local_uia_candidate &&
-        candidate_count < SmartRegionMaxCandidates)
+        candidate_count < SmartRegionMaxAccessibilityCandidates)
     {
       SmartRegionCandidate msaa_candidate;
       const std::uint64_t msaa_lookup_begin_ms =

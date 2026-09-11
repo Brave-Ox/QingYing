@@ -481,8 +481,9 @@ TEST(SmartRegionDiagnosticTraceTest,
   trace.setEnabled(true);
   ASSERT_TRUE(trace.record(event));
 
-  ASSERT_TRUE(trace.recordAsyncUiaResult(9, 11, 17, true, true, true,
-                                         false, true));
+  ASSERT_TRUE(trace.recordAsyncUiaResult(
+      9, 11, 17, true, true, true, false, SmartRegionMaxUiaCandidates, true,
+      true));
   const SmartRegionDiagnosticEvent& recorded = trace.latestEvent();
   EXPECT_EQ(recorded.root_window, 42U);
   EXPECT_EQ(recorded.cursor_x, 320);
@@ -498,6 +499,8 @@ TEST(SmartRegionDiagnosticTraceTest,
   EXPECT_TRUE(recorded.uia_async_msaa_attempted);
   EXPECT_TRUE(recorded.uia_async_cache_hit);
   EXPECT_FALSE(recorded.uia_async_suppressed_by_cooldown);
+  EXPECT_EQ(recorded.uia_async_candidate_count, SmartRegionMaxUiaCandidates);
+  EXPECT_TRUE(recorded.uia_async_matches_current_request);
   EXPECT_TRUE(recorded.uia_async_result_applied);
 }
 
@@ -1082,6 +1085,74 @@ TEST(UiaRegionQueryWorkerTest, AccessibilityCandidateCompetesWithFastFallback)
       result, fast_fallback, selected));
   EXPECT_EQ(selected.target_window, 2U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Uia);
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     PreservesFastFallbackWhenUiaPathFillsTheFixedCandidateCapacity)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 1;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {204, 204};
+  result.owner_rect = owner_rect;
+  result.succeeded = true;
+  result.candidate_count = SmartRegionMaxCandidates;
+  for (std::size_t index = 0; index < result.candidate_count; ++index)
+  {
+    result.candidates[index] = {
+        1, index + 1, {200, 200, 208, 208}, SmartRegionKind::KnownContent};
+    result.candidates[index].source = SmartRegionDiagnosticSource::Uia;
+    result.candidates[index].semantic =
+        SmartRegionSemantic::ActionableControl;
+  }
+  SmartRegionCandidate fast_fallback{
+      1, 100, {100, 100, 700, 600}, SmartRegionKind::KnownContent};
+  fast_fallback.source = SmartRegionDiagnosticSource::KnownContent;
+  fast_fallback.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(window_detail::selectUiaQueryCandidate(
+      result, fast_fallback, selected));
+  EXPECT_EQ(selected.target_window, 100U);
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::KnownContent);
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     RetainsUiaAndMsaaWithinTheReservedFallbackCapacity)
+{
+  SmartRegionCandidate input[SmartRegionMaxCandidates];
+  for (std::size_t index = 0; index < SmartRegionMaxUiaCandidates; ++index)
+  {
+    input[index] = {
+        1, index + 1, {100, 100, 180, 140}, SmartRegionKind::KnownContent};
+    input[index].source = SmartRegionDiagnosticSource::Uia;
+    input[index].semantic = SmartRegionSemantic::ActionableControl;
+  }
+  input[SmartRegionMaxUiaCandidates] = {
+      1, 99, {200, 200, 300, 240}, SmartRegionKind::KnownContent};
+  input[SmartRegionMaxUiaCandidates].source = SmartRegionDiagnosticSource::Msaa;
+  input[SmartRegionMaxUiaCandidates].semantic =
+      SmartRegionSemantic::ActionableControl;
+  for (std::size_t index = SmartRegionMaxAccessibilityCandidates;
+       index < SmartRegionMaxCandidates; ++index)
+  {
+    input[index] = {
+        1, index + 1, {400, 400, 408, 408}, SmartRegionKind::KnownContent};
+    input[index].source = SmartRegionDiagnosticSource::Uia;
+    input[index].semantic = SmartRegionSemantic::ActionableControl;
+  }
+  SmartRegionCandidate retained[SmartRegionMaxCandidates];
+
+  const std::size_t retained_count =
+      window_detail::retainAccessibilityCandidates(
+          input, std::size(input), retained, std::size(retained));
+
+  ASSERT_EQ(retained_count, SmartRegionMaxAccessibilityCandidates);
+  EXPECT_EQ(retained[0].source, SmartRegionDiagnosticSource::Uia);
+  EXPECT_EQ(retained[3].source, SmartRegionDiagnosticSource::Uia);
+  EXPECT_EQ(retained[4].source, SmartRegionDiagnosticSource::Msaa);
+  EXPECT_LT(retained_count, SmartRegionMaxCandidates);
 }
 
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)

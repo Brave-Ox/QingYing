@@ -64,6 +64,42 @@ SmartRegionMode smartRegionModeFromPersistedValue(
   }
 }
 
+bool smartRegionModeForHotkeyId(int hotkey_id,
+                                SmartRegionMode& mode) noexcept
+{
+  switch (hotkey_id)
+  {
+    case SmartRegionDetectElementsModeHotkeyId:
+    case SmartRegionDetectElementsAlternateHotkeyId:
+      mode = SmartRegionMode::DetectElements;
+      return true;
+    case SmartRegionWindowOnlyModeHotkeyId:
+    case SmartRegionWindowOnlyAlternateHotkeyId:
+      mode = SmartRegionMode::WindowOnly;
+      return true;
+    case SmartRegionDisabledModeHotkeyId:
+    case SmartRegionDisabledAlternateHotkeyId:
+      mode = SmartRegionMode::Disabled;
+      return true;
+    default:
+      return false;
+  }
+}
+
+const wchar_t* smartRegionModeName(SmartRegionMode mode) noexcept
+{
+  switch (mode)
+  {
+    case SmartRegionMode::DetectElements:
+      return L"detect-elements";
+    case SmartRegionMode::WindowOnly:
+      return L"window-only";
+    case SmartRegionMode::Disabled:
+      return L"disabled";
+  }
+  return L"unknown";
+}
+
 SmartRegionModeSettings::SmartRegionModeSettings(std::wstring test_namespace)
     : m_key(L"Software\\QingYing\\Capture")
 {

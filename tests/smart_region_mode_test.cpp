@@ -19,6 +19,40 @@ TEST(SmartRegionModeTest, UnknownPersistedValueFallsBackToElementDetection)
             SmartRegionMode::DetectElements);
 }
 
+TEST(SmartRegionModeTest, MapsLegacyAndAlternateOverlayHotkeysToModes)
+{
+  SmartRegionMode mode = SmartRegionMode::Disabled;
+
+  EXPECT_TRUE(
+      smartRegionModeForHotkeyId(SmartRegionDetectElementsModeHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::DetectElements);
+  EXPECT_TRUE(smartRegionModeForHotkeyId(
+      SmartRegionDetectElementsAlternateHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::DetectElements);
+  EXPECT_TRUE(
+      smartRegionModeForHotkeyId(SmartRegionWindowOnlyModeHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::WindowOnly);
+  EXPECT_TRUE(smartRegionModeForHotkeyId(
+      SmartRegionWindowOnlyAlternateHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::WindowOnly);
+  EXPECT_TRUE(
+      smartRegionModeForHotkeyId(SmartRegionDisabledModeHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::Disabled);
+  EXPECT_TRUE(smartRegionModeForHotkeyId(
+      SmartRegionDisabledAlternateHotkeyId, mode));
+  EXPECT_EQ(mode, SmartRegionMode::Disabled);
+  EXPECT_FALSE(smartRegionModeForHotkeyId(999, mode));
+}
+
+TEST(SmartRegionModeTest, NamesModesForRuntimeDiagnostics)
+{
+  EXPECT_STREQ(smartRegionModeName(SmartRegionMode::DetectElements),
+               L"detect-elements");
+  EXPECT_STREQ(smartRegionModeName(SmartRegionMode::WindowOnly),
+               L"window-only");
+  EXPECT_STREQ(smartRegionModeName(SmartRegionMode::Disabled), L"disabled");
+}
+
 TEST(SmartRegionModeSettingsTest, DefaultsAndPersistsInAnIsolatedKey)
 {
   const std::wstring test_namespace =

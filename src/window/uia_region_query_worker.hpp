@@ -39,6 +39,11 @@ using UiaRegionQueryFunction = void (*)(
     const UiaRegionQueryRequest& request, UiaRegionQueryResult& result,
     void* context) noexcept;
 
+// 仅保留固定预算内的 UIA 和 MSAA 候选，避免异步结果挤掉快速路径的回退链。
+std::size_t retainAccessibilityCandidates(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    SmartRegionCandidate* out_candidates, std::size_t capacity) noexcept;
+
 bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
                              const SmartRegionCandidate& fast_candidate,
                              SmartRegionCandidate& out) noexcept;

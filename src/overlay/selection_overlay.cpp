@@ -31,9 +31,6 @@ namespace {
 constexpr int kEscapeHotkeyId = 2;
 constexpr int kCandidateNextHotkeyId = 7;
 constexpr int kCandidatePreviousHotkeyId = 8;
-constexpr int kDetectElementsModeHotkeyId = 9;
-constexpr int kWindowOnlyModeHotkeyId = 10;
-constexpr int kDisableSmartRegionHotkeyId = 11;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
 constexpr UINT_PTR kUiaResultPollTimerId = 5;
@@ -126,7 +123,7 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           L"msaaFound=%d known=%llu visual=%llu select=%llu render=%llu "
           L"settle=%llu edges=0x%02X asyncUia=(received:%d request:%llu "
           L"elapsed:%llu age:%llu succeeded:%d msaa:%d cache:%d cooldown:%d "
-          L"applied:%d) candidates=%llu\n",
+          L"resultCandidates:%llu current:%d applied:%d) candidates=%llu\n",
           smartRegionDiagnosticSourceName(event.source), event.rect.left,
           event.rect.top, event.rect.right, event.rect.bottom,
           reinterpret_cast<void*>(event.root_window), event.cursor_x,
@@ -154,6 +151,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           event.uia_async_msaa_attempted ? 1 : 0,
           event.uia_async_cache_hit ? 1 : 0,
           event.uia_async_suppressed_by_cooldown ? 1 : 0,
+          static_cast<unsigned long long>(event.uia_async_candidate_count),
+          event.uia_async_matches_current_request ? 1 : 0,
           event.uia_async_result_applied ? 1 : 0,
           static_cast<unsigned long long>(event.candidate_count)))) {
     return;
@@ -186,6 +185,27 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
     }
   }
   OutputDebugStringW(message);
+}
+
+void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
+                           UINT virtual_key,
+                           const wchar_t* description) noexcept
+{
+  if (RegisterHotKey(hwnd, hotkey_id, modifiers, virtual_key) != FALSE)
+  {
+    return;
+  }
+
+  wchar_t message[256]{};
+  if (SUCCEEDED(StringCchPrintfW(
+          message, std::size(message),
+          L"[QingYing SmartRegion] hotkey registration failed: %s "
+          L"error=%lu\n",
+          description != nullptr ? description : L"<unknown>",
+          static_cast<unsigned long>(GetLastError()))))
+  {
+    OutputDebugStringW(message);
+  }
 }
 
 void clearHover(OverlayWindowData* data) noexcept
@@ -550,10 +570,7 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
         now_ms >= result.requested_at_ms
             ? now_ms - result.requested_at_ms
             : 0;
-    static_cast<void>(data->smart_region_diagnostics.recordAsyncUiaResult(
-        result.request_id, result.elapsed_ms, result_age_ms, result.succeeded,
-        result.msaa_attempted, result.cache_hit,
-        result.suppressed_by_cooldown, applies_to_current_request));
+    bool result_applied = false;
     if (applies_to_current_request)
     {
       SmartRegionCandidate candidate;
@@ -561,13 +578,10 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
               result, data->fast_hover_candidate, candidate))
       {
         SmartRegionCandidate combined[SmartRegionMaxCandidates];
-        std::size_t combined_count = 0;
-        const std::size_t result_count =
-            (std::min)(result.candidate_count, SmartRegionMaxCandidates);
-        for (std::size_t index = 0; index < result_count; ++index)
-        {
-          combined[combined_count++] = result.candidates[index];
-        }
+        std::size_t combined_count =
+            window_detail::retainAccessibilityCandidates(
+                result.candidates, result.candidate_count, combined,
+                std::size(combined));
         for (std::size_t index = 0;
              index < data->hover_candidates.count() &&
              combined_count < SmartRegionMaxCandidates;
@@ -579,6 +593,7 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
         data->hover_candidates.replace(
             combined, combined_count, result.screen_point.x,
             result.screen_point.y, result.owner_rect, candidate);
+        result_applied = true;
         applyHoverCandidate(data, candidate);
         if (data->hover_render_gate.update(data->hover_candidate,
                                            data->has_hover))
@@ -586,6 +601,16 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
           static_cast<void>(updateOverlay(hwnd, data));
         }
       }
+    }
+    const bool recorded_async_result =
+        data->smart_region_diagnostics.recordAsyncUiaResult(
+            result.request_id, result.elapsed_ms, result_age_ms,
+            result.succeeded, result.msaa_attempted, result.cache_hit,
+            result.suppressed_by_cooldown, result.candidate_count,
+            applies_to_current_request, result_applied);
+    if (recorded_async_result)
+    {
+      emitSmartRegionDiagnostic(data->smart_region_diagnostics);
     }
   }
   if (!data->uia_query_worker->hasPendingWork())
@@ -606,6 +631,16 @@ void setSmartRegionMode(HWND hwnd, OverlayWindowData* data,
   data->smart_region_mode = mode;
   // A persistence failure must not block the selected mode in this session.
   static_cast<void>(data->smart_region_mode_settings.save(mode));
+  if (data->smart_region_diagnostics.enabled())
+  {
+    wchar_t message[128]{};
+    if (SUCCEEDED(StringCchPrintfW(
+            message, std::size(message),
+            L"[QingYing SmartRegion] mode=%s\n", smartRegionModeName(mode))))
+    {
+      OutputDebugStringW(message);
+    }
+  }
   static_cast<void>(updateOverlay(hwnd, data));
   if (mode == SmartRegionMode::Disabled ||
       data->phase != OverlayPhase::Sniffing)
@@ -1076,19 +1111,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         static_cast<void>(cycleHoverCandidate(hwnd, data, -1));
         return 0;
       }
-      if (wparam == kDetectElementsModeHotkeyId)
+      SmartRegionMode mode = SmartRegionMode::DetectElements;
+      if (smartRegionModeForHotkeyId(static_cast<int>(wparam), mode))
       {
-        setSmartRegionMode(hwnd, data, SmartRegionMode::DetectElements);
-        return 0;
-      }
-      if (wparam == kWindowOnlyModeHotkeyId)
-      {
-        setSmartRegionMode(hwnd, data, SmartRegionMode::WindowOnly);
-        return 0;
-      }
-      if (wparam == kDisableSmartRegionHotkeyId)
-      {
-        setSmartRegionMode(hwnd, data, SmartRegionMode::Disabled);
+        setSmartRegionMode(hwnd, data, mode);
         return 0;
       }
       SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
@@ -1160,9 +1186,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         UnregisterHotKey(hwnd, kEscapeHotkeyId);
         UnregisterHotKey(hwnd, kCandidateNextHotkeyId);
         UnregisterHotKey(hwnd, kCandidatePreviousHotkeyId);
-        UnregisterHotKey(hwnd, kDetectElementsModeHotkeyId);
-        UnregisterHotKey(hwnd, kWindowOnlyModeHotkeyId);
-        UnregisterHotKey(hwnd, kDisableSmartRegionHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionDetectElementsModeHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionWindowOnlyModeHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionDisabledModeHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionDetectElementsAlternateHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId);
+        UnregisterHotKey(hwnd, SmartRegionDisabledAlternateHotkeyId);
         UnregisterHotKey(hwnd, SelectionToolbarCopyHotkeyId);
         UnregisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId);
         if (callback && result.action != SelectionAction::LongShot) {
@@ -1296,12 +1325,21 @@ bool SelectionOverlay::show(const Image& background,
   (void)RegisterHotKey(hwnd, kCandidateNextHotkeyId, MOD_NOREPEAT, VK_TAB);
   (void)RegisterHotKey(hwnd, kCandidatePreviousHotkeyId,
                        MOD_SHIFT | MOD_NOREPEAT, VK_TAB);
-  (void)RegisterHotKey(hwnd, kDetectElementsModeHotkeyId,
-                       MOD_CONTROL | MOD_NOREPEAT, '1');
-  (void)RegisterHotKey(hwnd, kWindowOnlyModeHotkeyId,
-                       MOD_CONTROL | MOD_NOREPEAT, '2');
-  (void)RegisterHotKey(hwnd, kDisableSmartRegionHotkeyId,
-                       MOD_CONTROL | MOD_NOREPEAT, '3');
+  registerOverlayHotkey(hwnd, SmartRegionDetectElementsModeHotkeyId,
+                        MOD_CONTROL | MOD_NOREPEAT, '1', L"Ctrl+1");
+  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyModeHotkeyId,
+                        MOD_CONTROL | MOD_NOREPEAT, '2', L"Ctrl+2");
+  registerOverlayHotkey(hwnd, SmartRegionDisabledModeHotkeyId,
+                        MOD_CONTROL | MOD_NOREPEAT, '3', L"Ctrl+3");
+  registerOverlayHotkey(hwnd, SmartRegionDetectElementsAlternateHotkeyId,
+                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '1',
+                        L"Ctrl+Shift+1");
+  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId,
+                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '2',
+                        L"Ctrl+Shift+2");
+  registerOverlayHotkey(hwnd, SmartRegionDisabledAlternateHotkeyId,
+                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '3',
+                        L"Ctrl+Shift+3");
   (void)RegisterHotKey(hwnd, SelectionToolbarCopyHotkeyId,
                        MOD_CONTROL | MOD_NOREPEAT,
                        SelectionToolbarCopyShortcutVirtualKey);

@@ -39,7 +39,7 @@
 
 ## 阶段二：候选容量、语义和小元素识别
 
-- [ ] **任务 4：为回退候选预留固定容量**
+- [x] **任务 4：为回退候选预留固定容量**
 
   调整 UIA 候选收集和总候选合并策略，确保 UIA 层级过多时仍保留已知内容、视觉、Client、Window 等回退候选。
 
@@ -203,3 +203,4 @@
 | 2026-09-11 | 任务 2：补充候选链路诊断信息 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 显式诊断记录窗口/进程/光标、候选链路已有字段及异步 UIA 请求、耗时、年龄、缓存、冷却和应用状态；专项 78/78 通过。 |
 | 2026-09-11 | 任务 3：补齐小元素和浏览器外壳的自动化夹具 | `tests/smart_region_detector_test.cpp`、`tests/visual_region_locator_test.cpp` | 覆盖紧凑 Win32 控件、12×18 图标、TabItem、书签链接、窄行、书签样式视觉区域和无语义 20px 图标拒绝；专项 78/78 通过。 |
 | 2026-09-11 | 检查点 A | 本文件及基线文件 | 任务 1～3 已完成；真实 Chrome/Edge、VSCode、PyCharm 人工复测仍待可连接桌面会话执行。 |
+| 2026-09-11 | 任务 4：为回退候选预留固定容量 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 固定保留 4 个内容/视觉/Client/Window 回退槽；UIA 最多 4 个，MSAA 最多 1 个；专项 80/80 通过。 |
