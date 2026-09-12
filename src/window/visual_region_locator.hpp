@@ -23,6 +23,14 @@ enum class VisualRegionEdge : std::uint8_t {
   Bottom = 1 << 3,
 };
 
+// 默认策略允许候选与宿主客户区的一条边相连，适用于传统的侧边栏和
+// 窗口分区。Electron 工作台使用严格策略，避免将工作台边缘和代码纹理
+// 拼接成并不存在的大区域。
+enum class VisualRegionSearchPolicy : std::uint8_t {
+  Standard,
+  RequireCompleteBoundaries,
+};
+
 // 视觉候选的边界证据。edge_mask 标识真正从图像识别出的边；
 // 候选至少需要一对相对边及第三条独立边，避免把文字碎片误识别为区域。
 struct VisualRegionDiagnostic {
@@ -42,11 +50,20 @@ bool findVisualRegion(const Image& background,
                       const WindowRect& image_screen_rect,
                       const WindowRect& owner_client_rect,
                       POINT screen_point, WindowRect& out,
-                      VisualRegionDiagnostic& diagnostics) noexcept;
+                      VisualRegionSearchPolicy policy) noexcept;
+bool findVisualRegion(const Image& background,
+                      const WindowRect& image_screen_rect,
+                      const WindowRect& owner_client_rect,
+                      POINT screen_point, WindowRect& out,
+                      VisualRegionDiagnostic& diagnostics,
+                      VisualRegionSearchPolicy policy =
+                          VisualRegionSearchPolicy::Standard) noexcept;
 bool findVisualRegionCandidate(
     const Image& background, const WindowRect& image_screen_rect,
     const WindowRect& owner_client_rect, POINT screen_point,
     std::uintptr_t owner_window, SmartRegionCandidate& out,
-    VisualRegionDiagnostic* diagnostics) noexcept;
+    VisualRegionDiagnostic* diagnostics,
+    VisualRegionSearchPolicy policy =
+        VisualRegionSearchPolicy::Standard) noexcept;
 
 }  // namespace qingying::window_detail

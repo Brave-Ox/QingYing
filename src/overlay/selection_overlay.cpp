@@ -19,7 +19,6 @@
 #include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_mode.hpp"
-#include "qingying/window/window_detector.hpp"
 #include "../window/uia_region_query_worker.hpp"
 
 namespace qingying {
@@ -72,6 +71,7 @@ struct OverlayWindowData {
   SmartRegionModeSettings smart_region_mode_settings;
   SmartRegionMode smart_region_mode{SmartRegionMode::DetectElements};
   std::uint64_t uia_request_id{0};
+  window_detail::UiaRegionQueryRequest current_uia_request;
   bool has_hover{false};
   bool has_pending_hover_update{false};
   bool first_frame_committed{false};
@@ -227,6 +227,7 @@ void clearHover(OverlayWindowData* data) noexcept
   data->hover_update_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
   data->fast_hover_candidate = SmartRegionCandidate{};
+  data->current_uia_request = window_detail::UiaRegionQueryRequest{};
   data->hover_candidates.clear();
   data->hover_rect = OverlayClientRect{};
   data->has_hover = false;
@@ -513,13 +514,15 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
                                                 image_screen_rect};
 
   SmartRegionCandidate candidate;
+  SmartRegionWindowSnapshot window_snapshot;
   const SmartRegionDetectionPolicy policy =
       data->smart_region_mode == SmartRegionMode::WindowOnly
           ? SmartRegionDetectionPolicy::WindowOnly
           : SmartRegionDetectionPolicy::FastFallbackOnly;
   if (!data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
-          &visual_context, policy, &data->hover_candidates))
+          &visual_context, policy, &data->hover_candidates,
+          &window_snapshot))
   {
     clearHover(data);
     return;
@@ -532,19 +535,18 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
     return;
   }
 
-  WindowDetector window_detector;
-  HWND root_window = nullptr;
-  WindowRect owner_rect;
-  if (data->uia_query_worker == nullptr ||
-      !window_detector.detectAt(screen_x, screen_y, root_window, owner_rect))
+  if (data->uia_query_worker == nullptr || !window_snapshot.valid())
   {
     return;
   }
   ++data->uia_request_id;
-  const window_detail::UiaRegionQueryRequest request{
-      data->uia_request_id, root_window, {screen_x, screen_y}, owner_rect,
+  data->current_uia_request = {
+      data->uia_request_id,
+      reinterpret_cast<HWND>(window_snapshot.root_window),
+      {screen_x, screen_y},
+      window_snapshot.owner_rect,
       GetTickCount64()};
-  if (data->uia_query_worker->request(request))
+  if (data->uia_query_worker->request(data->current_uia_request))
   {
     static_cast<void>(SetTimer(data->overlay, kUiaResultPollTimerId,
                                kUiaResultPollIntervalMs, nullptr));
@@ -563,9 +565,10 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
   window_detail::UiaRegionQueryResult result;
   if (data->uia_query_worker->tryTakeLatest(result))
   {
-    const bool applies_to_current_request =
-        result.request_id == data->uia_request_id;
     const std::uint64_t now_ms = GetTickCount64();
+    const bool applies_to_current_request =
+        window_detail::isUiaQueryResultApplicable(
+            result, data->current_uia_request, now_ms);
     const std::uint64_t result_age_ms =
         now_ms >= result.requested_at_ms
             ? now_ms - result.requested_at_ms
@@ -575,7 +578,9 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     {
       SmartRegionCandidate candidate;
       if (window_detail::selectUiaQueryCandidate(
-              result, data->fast_hover_candidate, candidate))
+              result, data->fast_hover_candidate,
+              data->current_uia_request.screen_point,
+              data->current_uia_request.owner_rect, candidate))
       {
         SmartRegionCandidate combined[SmartRegionMaxCandidates];
         std::size_t combined_count =
@@ -591,8 +596,10 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
               data->hover_candidates.candidateAt(index);
         }
         data->hover_candidates.replace(
-            combined, combined_count, result.screen_point.x,
-            result.screen_point.y, result.owner_rect, candidate);
+            combined, combined_count,
+            data->current_uia_request.screen_point.x,
+            data->current_uia_request.screen_point.y,
+            data->current_uia_request.owner_rect, candidate);
         result_applied = true;
         applyHoverCandidate(data, candidate);
         if (data->hover_render_gate.update(data->hover_candidate,

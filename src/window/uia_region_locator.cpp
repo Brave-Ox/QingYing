@@ -18,6 +18,8 @@ constexpr std::size_t kMaximumUiaPathDepth = 12;
 constexpr std::size_t kMaximumUiaChildrenPerLevel = 64;
 constexpr int kMinimumGenericContainerWidth = 32;
 constexpr int kMinimumGenericContainerHeight = 24;
+constexpr int kMinimumCompactControlWidth = 12;
+constexpr int kMinimumCompactControlHeight = 12;
 constexpr std::int64_t kMaximumRootScopedCandidatePercent = 35;
 
 class ScopedBstr
@@ -150,13 +152,23 @@ SmartRegionSemantic semanticFor(
     case UiaControlType::Pane:
     case UiaControlType::Group:
     case UiaControlType::Custom:
-      if (!properties.is_enabled || !properties.has_name)
+      if (!properties.is_enabled)
       {
         return SmartRegionSemantic::Unknown;
       }
       if (properties.is_control && properties.is_keyboard_focusable)
       {
         return SmartRegionSemantic::ActionableControl;
+      }
+      if (properties.is_control && !properties.is_content &&
+          properties.rect.width() >= kMinimumCompactControlWidth &&
+          properties.rect.height() >= kMinimumCompactControlHeight)
+      {
+        return SmartRegionSemantic::ActionableControl;
+      }
+      if (!properties.has_name)
+      {
+        return SmartRegionSemantic::Unknown;
       }
       if (properties.is_content &&
           properties.rect.width() >= kMinimumGenericContainerWidth &&

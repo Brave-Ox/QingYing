@@ -372,14 +372,27 @@ bool findVisualRegion(const Image& background,
 {
   VisualRegionDiagnostic diagnostics;
   return findVisualRegion(background, image_screen_rect, owner_client_rect,
-                          screen_point, out, diagnostics);
+                          screen_point, out, diagnostics,
+                          VisualRegionSearchPolicy::Standard);
 }
 
 bool findVisualRegion(const Image& background,
                       const WindowRect& image_screen_rect,
                       const WindowRect& owner_client_rect,
                       POINT screen_point, WindowRect& out,
-                      VisualRegionDiagnostic& diagnostics) noexcept
+                      VisualRegionSearchPolicy policy) noexcept
+{
+  VisualRegionDiagnostic diagnostics;
+  return findVisualRegion(background, image_screen_rect, owner_client_rect,
+                          screen_point, out, diagnostics, policy);
+}
+
+bool findVisualRegion(const Image& background,
+                      const WindowRect& image_screen_rect,
+                      const WindowRect& owner_client_rect,
+                      POINT screen_point, WindowRect& out,
+                      VisualRegionDiagnostic& diagnostics,
+                      VisualRegionSearchPolicy policy) noexcept
 {
   diagnostics = VisualRegionDiagnostic{};
   if (!isValidImage(background, image_screen_rect) ||
@@ -483,8 +496,11 @@ bool findVisualRegion(const Image& background,
                                    static_cast<int>(bottom.confirmed);
             const bool has_horizontal_pair = top.confirmed && bottom.confirmed;
             const bool has_vertical_pair = left.confirmed && right.confirmed;
-            if ((compact_candidate && edge_count != 4) ||
-                (!compact_candidate && edge_count < 3) ||
+            const bool requires_complete_boundaries =
+                compact_candidate ||
+                policy == VisualRegionSearchPolicy::RequireCompleteBoundaries;
+            if ((requires_complete_boundaries && edge_count != 4) ||
+                (!requires_complete_boundaries && edge_count < 3) ||
                 (!has_horizontal_pair && !has_vertical_pair) ||
                 !missingBoundaryIsAttachedToOwner(left, right, top, bottom,
                                                   owner_client_rect) ||
@@ -659,13 +675,14 @@ bool findVisualRegionCandidate(
     const Image& background, const WindowRect& image_screen_rect,
     const WindowRect& owner_client_rect, POINT screen_point,
     std::uintptr_t owner_window, SmartRegionCandidate& out,
-    VisualRegionDiagnostic* diagnostics) noexcept
+    VisualRegionDiagnostic* diagnostics,
+    VisualRegionSearchPolicy policy) noexcept
 {
   out = SmartRegionCandidate{};
   VisualRegionDiagnostic visual_diagnostic;
   WindowRect visual_rect;
   if (!findVisualRegion(background, image_screen_rect, owner_client_rect,
-                        screen_point, visual_rect, visual_diagnostic))
+                        screen_point, visual_rect, visual_diagnostic, policy))
   {
     return false;
   }

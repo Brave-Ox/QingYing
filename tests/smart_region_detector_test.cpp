@@ -1082,7 +1082,8 @@ TEST(UiaRegionQueryWorkerTest, AccessibilityCandidateCompetesWithFastFallback)
   SmartRegionCandidate selected;
 
   ASSERT_TRUE(window_detail::selectUiaQueryCandidate(
-      result, fast_fallback, selected));
+      result, fast_fallback, result.screen_point, result.owner_rect,
+      selected));
   EXPECT_EQ(selected.target_window, 2U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Uia);
 }
@@ -1113,7 +1114,8 @@ TEST(UiaRegionQueryWorkerTest,
   SmartRegionCandidate selected;
 
   ASSERT_TRUE(window_detail::selectUiaQueryCandidate(
-      result, fast_fallback, selected));
+      result, fast_fallback, result.screen_point, result.owner_rect,
+      selected));
   EXPECT_EQ(selected.target_window, 100U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::KnownContent);
 }
@@ -1153,6 +1155,82 @@ TEST(UiaRegionQueryWorkerTest,
   EXPECT_EQ(retained[3].source, SmartRegionDiagnosticSource::Uia);
   EXPECT_EQ(retained[4].source, SmartRegionDiagnosticSource::Msaa);
   EXPECT_LT(retained_count, SmartRegionMaxCandidates);
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     AppliesRecentResultWhenItsLocalCandidateContainsTheNewPointer)
+{
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 7;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {120, 118};
+  result.owner_rect = {0, 0, 800, 600};
+  result.requested_at_ms = 1000;
+  result.candidate_count = 1;
+  result.candidates[0] = {1, 2, {100, 100, 160, 140},
+                          SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  const window_detail::UiaRegionQueryRequest current_request{
+      8, reinterpret_cast<HWND>(1), {132, 122}, {0, 0, 800, 600}, 1040};
+
+  EXPECT_TRUE(window_detail::isUiaQueryResultApplicable(result,
+                                                         current_request,
+                                                         1050));
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     RejectsLateResultForAnotherWindowOrAnotherControl)
+{
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 7;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {120, 118};
+  result.owner_rect = {0, 0, 800, 600};
+  result.requested_at_ms = 1000;
+  result.candidate_count = 1;
+  result.candidates[0] = {1, 2, {100, 100, 160, 140},
+                          SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  const window_detail::UiaRegionQueryRequest other_window{
+      8, reinterpret_cast<HWND>(3), {132, 122}, {0, 0, 800, 600}, 1040};
+  const window_detail::UiaRegionQueryRequest other_control{
+      8, reinterpret_cast<HWND>(1), {220, 122}, {0, 0, 800, 600}, 1040};
+
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result,
+                                                          other_window,
+                                                          1050));
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result,
+                                                          other_control,
+                                                          1050));
+}
+
+TEST(BrowserChromeRegionTest, LimitsTabAndBookmarkFallbackToTopOuterShell)
+{
+  const WindowRect root_client_rect{0, 0, 1200, 900};
+  const WindowRect renderer_rect{0, 120, 1200, 900};
+  WindowRect chrome_rect;
+
+  EXPECT_TRUE(window_detail::chromiumBrowserChromeRect(
+      root_client_rect, renderer_rect, {240, 24}, chrome_rect));
+  EXPECT_EQ(chrome_rect.left, 0);
+  EXPECT_EQ(chrome_rect.top, 0);
+  EXPECT_EQ(chrome_rect.right, 1200);
+  EXPECT_EQ(chrome_rect.bottom, 120);
+  EXPECT_TRUE(window_detail::chromiumBrowserChromeRect(
+      root_client_rect, renderer_rect, {480, 88}, chrome_rect));
+  EXPECT_FALSE(window_detail::chromiumBrowserChromeRect(
+      root_client_rect, renderer_rect, {480, 240}, chrome_rect));
+}
+
+TEST(BrowserChromeRegionTest, RejectsRendererThatDoesNotShareTheRootWidth)
+{
+  WindowRect chrome_rect;
+
+  EXPECT_FALSE(window_detail::chromiumBrowserChromeRect(
+      {0, 0, 1200, 900}, {80, 120, 1120, 900}, {240, 24}, chrome_rect));
+  EXPECT_TRUE(chrome_rect.empty());
 }
 
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)
@@ -1207,6 +1285,38 @@ TEST(UiaRegionLocatorTest, MapsNamedFocusableCustomControlToActionableCandidate)
   ASSERT_TRUE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
   EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(UiaRegionLocatorTest,
+     MapsCompactUnnamedControlOnlyWhenItIsNotContent)
+{
+  const window_detail::UiaRegionProperties activity_bar_icon{
+      {100, 200, 112, 218}, window_detail::UiaControlType::Custom, true,
+      false, true, false, false};
+  const window_detail::UiaRegionProperties unnamed_content{
+      {100, 200, 112, 218}, window_detail::UiaControlType::Custom, true,
+      true, true, false, false};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {106, 208}, activity_bar_icon, candidate));
+  EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+  EXPECT_FALSE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {106, 208}, unnamed_content, candidate));
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     AcceptsCompactUiaActionableControlWithoutRelaxingVisualMinimumSize)
+{
+  SmartRegionCandidate candidate{
+      1, 2, {100, 200, 112, 218}, SmartRegionKind::KnownContent};
+  candidate.source = SmartRegionDiagnosticSource::Uia;
+  candidate.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      &candidate, 1, 106, 208, {0, 0, 800, 600}, selected));
+  EXPECT_EQ(selected.target_window, 2U);
 }
 
 TEST(UiaRegionLocatorTest,

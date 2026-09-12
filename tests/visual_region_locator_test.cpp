@@ -423,6 +423,37 @@ TEST(VisualRegionLocatorTest, FindsSidebarAttachedToOneOwnerEdge)
   EXPECT_EQ(result.bottom, 780);
 }
 
+TEST(VisualRegionLocatorTest,
+     RejectsOwnerAttachedCandidateWhenCompleteBoundariesAreRequired)
+{
+  const Image image = makeOwnerAttachedSidebarImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  EXPECT_FALSE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {160, 400}, result,
+      window_detail::VisualRegionSearchPolicy::RequireCompleteBoundaries));
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     KeepsFullyBoundedCandidateWhenCompleteBoundariesAreRequired)
+{
+  const Image image = makeBoundedCardImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {160, 150}, result,
+      window_detail::VisualRegionSearchPolicy::RequireCompleteBoundaries));
+  EXPECT_EQ(result.left, 80);
+  EXPECT_EQ(result.top, 60);
+  EXPECT_EQ(result.right, 280);
+  EXPECT_EQ(result.bottom, 240);
+}
+
 TEST(VisualRegionLocatorTest, FindsShortRowInsideWideOwner)
 {
   const Image image = makeShortRowInWideOwnerImage();

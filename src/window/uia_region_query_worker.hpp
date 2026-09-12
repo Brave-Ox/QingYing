@@ -39,6 +39,13 @@ using UiaRegionQueryFunction = void (*)(
     const UiaRegionQueryRequest& request, UiaRegionQueryResult& result,
     void* context) noexcept;
 
+// 允许同一窗口内仍覆盖当前鼠标的近期结果合并，避免 UIA 查询慢于鼠标
+// 更新节流时因请求号变化而被全部丢弃。跨窗口、超时或跨控件结果必须拒绝。
+bool isUiaQueryResultApplicable(
+    const UiaRegionQueryResult& result,
+    const UiaRegionQueryRequest& current_request,
+    std::uint64_t now_ms) noexcept;
+
 // 仅保留固定预算内的 UIA 和 MSAA 候选，避免异步结果挤掉快速路径的回退链。
 std::size_t retainAccessibilityCandidates(
     const SmartRegionCandidate* candidates, std::size_t candidate_count,
@@ -46,6 +53,8 @@ std::size_t retainAccessibilityCandidates(
 
 bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
                              const SmartRegionCandidate& fast_candidate,
+                             POINT screen_point,
+                             const WindowRect& owner_rect,
                              SmartRegionCandidate& out) noexcept;
 
 // 在专用后台线程中串行执行跨进程 UIA 查询。请求采用 latest-wins 合并，

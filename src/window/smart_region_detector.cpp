@@ -16,6 +16,8 @@ namespace {
 
 constexpr int kMinimumCandidateWidth = 16;
 constexpr int kMinimumCandidateHeight = 16;
+constexpr int kMinimumCompactUiaControlWidth = 12;
+constexpr int kMinimumCompactUiaControlHeight = 12;
 constexpr std::uint8_t kMinimumVisualConfidence = 70;
 constexpr std::int64_t kLargeGenericCandidatePercent = 85;
 constexpr int kSourceScoreUia = 1200;
@@ -248,8 +250,17 @@ SmartRegionCandidateRejection candidateRejection(
   if (!rectInside(candidate.rect, owner_rect)) {
     return SmartRegionCandidateRejection::OutsideOwner;
   }
-  if (candidate.rect.width() < kMinimumCandidateWidth ||
-      candidate.rect.height() < kMinimumCandidateHeight) {
+  const bool is_compact_uia_control =
+      candidate.source == SmartRegionDiagnosticSource::Uia &&
+      candidate.semantic == SmartRegionSemantic::ActionableControl;
+  const int minimum_width = is_compact_uia_control
+                                ? kMinimumCompactUiaControlWidth
+                                : kMinimumCandidateWidth;
+  const int minimum_height = is_compact_uia_control
+                                 ? kMinimumCompactUiaControlHeight
+                                 : kMinimumCandidateHeight;
+  if (candidate.rect.width() < minimum_width ||
+      candidate.rect.height() < minimum_height) {
     return SmartRegionCandidateRejection::TooSmall;
   }
   if (candidate.source == SmartRegionDiagnosticSource::Visual &&
@@ -757,6 +768,11 @@ bool SmartRegionVisualContext::valid() const noexcept
          background->height == image_screen_rect.height();
 }
 
+bool SmartRegionWindowSnapshot::valid() const noexcept
+{
+  return root_window != 0 && !owner_rect.empty();
+}
+
 bool SmartRegionCandidateSelector::selectBest(
     const SmartRegionCandidate* candidates, std::size_t candidate_count,
     int screen_x, int screen_y, const WindowRect& owner_rect,
@@ -1054,7 +1070,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                                    SmartRegionDiagnosticTrace* diagnostics,
                                    const SmartRegionVisualContext* visual_context,
                                    SmartRegionDetectionPolicy policy,
-                                   SmartRegionCandidateCollection* collection)
+                                   SmartRegionCandidateCollection* collection,
+                                   SmartRegionWindowSnapshot* window_snapshot)
     const noexcept
 {
   const std::uint64_t begin_ms = GetTickCount64();
@@ -1062,6 +1079,10 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
       diagnostics != nullptr && diagnostics->enabled();
   SmartRegionDiagnosticEvent diagnostic_event;
   out = SmartRegionCandidate{};
+  if (window_snapshot != nullptr)
+  {
+    *window_snapshot = SmartRegionWindowSnapshot{};
+  }
   WindowDetector window_detector;
   HWND root_window = nullptr;
   WindowRect window_rect;
@@ -1089,6 +1110,13 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   WindowRect client_rect;
   const bool has_client_rect =
       getRootClientScreenRect(root_window, client_rect);
+  if (window_snapshot != nullptr)
+  {
+    window_snapshot->root_window =
+        reinterpret_cast<std::uintptr_t>(root_window);
+    window_snapshot->owner_rect = window_rect;
+    window_snapshot->client_rect = client_rect;
+  }
   std::size_t uia_candidate_count = 0;
   if (policy == SmartRegionDetectionPolicy::Complete)
   {
@@ -1134,18 +1162,31 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
       }
     }
   }
+  WindowRect chromium_browser_chrome;
+  bool require_complete_visual_boundaries = false;
   if (policy != SmartRegionDetectionPolicy::WindowOnly)
   {
     SmartRegionCandidate known_content;
     const std::uint64_t known_content_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
     if (window_detail::locateKnownContent(root_window, screen_point,
-                                          known_content)) {
+                                          known_content,
+                                          &chromium_browser_chrome,
+                                          &require_complete_visual_boundaries)) {
       known_content.source = SmartRegionDiagnosticSource::KnownContent;
       known_content.semantic = SmartRegionSemantic::ContentSurface;
       if (candidate_count < SmartRegionMaxCandidates) {
         candidates[candidate_count++] = known_content;
       }
+    }
+    if (!chromium_browser_chrome.empty() &&
+        candidate_count < SmartRegionMaxCandidates)
+    {
+      candidates[candidate_count++] = makeCandidate(
+          root_window, root_window, chromium_browser_chrome,
+          SmartRegionKind::KnownContent,
+          SmartRegionDiagnosticSource::KnownContent,
+          SmartRegionSemantic::ContentSurface);
     }
     if (diagnostic_enabled) {
       diagnostic_event.known_content_lookup_attempted = true;
@@ -1161,11 +1202,17 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     SmartRegionCandidate visual_candidate;
     const std::uint64_t visual_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
+    const WindowRect& visual_owner_rect =
+        chromium_browser_chrome.empty() ? client_rect
+                                        : chromium_browser_chrome;
     const bool found_visual_region = window_detail::findVisualRegionCandidate(
         *visual_context->background, visual_context->image_screen_rect,
-        client_rect, screen_point,
+        visual_owner_rect, screen_point,
         reinterpret_cast<std::uintptr_t>(root_window), visual_candidate,
-        diagnostic_enabled ? &visual_diagnostic : nullptr);
+        diagnostic_enabled ? &visual_diagnostic : nullptr,
+        require_complete_visual_boundaries
+            ? window_detail::VisualRegionSearchPolicy::RequireCompleteBoundaries
+            : window_detail::VisualRegionSearchPolicy::Standard);
     if (diagnostic_enabled) {
       diagnostic_event.visual_lookup_attempted = true;
       diagnostic_event.visual_lookup_ms =

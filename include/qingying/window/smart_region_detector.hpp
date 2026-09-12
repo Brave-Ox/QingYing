@@ -164,6 +164,17 @@ struct SmartRegionVisualContext {
   bool valid() const noexcept;
 };
 
+// 快速检测路径已经取得的窗口信息。Overlay 将其直接传递给后台 UIA
+// 请求，避免一次悬停更新重复执行 WindowDetector。
+struct SmartRegionWindowSnapshot
+{
+  std::uintptr_t root_window{0};
+  WindowRect owner_rect;
+  WindowRect client_rect;
+
+  bool valid() const noexcept;
+};
+
 enum class SmartRegionDetectionPolicy : std::uint8_t
 {
   Complete,
@@ -274,7 +285,8 @@ class SmartRegionDetector {
                 const SmartRegionVisualContext* visual_context = nullptr,
                 SmartRegionDetectionPolicy policy =
                     SmartRegionDetectionPolicy::Complete,
-                SmartRegionCandidateCollection* collection = nullptr)
+                SmartRegionCandidateCollection* collection = nullptr,
+                SmartRegionWindowSnapshot* window_snapshot = nullptr)
       const noexcept;
 };
 

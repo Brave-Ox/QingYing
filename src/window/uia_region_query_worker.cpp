@@ -15,6 +15,7 @@ namespace {
 constexpr int kPositionCacheRadiusPx = 4;
 constexpr std::uint64_t kPositionCacheLifetimeMs = 80;
 constexpr std::uint64_t kFailureCooldownMs = 100;
+constexpr std::uint64_t kReusableResultMaximumAgeMs = 120;
 
 class ScopedMtaApartment
 {
@@ -93,6 +94,26 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
 }
 
 }  // namespace
+
+bool isUiaQueryResultApplicable(
+    const UiaRegionQueryResult& result,
+    const UiaRegionQueryRequest& current_request,
+    std::uint64_t now_ms) noexcept
+{
+  if (result.root_window == nullptr ||
+      result.root_window != current_request.root_window ||
+      current_request.owner_rect.empty() ||
+      now_ms < result.requested_at_ms ||
+      now_ms - result.requested_at_ms > kReusableResultMaximumAgeMs)
+  {
+    return false;
+  }
+
+  SmartRegionCandidate selected;
+  return selectUiaQueryCandidate(result, SmartRegionCandidate{},
+                                 current_request.screen_point,
+                                 current_request.owner_rect, selected);
+}
 
 struct UiaRegionQueryWorker::Impl
 {
@@ -185,8 +206,11 @@ struct UiaRegionQueryWorker::Impl
         const bool newer_request_waiting =
             has_request && pending_request.value.request_id >
                                request.value.request_id;
-        if (!stop_requested && request.generation == generation &&
-            !newer_request_waiting)
+        const bool completed_result_applies_to_pending_request =
+            newer_request_waiting &&
+            isUiaQueryResultApplicable(query_result, pending_request.value,
+                                       GetTickCount64());
+        if (!stop_requested && request.generation == generation)
         {
           if (!use_cached_result && !suppress_for_cooldown)
           {
@@ -204,8 +228,12 @@ struct UiaRegionQueryWorker::Impl
               has_failure = true;
             }
           }
-          latest_result = query_result;
-          has_result = true;
+          if (!newer_request_waiting ||
+              completed_result_applies_to_pending_request)
+          {
+            latest_result = query_result;
+            has_result = true;
+          }
         }
       }
     }
@@ -245,6 +273,8 @@ UiaRegionQueryWorker::~UiaRegionQueryWorker()
 
 bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
                              const SmartRegionCandidate& fast_candidate,
+                             POINT screen_point,
+                             const WindowRect& owner_rect,
                              SmartRegionCandidate& out) noexcept
 {
   SmartRegionCandidate candidates[SmartRegionMaxCandidates];
@@ -256,8 +286,8 @@ bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
     candidates[candidate_count++] = fast_candidate;
   }
   return SmartRegionCandidateSelector::selectBest(
-      candidates, candidate_count, result.screen_point.x,
-      result.screen_point.y, result.owner_rect, out);
+      candidates, candidate_count, screen_point.x, screen_point.y,
+      owner_rect, out);
 }
 
 std::size_t retainAccessibilityCandidates(
@@ -337,7 +367,12 @@ bool UiaRegionQueryWorker::request(
     }
     m_impl->pending_request = {request_value, m_impl->generation};
     m_impl->has_request = true;
-    m_impl->has_result = false;
+    if (m_impl->has_result &&
+        !isUiaQueryResultApplicable(m_impl->latest_result, request_value,
+                                    GetTickCount64()))
+    {
+      m_impl->has_result = false;
+    }
   }
   m_impl->condition.notify_one();
   return true;

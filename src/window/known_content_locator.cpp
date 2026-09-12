@@ -126,6 +126,87 @@ bool executableHasName(HWND window, const wchar_t* expected) noexcept
   return _wcsicmp(base_name, expected) == 0;
 }
 
+enum class ChromiumRootKind : std::uint8_t {
+  Other,
+  Browser,
+  ElectronWorkbench,
+};
+
+struct ChromiumRootClassificationCache {
+  HWND m_root{nullptr};
+  DWORD m_process_id{0};
+  ChromiumRootKind m_kind{ChromiumRootKind::Other};
+};
+
+thread_local ChromiumRootClassificationCache g_chromium_root_cache;
+
+ChromiumRootKind classifyChromiumProcess(DWORD process_id) noexcept
+{
+  if (process_id == 0)
+  {
+    return ChromiumRootKind::Other;
+  }
+
+  const ScopedHandle process(
+      OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id));
+  if (process.get() == nullptr)
+  {
+    return ChromiumRootKind::Other;
+  }
+  std::array<wchar_t, kProcessPathCapacity> path{};
+  DWORD path_size = static_cast<DWORD>(path.size());
+  if (!QueryFullProcessImageNameW(process.get(), 0, path.data(),
+                                  &path_size) ||
+      path_size == 0)
+  {
+    return ChromiumRootKind::Other;
+  }
+
+  const wchar_t* base_name = path.data();
+  for (DWORD index = 0; index < path_size; ++index)
+  {
+    if (path[index] == L'\\' || path[index] == L'/')
+    {
+      base_name = path.data() + index + 1;
+    }
+  }
+  if (_wcsicmp(base_name, L"chrome.exe") == 0 ||
+      _wcsicmp(base_name, L"msedge.exe") == 0 ||
+      _wcsicmp(base_name, L"brave.exe") == 0)
+  {
+    return ChromiumRootKind::Browser;
+  }
+  if (_wcsicmp(base_name, L"code.exe") == 0 ||
+      _wcsicmp(base_name, L"code-insiders.exe") == 0 ||
+      _wcsicmp(base_name, L"cursor.exe") == 0 ||
+      _wcsicmp(base_name, L"codium.exe") == 0)
+  {
+    return ChromiumRootKind::ElectronWorkbench;
+  }
+  return ChromiumRootKind::Other;
+}
+
+ChromiumRootKind chromiumRootKind(HWND root) noexcept
+{
+  if (!classNameEquals(root, L"Chrome_WidgetWin_1"))
+  {
+    return ChromiumRootKind::Other;
+  }
+
+  DWORD process_id = 0;
+  GetWindowThreadProcessId(root, &process_id);
+  if (g_chromium_root_cache.m_root == root &&
+      g_chromium_root_cache.m_process_id == process_id)
+  {
+    return g_chromium_root_cache.m_kind;
+  }
+
+  g_chromium_root_cache.m_root = root;
+  g_chromium_root_cache.m_process_id = process_id;
+  g_chromium_root_cache.m_kind = classifyChromiumProcess(process_id);
+  return g_chromium_root_cache.m_kind;
+}
+
 struct ChildCandidate {
   POINT point{};
   HWND window{nullptr};
@@ -160,6 +241,7 @@ struct ClassSearch {
   ChildCandidate candidate;
   const wchar_t* expected_class{nullptr};
   int minimum_extent_px{0};
+  bool requires_point_match{true};
 };
 
 BOOL CALLBACK findLargestClassChild(HWND window, LPARAM parameter)
@@ -170,7 +252,8 @@ BOOL CALLBACK findLargestClassChild(HWND window, LPARAM parameter)
     if (IsWindowVisible(window) &&
         classNameEquals(window, search->expected_class) &&
         getClientScreenRect(window, rect) &&
-        pointInRect(search->candidate.point, rect) &&
+        (!search->requires_point_match ||
+         pointInRect(search->candidate.point, rect)) &&
         rect.right - rect.left >= search->minimum_extent_px &&
         rect.bottom - rect.top >= search->minimum_extent_px) {
       const std::int64_t area = rectArea(rect);
@@ -184,21 +267,69 @@ BOOL CALLBACK findLargestClassChild(HWND window, LPARAM parameter)
   return TRUE;
 }
 
-bool locateChromium(HWND root, POINT point, SmartRegionCandidate& out) noexcept
+bool locateChromium(HWND root, POINT point, SmartRegionCandidate& out,
+                    WindowRect* chromium_browser_chrome,
+                    bool* require_complete_visual_boundaries) noexcept
 {
+  if (chromium_browser_chrome != nullptr)
+  {
+    *chromium_browser_chrome = WindowRect{};
+  }
+  if (require_complete_visual_boundaries != nullptr)
+  {
+    *require_complete_visual_boundaries = false;
+  }
   if (!classNameEquals(root, L"Chrome_WidgetWin_1")) {
     return false;
+  }
+  const ChromiumRootKind root_kind = chromiumRootKind(root);
+  if (require_complete_visual_boundaries != nullptr)
+  {
+    *require_complete_visual_boundaries =
+        root_kind == ChromiumRootKind::ElectronWorkbench;
   }
   ClassSearch search;
   search.candidate.point = point;
   search.expected_class = L"Chrome_RenderWidgetHostHWND";
   search.minimum_extent_px = kMinimumChromiumExtentPx;
+  search.requires_point_match = false;
   EnumChildWindows(root, findLargestClassChild,
                    reinterpret_cast<LPARAM>(&search));
   if (search.candidate.window == nullptr) {
     search.expected_class = L"Intermediate D3D Window";
     EnumChildWindows(root, findLargestClassChild,
                      reinterpret_cast<LPARAM>(&search));
+  }
+  if (search.candidate.window == nullptr)
+  {
+    return false;
+  }
+
+  RECT root_client{};
+  if (!getClientScreenRect(root, root_client))
+  {
+    return false;
+  }
+  const WindowRect root_client_rect{root_client.left, root_client.top,
+                                    root_client.right, root_client.bottom};
+  const WindowRect renderer_rect{search.candidate.rect.left,
+                                 search.candidate.rect.top,
+                                 search.candidate.rect.right,
+                                 search.candidate.rect.bottom};
+  WindowRect chrome_rect;
+  if (root_kind == ChromiumRootKind::Browser &&
+      chromiumBrowserChromeRect(root_client_rect, renderer_rect, point,
+                                chrome_rect))
+  {
+    if (chromium_browser_chrome != nullptr)
+    {
+      *chromium_browser_chrome = chrome_rect;
+    }
+    return false;
+  }
+  if (!pointInRect(point, search.candidate.rect))
+  {
+    return false;
   }
   return setCandidate(root, search.candidate.window, search.candidate.rect,
                       out);
@@ -315,17 +446,61 @@ bool locateExplorer(HWND root, POINT point, SmartRegionCandidate& out) noexcept
 
 }  // namespace
 
+bool chromiumBrowserChromeRect(const WindowRect& root_client_rect,
+                               const WindowRect& renderer_rect,
+                               POINT screen_point,
+                               WindowRect& out) noexcept
+{
+  out = WindowRect{};
+  if (root_client_rect.empty() || renderer_rect.empty() ||
+      renderer_rect.left != root_client_rect.left ||
+      renderer_rect.right != root_client_rect.right ||
+      renderer_rect.top <= root_client_rect.top ||
+      renderer_rect.top >= root_client_rect.bottom ||
+      renderer_rect.bottom > root_client_rect.bottom)
+  {
+    return false;
+  }
+
+  const WindowRect chrome_rect{root_client_rect.left, root_client_rect.top,
+                               root_client_rect.right, renderer_rect.top};
+  if (screen_point.x < chrome_rect.left ||
+      screen_point.x >= chrome_rect.right ||
+      screen_point.y < chrome_rect.top ||
+      screen_point.y >= chrome_rect.bottom)
+  {
+    return false;
+  }
+  out = chrome_rect;
+  return true;
+}
+
 bool locateKnownContent(HWND root_window, POINT screen_point,
-                        SmartRegionCandidate& out) noexcept
+                        SmartRegionCandidate& out,
+                        WindowRect* chromium_browser_chrome,
+                        bool* require_complete_visual_boundaries) noexcept
 {
   out = SmartRegionCandidate{};
+  if (chromium_browser_chrome != nullptr)
+  {
+    *chromium_browser_chrome = WindowRect{};
+  }
+  if (require_complete_visual_boundaries != nullptr)
+  {
+    *require_complete_visual_boundaries = false;
+  }
   if (root_window == nullptr || !IsWindow(root_window) ||
       !IsWindowVisible(root_window) || IsIconic(root_window) ||
       GetAncestor(root_window, GA_ROOT) != root_window) {
     return false;
   }
-  return locateChromium(root_window, screen_point, out) ||
-         locateNotepad(root_window, screen_point, out) ||
+  if (classNameEquals(root_window, L"Chrome_WidgetWin_1"))
+  {
+    return locateChromium(root_window, screen_point, out,
+                          chromium_browser_chrome,
+                          require_complete_visual_boundaries);
+  }
+  return locateNotepad(root_window, screen_point, out) ||
          locateExplorer(root_window, screen_point, out);
 }
 
