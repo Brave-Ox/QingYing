@@ -479,12 +479,18 @@ TEST(SmartRegionDiagnosticTraceTest,
   event.process_name[3] = L'o';
   event.process_name[4] = L'm';
   event.process_name[5] = L'e';
+  SmartRegionCandidate async_candidate;
+  async_candidate.source = SmartRegionDiagnosticSource::Msaa;
+  async_candidate.semantic = SmartRegionSemantic::ActionableControl;
+  async_candidate.rect = {120, 8, 260, 40};
+  async_candidate.accessibility_role = ROLE_SYSTEM_PAGETAB;
+  async_candidate.accessibility_depth = 3;
   trace.setEnabled(true);
   ASSERT_TRUE(trace.record(event));
 
   ASSERT_TRUE(trace.recordAsyncUiaResult(
       9, 11, 17, true, true, true, false, SmartRegionMaxUiaCandidates, true,
-      true));
+      true, &async_candidate, 1));
   const SmartRegionDiagnosticEvent& recorded = trace.latestEvent();
   EXPECT_EQ(recorded.root_window, 42U);
   EXPECT_EQ(recorded.cursor_x, 320);
@@ -503,6 +509,16 @@ TEST(SmartRegionDiagnosticTraceTest,
   EXPECT_EQ(recorded.uia_async_candidate_count, SmartRegionMaxUiaCandidates);
   EXPECT_TRUE(recorded.uia_async_matches_current_request);
   EXPECT_TRUE(recorded.uia_async_result_applied);
+  ASSERT_EQ(recorded.uia_async_diagnostic_candidate_count, 1U);
+  EXPECT_EQ(recorded.uia_async_candidates[0].source,
+            SmartRegionDiagnosticSource::Msaa);
+  EXPECT_EQ(recorded.uia_async_candidates[0].rect.left, 120);
+  EXPECT_EQ(recorded.uia_async_candidates[0].rect.top, 8);
+  EXPECT_EQ(recorded.uia_async_candidates[0].rect.right, 260);
+  EXPECT_EQ(recorded.uia_async_candidates[0].rect.bottom, 40);
+  EXPECT_EQ(recorded.uia_async_candidates[0].accessibility_role,
+            static_cast<std::uint32_t>(ROLE_SYSTEM_PAGETAB));
+  EXPECT_EQ(recorded.uia_async_candidates[0].accessibility_depth, 3U);
 }
 
 TEST(SmartRegionWin32FixtureTest, CreatesCompactBrowserChromeLikeChildWindow)
@@ -1495,6 +1511,45 @@ TEST(UiaRegionLocatorTest,
   }
 }
 
+TEST(BrowserTabCandidateTest,
+     KeepsCustomPatternBackedCloseButtonAndTabItemForCandidateCycling)
+{
+  window_detail::UiaRegionProperties close_button{
+      {236, 12, 252, 28}, window_detail::UiaControlType::Custom, true, true,
+      true, false, false};
+  close_button.supported_pattern_flags =
+      static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke);
+  window_detail::UiaRegionProperties tab_item{
+      {100, 4, 260, 40}, window_detail::UiaControlType::TabItem, true, true,
+      true, false, true};
+  tab_item.supported_pattern_flags =
+      static_cast<std::uint8_t>(window_detail::UiaPatternFlag::SelectionItem);
+  const window_detail::UiaRegionProperties tab_strip{
+      {0, 0, 1000, 44}, window_detail::UiaControlType::Pane, true, true,
+      true, false, true};
+  const window_detail::UiaRegionProperties properties[] = {
+      close_button, tab_item, tab_strip};
+  SmartRegionCandidate candidates[std::size(properties)];
+
+  const std::size_t count = window_detail::collectUiaCandidates(
+      reinterpret_cast<HWND>(1), {244, 20}, properties,
+      std::size(properties), candidates, std::size(candidates));
+
+  ASSERT_EQ(count, std::size(properties));
+  EXPECT_EQ(candidates[0].semantic, SmartRegionSemantic::ActionableControl);
+  EXPECT_EQ(candidates[1].semantic, SmartRegionSemantic::ActionableControl);
+  SmartRegionCandidate selected;
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, count, 244, 20, {0, 0, 1000, 800}, selected));
+  EXPECT_EQ(selected.rect.left, close_button.rect.left);
+
+  SmartRegionCandidateCollection collection;
+  collection.replace(candidates, count, 244, 20, {0, 0, 1000, 800},
+                     selected);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().rect.left, tab_item.rect.left);
+}
+
 TEST(UiaRegionLocatorTest, RejectsUnnamedOrTinyGenericContainers)
 {
   const window_detail::UiaRegionProperties unnamed_group{
@@ -1509,6 +1564,19 @@ TEST(UiaRegionLocatorTest, RejectsUnnamedOrTinyGenericContainers)
       reinterpret_cast<HWND>(1), {180, 220}, unnamed_group, candidate));
   EXPECT_FALSE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {110, 208}, tiny_pane, candidate));
+}
+
+TEST(UiaRegionLocatorTest, RejectsPatternBackedGenericPane)
+{
+  window_detail::UiaRegionProperties pane{
+      {100, 200, 160, 240}, window_detail::UiaControlType::Pane, true, true,
+      true, false, false};
+  pane.supported_pattern_flags =
+      static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke);
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {120, 220}, pane, candidate));
 }
 
 TEST(UiaRegionLocatorTest, MapsNamedContentPaneToContentSurfaceCandidate)
@@ -1636,6 +1704,48 @@ TEST(MsaaRegionLocatorTest, MapsFocusableTextToActionableCandidate)
   EXPECT_EQ(candidate.target_window, 2U);
 }
 
+TEST(MsaaRegionLocatorTest, PreservesRoleAndBoundedHitTestDepth)
+{
+  const window_detail::MsaaRegionProperties properties{
+      {100, 200, 260, 240}, ROLE_SYSTEM_PAGETAB, 0};
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeMsaaCandidate(
+      reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(2), {180, 220},
+      properties, candidate, 4));
+  EXPECT_EQ(candidate.accessibility_role,
+            static_cast<std::uint32_t>(ROLE_SYSTEM_PAGETAB));
+  EXPECT_EQ(candidate.accessibility_depth, 4U);
+}
+
+TEST(MsaaRegionLocatorTest, RejectsWindowSizedContentSurfaceAtSource)
+{
+  TestWindowTree root_window(L"QingYingMsaaContentRootWindow",
+                             L"QingYingMsaaContentRootChild", 40, 80,
+                             400, 240, 0);
+  ASSERT_NE(root_window.root(), nullptr);
+  RECT root_rect{};
+  ASSERT_NE(GetWindowRect(root_window.root(), &root_rect), FALSE);
+  const POINT point{root_rect.left + 20, root_rect.top + 20};
+  const window_detail::MsaaRegionProperties properties{
+      {root_rect.left, root_rect.top, root_rect.right, root_rect.bottom},
+      ROLE_SYSTEM_PANE, 0};
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeMsaaCandidate(
+      root_window.root(), root_window.root(), point, properties, candidate));
+  EXPECT_FALSE(candidate.valid());
+}
+
+TEST(MsaaRegionLocatorTest, TreatsMaximizedClientSurfaceAsWindowSized)
+{
+  const WindowRect root_client_rect{0, 0, 2560, 1528};
+  const WindowRect msaa_content_surface{0, 0, 2561, 1529};
+
+  EXPECT_TRUE(window_detail::msaaRectCoversRootClientArea(
+      msaa_content_surface, root_client_rect));
+}
+
 TEST(MsaaRegionLocatorTest, RejectsInvisibleOrPointerOutsideObject)
 {
   const window_detail::MsaaRegionProperties invisible{
@@ -1650,6 +1760,30 @@ TEST(MsaaRegionLocatorTest, RejectsInvisibleOrPointerOutsideObject)
   EXPECT_FALSE(window_detail::makeMsaaCandidate(
       reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(2), {520, 220},
       visible, candidate));
+}
+
+TEST(MsaaRegionLocatorTest, RejectsCandidateFromForeignTopLevelWindow)
+{
+  TestWindowTree root_window(L"QingYingMsaaRootWindow",
+                             L"QingYingMsaaRootChild", 40, 80, 400, 240,
+                             0);
+  TestWindowTree foreign_window(L"QingYingMsaaForeignWindow",
+                                L"QingYingMsaaForeignChild", 40, 80, 400,
+                                240, 0);
+  ASSERT_NE(root_window.root(), nullptr);
+  ASSERT_NE(root_window.content(), nullptr);
+  ASSERT_NE(foreign_window.root(), nullptr);
+  const RECT content_rect = root_window.contentRect();
+  const POINT point{content_rect.left + 20, content_rect.top + 20};
+  const window_detail::MsaaRegionProperties properties{
+      {content_rect.left, content_rect.top, content_rect.right,
+       content_rect.bottom},
+      ROLE_SYSTEM_PUSHBUTTON, 0};
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeMsaaCandidate(
+      root_window.root(), foreign_window.root(), point, properties,
+      candidate));
 }
 
 }  // namespace

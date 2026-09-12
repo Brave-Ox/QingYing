@@ -40,6 +40,7 @@ enum class SmartRegionUiaQuality : std::uint8_t {
   None,
   Disabled,
   UnnamedActionable,
+  PatternActionable,
   NamedActionable,
   ContentSurface,
   GenericContainer,
@@ -66,6 +67,10 @@ struct SmartRegionCandidate {
   SmartRegionDiagnosticSource source{SmartRegionDiagnosticSource::None};
   SmartRegionSemantic semantic{SmartRegionSemantic::Unknown};
   std::uint8_t visual_confidence{0};
+  // MSAA 使用 role，UIA 使用 ControlTypeId；0 表示来源未提供。
+  std::uint32_t accessibility_role{0};
+  // 命中对象相对于无障碍根的层级，仅用于诊断与候选质量判断。
+  std::uint8_t accessibility_depth{0};
   SmartRegionUiaMetadata uia_metadata;
 
   bool valid() const noexcept;
@@ -176,6 +181,8 @@ struct SmartRegionDiagnosticEvent {
   bool uia_async_suppressed_by_cooldown{false};
   bool uia_async_matches_current_request{false};
   bool uia_async_result_applied{false};
+  SmartRegionCandidate uia_async_candidates[SmartRegionDiagnosticMaxCandidates];
+  std::size_t uia_async_diagnostic_candidate_count{0};
   SmartRegionCandidateDiagnostic candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t candidate_count{0};
 };
@@ -237,7 +244,8 @@ class SmartRegionDiagnosticTrace {
       std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
       bool cache_hit, bool suppressed_by_cooldown,
       std::size_t candidate_count, bool matches_current_request,
-      bool applied) noexcept;
+      bool applied, const SmartRegionCandidate* candidates,
+      std::size_t diagnostic_candidate_count) noexcept;
   bool hasLatestEvent() const noexcept;
   const SmartRegionDiagnosticEvent& latestEvent() const noexcept;
 

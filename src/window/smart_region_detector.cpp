@@ -33,6 +33,7 @@ constexpr int kMaximumPointerScore = 100;
 constexpr int kMaximumHierarchyScore = 300;
 constexpr int kHierarchyStepScore = 100;
 constexpr int kNamedUiaActionableQualityScore = 250;
+constexpr int kPatternUiaActionableQualityScore = 200;
 constexpr int kUnnamedUiaActionableQualityScore = 50;
 constexpr int kGenericUiaContainerQualityScore = 25;
 
@@ -401,6 +402,8 @@ int qualityScore(const SmartRegionCandidate& candidate) noexcept
   {
     case SmartRegionUiaQuality::NamedActionable:
       return kNamedUiaActionableQualityScore;
+    case SmartRegionUiaQuality::PatternActionable:
+      return kPatternUiaActionableQualityScore;
     case SmartRegionUiaQuality::UnnamedActionable:
       return kUnnamedUiaActionableQualityScore;
     case SmartRegionUiaQuality::GenericContainer:
@@ -908,7 +911,8 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
     std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
     bool cache_hit, bool suppressed_by_cooldown,
     std::size_t candidate_count, bool matches_current_request,
-    bool applied) noexcept
+    bool applied, const SmartRegionCandidate* candidates,
+    std::size_t diagnostic_candidate_count) noexcept
 {
   if (!m_enabled || !m_has_latest_event)
   {
@@ -926,6 +930,23 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
   m_latest_event.uia_async_matches_current_request =
       matches_current_request;
   m_latest_event.uia_async_result_applied = applied;
+  m_latest_event.uia_async_diagnostic_candidate_count = 0;
+  for (std::size_t index = 0;
+       index < SmartRegionDiagnosticMaxCandidates; ++index)
+  {
+    m_latest_event.uia_async_candidates[index] = SmartRegionCandidate{};
+  }
+  if (candidates != nullptr)
+  {
+    const std::size_t copied_count =
+        (std::min)(diagnostic_candidate_count,
+                   SmartRegionDiagnosticMaxCandidates);
+    for (std::size_t index = 0; index < copied_count; ++index)
+    {
+      m_latest_event.uia_async_candidates[index] = candidates[index];
+    }
+    m_latest_event.uia_async_diagnostic_candidate_count = copied_count;
+  }
   return true;
 }
 

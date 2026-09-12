@@ -77,7 +77,7 @@
 
   验收：鼠标在网页内容区时保留现有内容区吸附；鼠标在标签栏、书签栏、地址栏时不再直接落到网页内容区或整窗。
 
-- [ ] **任务 10：识别浏览器 TabItem 和标签操作按钮**
+- [x] **任务 10：识别浏览器 TabItem 和标签操作按钮**
 
   识别当前标签、非当前标签、标签关闭按钮、新建标签按钮及标签栏整体；支持同一点父子候选切换。
 
@@ -204,3 +204,4 @@
 | 2026-09-11 | 任务 3：补齐小元素和浏览器外壳的自动化夹具 | `tests/smart_region_detector_test.cpp`、`tests/visual_region_locator_test.cpp` | 覆盖紧凑 Win32 控件、12×18 图标、TabItem、书签链接、窄行、书签样式视觉区域和无语义 20px 图标拒绝；专项 78/78 通过。 |
 | 2026-09-11 | 检查点 A | 本文件及基线文件 | 任务 1～3 已完成；真实 Chrome/Edge、VSCode、PyCharm 人工复测仍待可连接桌面会话执行。 |
 | 2026-09-11 | 任务 4：为回退候选预留固定容量 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 固定保留 4 个内容/视觉/Client/Window 回退槽；UIA 最多 4 个，MSAA 最多 1 个；专项 80/80 通过。 |
+| 2026-09-12 | 任务 10：识别浏览器 TabItem 和标签操作按钮 | `src/window/msaa_region_locator.cpp`、`src/window/msaa_region_locator.hpp`、`tests/smart_region_detector_test.cpp` | 日志出现 TabItem（role=37）和标签操作按钮（role=43）局部候选；整客户区 MSAA ContentSurface 候选为 0；新增最大化客户区回归测试及智能吸附专项 98/98 通过。 |

@@ -126,6 +126,16 @@ UiaControlType mapControlType(CONTROLTYPEID control_type) noexcept
   return UiaControlType::Unknown;
 }
 
+bool hasActionableControlPattern(
+    const UiaRegionProperties& properties) noexcept
+{
+  constexpr std::uint8_t kActionablePatternMask =
+      static_cast<std::uint8_t>(UiaPatternFlag::Invoke) |
+      static_cast<std::uint8_t>(UiaPatternFlag::Toggle) |
+      static_cast<std::uint8_t>(UiaPatternFlag::SelectionItem);
+  return (properties.supported_pattern_flags & kActionablePatternMask) != 0;
+}
+
 SmartRegionSemantic semanticFor(
     const UiaRegionProperties& properties) noexcept
 {
@@ -159,6 +169,13 @@ SmartRegionSemantic semanticFor(
       if (!properties.is_enabled)
       {
         return SmartRegionSemantic::Unknown;
+      }
+      if (properties.control_type == UiaControlType::Custom &&
+          properties.is_control && hasActionableControlPattern(properties) &&
+          properties.rect.width() >= kMinimumCompactControlWidth &&
+          properties.rect.height() >= kMinimumCompactControlHeight)
+      {
+        return SmartRegionSemantic::ActionableControl;
       }
       if (properties.is_control && properties.is_keyboard_focusable)
       {
@@ -197,6 +214,11 @@ SmartRegionUiaQuality qualityFor(
   }
   if (semantic == SmartRegionSemantic::ActionableControl)
   {
+    if (properties.control_type == UiaControlType::Custom &&
+        hasActionableControlPattern(properties))
+    {
+      return SmartRegionUiaQuality::PatternActionable;
+    }
     return properties.has_name ? SmartRegionUiaQuality::NamedActionable
                                 : SmartRegionUiaQuality::UnnamedActionable;
   }
@@ -689,6 +711,8 @@ std::size_t collectUiaCandidates(
     SmartRegionCandidate candidate;
     if (makeUiaCandidate(root_window, screen_point, properties[index],
                          candidate)) {
+      candidate.accessibility_role = properties[index].control_type_id;
+      candidate.accessibility_depth = static_cast<std::uint8_t>(index);
       out_candidates[candidate_count++] = candidate;
     }
   }

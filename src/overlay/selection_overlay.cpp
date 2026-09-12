@@ -185,6 +185,27 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
       break;
     }
   }
+  for (std::size_t index = 0;
+       index < event.uia_async_diagnostic_candidate_count; ++index)
+  {
+    const SmartRegionCandidate& candidate = event.uia_async_candidates[index];
+    wchar_t candidate_message[256]{};
+    if (FAILED(StringCchPrintfW(
+            candidate_message, std::size(candidate_message),
+            L"  asyncCandidate[%llu] source=%s semantic=%u "
+            L"role=%u depth=%u rect=(%d,%d,%d,%d)\n",
+            static_cast<unsigned long long>(index),
+            smartRegionDiagnosticSourceName(candidate.source),
+            static_cast<unsigned int>(candidate.semantic),
+            static_cast<unsigned int>(candidate.accessibility_role),
+            static_cast<unsigned int>(candidate.accessibility_depth),
+            candidate.rect.left, candidate.rect.top, candidate.rect.right,
+            candidate.rect.bottom)) ||
+        FAILED(StringCchCatW(message, std::size(message), candidate_message)))
+    {
+      break;
+    }
+  }
   OutputDebugStringW(message);
 }
 
@@ -615,7 +636,8 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
             result.request_id, result.elapsed_ms, result_age_ms,
             result.succeeded, result.msaa_attempted, result.cache_hit,
             result.suppressed_by_cooldown, result.candidate_count,
-            applies_to_current_request, result_applied);
+            applies_to_current_request, result_applied, result.candidates,
+            result.candidate_count);
     if (recorded_async_result)
     {
       emitSmartRegionDiagnostic(data->smart_region_diagnostics);
