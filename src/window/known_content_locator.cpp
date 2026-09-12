@@ -10,6 +10,8 @@ namespace {
 constexpr int kClassCapacity = 128;
 constexpr int kMinimumChromiumExtentPx = 200;
 constexpr DWORD kProcessPathCapacity = 32768;
+constexpr std::int64_t kMaximumBrowserChromeHeightNumerator = 1;
+constexpr std::int64_t kMaximumBrowserChromeHeightDenominator = 3;
 
 class ScopedHandle {
  public:
@@ -452,12 +454,17 @@ bool chromiumBrowserChromeRect(const WindowRect& root_client_rect,
                                WindowRect& out) noexcept
 {
   out = WindowRect{};
+  const std::int64_t chrome_height =
+      static_cast<std::int64_t>(renderer_rect.top) - root_client_rect.top;
+  const std::int64_t root_height = root_client_rect.height();
   if (root_client_rect.empty() || renderer_rect.empty() ||
       renderer_rect.left != root_client_rect.left ||
       renderer_rect.right != root_client_rect.right ||
       renderer_rect.top <= root_client_rect.top ||
       renderer_rect.top >= root_client_rect.bottom ||
-      renderer_rect.bottom > root_client_rect.bottom)
+      renderer_rect.bottom > root_client_rect.bottom ||
+      chrome_height * kMaximumBrowserChromeHeightDenominator >
+          root_height * kMaximumBrowserChromeHeightNumerator)
   {
     return false;
   }

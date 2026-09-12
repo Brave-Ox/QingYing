@@ -1332,6 +1332,15 @@ TEST(BrowserChromeRegionTest, RejectsRendererThatDoesNotShareTheRootWidth)
   EXPECT_TRUE(chrome_rect.empty());
 }
 
+TEST(BrowserChromeRegionTest, RejectsOversizedTopShellFallback)
+{
+  WindowRect chrome_rect;
+
+  EXPECT_FALSE(window_detail::chromiumBrowserChromeRect(
+      {0, 0, 1200, 900}, {0, 360, 1200, 900}, {240, 24}, chrome_rect));
+  EXPECT_TRUE(chrome_rect.empty());
+}
+
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)
 {
   const window_detail::UiaRegionProperties properties{
