@@ -543,6 +543,62 @@ TEST(SmartRegionCandidateSelectorTest,
 }
 
 TEST(SmartRegionCandidateSelectorTest,
+     DoesNotTreatFallbackWrappersAsControlHierarchy)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  SmartRegionCandidate control{1, 11, {120, 120, 160, 160},
+                               SmartRegionKind::KnownContent};
+  control.source = SmartRegionDiagnosticSource::Uia;
+  control.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate client{1, 1, {20, 20, 980, 780},
+                              SmartRegionKind::ClientArea};
+  client.source = SmartRegionDiagnosticSource::ClientArea;
+  client.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate window{1, 1, owner_rect, SmartRegionKind::Window};
+  window.source = SmartRegionDiagnosticSource::Window;
+  window.semantic = SmartRegionSemantic::Fallback;
+  const SmartRegionCandidate candidates[] = {control, client, window};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 140, 140, owner_rect, selected,
+      diagnostic));
+  ASSERT_EQ(selected.target_window, 11U);
+  ASSERT_EQ(diagnostic.candidate_count, 3U);
+  EXPECT_EQ(diagnostic.candidates[0].hierarchy_score, 0);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     PrefersNamedParentControlOverUnnamedNestedControl)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  SmartRegionCandidate child{1, 11, {120, 120, 136, 140},
+                             SmartRegionKind::KnownContent};
+  child.source = SmartRegionDiagnosticSource::Uia;
+  child.semantic = SmartRegionSemantic::ActionableControl;
+  child.uia_metadata.available = true;
+  child.uia_metadata.quality = SmartRegionUiaQuality::UnnamedActionable;
+  SmartRegionCandidate parent{1, 12, {100, 100, 300, 260},
+                              SmartRegionKind::KnownContent};
+  parent.source = SmartRegionDiagnosticSource::Uia;
+  parent.semantic = SmartRegionSemantic::ActionableControl;
+  parent.uia_metadata.available = true;
+  parent.uia_metadata.quality = SmartRegionUiaQuality::NamedActionable;
+  const SmartRegionCandidate candidates[] = {child, parent};
+  SmartRegionCandidate selected;
+  SmartRegionDiagnosticEvent diagnostic;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 128, 130, owner_rect, selected,
+      diagnostic));
+  EXPECT_EQ(selected.target_window, 12U);
+  ASSERT_EQ(diagnostic.candidate_count, 2U);
+  EXPECT_GT(diagnostic.candidates[1].quality_score,
+            diagnostic.candidates[0].quality_score);
+}
+
+TEST(SmartRegionCandidateSelectorTest,
      RetainsDetectionMetadataWhileRecordingCandidateDiagnostics)
 {
   const WindowRect owner_rect{0, 0, 1000, 800};
@@ -981,6 +1037,48 @@ TEST(SmartRegionCandidateCollectionTest,
   EXPECT_EQ(collection.current().kind, SmartRegionKind::Window);
   ASSERT_TRUE(collection.cycle(-1));
   EXPECT_EQ(collection.current().kind, SmartRegionKind::ClientArea);
+}
+
+TEST(SmartRegionCandidateCollectionTest,
+     PlacesGenericParentBeforeContentSurfaceWhenCycling)
+{
+  SmartRegionCandidate control{1, 11, {200, 200, 280, 240},
+                               SmartRegionKind::KnownContent};
+  control.source = SmartRegionDiagnosticSource::Uia;
+  control.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionCandidate parent{1, 12, {80, 80, 900, 700},
+                              SmartRegionKind::KnownContent};
+  parent.source = SmartRegionDiagnosticSource::Uia;
+  parent.semantic = SmartRegionSemantic::ContentSurface;
+  parent.uia_metadata.available = true;
+  parent.uia_metadata.quality = SmartRegionUiaQuality::GenericContainer;
+  SmartRegionCandidate content{1, 13, {120, 120, 700, 560},
+                               SmartRegionKind::KnownContent};
+  content.source = SmartRegionDiagnosticSource::Visual;
+  content.semantic = SmartRegionSemantic::ContentSurface;
+  content.visual_confidence = 95;
+  content.uia_metadata.available = true;
+  content.uia_metadata.quality = SmartRegionUiaQuality::ContentSurface;
+  SmartRegionCandidate client{1, 1, {20, 20, 980, 780},
+                              SmartRegionKind::ClientArea};
+  client.source = SmartRegionDiagnosticSource::ClientArea;
+  client.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate window{1, 1, {0, 0, 1000, 800},
+                              SmartRegionKind::Window};
+  window.source = SmartRegionDiagnosticSource::Window;
+  window.semantic = SmartRegionSemantic::Fallback;
+  const SmartRegionCandidate candidates[] = {
+      window, content, client, parent, control};
+  SmartRegionCandidateCollection collection;
+
+  collection.replace(candidates, std::size(candidates), 220, 220,
+                     {0, 0, 1000, 800}, control);
+
+  ASSERT_EQ(collection.count(), 5U);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().target_window, 12U);
+  ASSERT_TRUE(collection.cycle(1));
+  EXPECT_EQ(collection.current().target_window, 13U);
 }
 
 TEST(SmartRegionCandidateCollectionTest,

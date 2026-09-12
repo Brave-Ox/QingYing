@@ -200,15 +200,15 @@ SmartRegionUiaQuality qualityFor(
     return properties.has_name ? SmartRegionUiaQuality::NamedActionable
                                 : SmartRegionUiaQuality::UnnamedActionable;
   }
-  if (semantic == SmartRegionSemantic::ContentSurface)
-  {
-    return SmartRegionUiaQuality::ContentSurface;
-  }
   if (properties.control_type == UiaControlType::Pane ||
       properties.control_type == UiaControlType::Group ||
       properties.control_type == UiaControlType::Custom)
   {
     return SmartRegionUiaQuality::GenericContainer;
+  }
+  if (semantic == SmartRegionSemantic::ContentSurface)
+  {
+    return SmartRegionUiaQuality::ContentSurface;
   }
   return SmartRegionUiaQuality::None;
 }

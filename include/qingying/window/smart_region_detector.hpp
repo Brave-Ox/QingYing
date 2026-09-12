@@ -128,6 +128,7 @@ struct SmartRegionCandidateDiagnostic {
   int semantic_score{0};
   int pointer_score{0};
   int area_score{0};
+  int quality_score{0};
   int boundary_score{0};
   int hierarchy_score{0};
   std::int64_t area{0};

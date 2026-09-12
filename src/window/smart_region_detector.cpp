@@ -32,6 +32,9 @@ constexpr int kSemanticScoreContent = 450;
 constexpr int kMaximumPointerScore = 100;
 constexpr int kMaximumHierarchyScore = 300;
 constexpr int kHierarchyStepScore = 100;
+constexpr int kNamedUiaActionableQualityScore = 250;
+constexpr int kUnnamedUiaActionableQualityScore = 50;
+constexpr int kGenericUiaContainerQualityScore = 25;
 
 struct CandidateScoreBreakdown
 {
@@ -39,12 +42,14 @@ struct CandidateScoreBreakdown
   int semantic{0};
   int pointer{0};
   int area{0};
+  int quality{0};
   int boundary{0};
   int hierarchy{0};
 
   int total() const noexcept
   {
-    return source + semantic + pointer + area + boundary + hierarchy;
+    return source + semantic + pointer + area + quality + boundary +
+           hierarchy;
   }
 };
 
@@ -351,6 +356,12 @@ int pointerScore(const SmartRegionCandidate& candidate, int screen_x,
 int areaScore(const SmartRegionCandidate& candidate,
               const WindowRect& owner_rect) noexcept
 {
+  // 独立控件的可操作语义已经在 semantic/quality 中体现；不再因面积小
+  // 额外加分，避免无名小子控件仅凭面积抢占父控件。
+  if (candidate.semantic == SmartRegionSemantic::ActionableControl)
+  {
+    return 0;
+  }
   const std::int64_t owner_area = areaOf(owner_rect);
   const std::int64_t candidate_area = areaOf(candidate.rect);
   if (owner_area <= 0 || candidate_area <= 0)
@@ -375,6 +386,29 @@ int areaScore(const SmartRegionCandidate& candidate,
   if (coverage_percent <= 75)
   {
     return 150;
+  }
+  return 0;
+}
+
+int qualityScore(const SmartRegionCandidate& candidate) noexcept
+{
+  if (candidate.source != SmartRegionDiagnosticSource::Uia ||
+      !candidate.uia_metadata.available)
+  {
+    return 0;
+  }
+  switch (candidate.uia_metadata.quality)
+  {
+    case SmartRegionUiaQuality::NamedActionable:
+      return kNamedUiaActionableQualityScore;
+    case SmartRegionUiaQuality::UnnamedActionable:
+      return kUnnamedUiaActionableQualityScore;
+    case SmartRegionUiaQuality::GenericContainer:
+      return kGenericUiaContainerQualityScore;
+    case SmartRegionUiaQuality::None:
+    case SmartRegionUiaQuality::Disabled:
+    case SmartRegionUiaQuality::ContentSurface:
+      return 0;
   }
   return 0;
 }
@@ -411,6 +445,7 @@ int hierarchyScore(const SmartRegionCandidate& candidate,
   {
     const SmartRegionCandidate& container = candidates[index];
     if (!container.valid() || !container.contains(screen_x, screen_y) ||
+        container.semantic == SmartRegionSemantic::Fallback ||
         areaOf(container.rect) <= candidate_area ||
         !rectInside(candidate.rect, container.rect))
     {
@@ -432,6 +467,7 @@ CandidateScoreBreakdown candidateScore(
   score.semantic = semanticScore(candidate.semantic);
   score.pointer = pointerScore(candidate, screen_x, screen_y);
   score.area = areaScore(candidate, owner_rect);
+  score.quality = qualityScore(candidate);
   score.boundary = boundaryScore(candidate);
   score.hierarchy = hierarchyScore(candidate, candidates, candidate_count,
                                    screen_x, screen_y);
@@ -568,6 +604,7 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
       diagnostic.semantic_score = score.semantic;
       diagnostic.pointer_score = score.pointer;
       diagnostic.area_score = score.area;
+      diagnostic.quality_score = score.quality;
       diagnostic.boundary_score = score.boundary;
       diagnostic.hierarchy_score = score.hierarchy;
     }
@@ -666,15 +703,20 @@ void SmartRegionCandidateCollection::replace(
     {
       return 3;
     }
-    if (candidate.semantic == SmartRegionSemantic::ContentSurface)
-    {
-      return 2;
-    }
     if (candidate.semantic == SmartRegionSemantic::ActionableControl)
     {
       return 0;
     }
-    return 1;
+    if (candidate.uia_metadata.quality ==
+        SmartRegionUiaQuality::GenericContainer)
+    {
+      return 1;
+    }
+    if (candidate.semantic == SmartRegionSemantic::ContentSurface)
+    {
+      return 2;
+    }
+    return 2;
   };
   std::sort(m_candidates, m_candidates + m_count,
             [&hierarchy_rank](const SmartRegionCandidate& left,

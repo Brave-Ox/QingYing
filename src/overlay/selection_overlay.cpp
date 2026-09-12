@@ -164,8 +164,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
             candidate_message, std::size(candidate_message),
             L"  candidate[%llu] source=%s semantic=%u rect=(%d,%d,%d,%d) "
             L"area=%lld coverage=%u confidence=%u score=%d selected=%d "
-            L"parts=(source:%d semantic:%d pointer:%d area:%d boundary:%d "
-            L"hierarchy:%d) reason=%s\n",
+            L"parts=(source:%d semantic:%d pointer:%d area:%d quality:%d "
+            L"boundary:%d hierarchy:%d) reason=%s\n",
             static_cast<unsigned long long>(index),
             smartRegionDiagnosticSourceName(candidate.candidate.source),
             static_cast<unsigned int>(candidate.candidate.semantic),
@@ -178,7 +178,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
             candidate.score, candidate.selected ? 1 : 0,
             candidate.source_score, candidate.semantic_score,
             candidate.pointer_score, candidate.area_score,
-            candidate.boundary_score, candidate.hierarchy_score,
+            candidate.quality_score, candidate.boundary_score,
+            candidate.hierarchy_score,
             smartRegionCandidateRejectionName(candidate.rejection))) ||
         FAILED(StringCchCatW(message, std::size(message), candidate_message))) {
       break;
