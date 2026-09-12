@@ -4,6 +4,7 @@
 #include <mutex>
 
 #include <Windows.h>
+#include <UIAutomation.h>
 #include <oleacc.h>
 
 #include <gtest/gtest.h>
@@ -1273,6 +1274,43 @@ TEST(UiaRegionLocatorTest, MapsRadioButtonToActionableCandidate)
   ASSERT_TRUE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
   EXPECT_EQ(candidate.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(UiaRegionLocatorTest, RejectsDisabledStandardControl)
+{
+  const window_detail::UiaRegionProperties properties{
+      {100, 200, 260, 240}, window_detail::UiaControlType::Button, true,
+      true, false, false, true};
+  SmartRegionCandidate candidate;
+
+  EXPECT_FALSE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+}
+
+TEST(UiaRegionLocatorTest, PreservesControlQualityMetadataOnCandidate)
+{
+  window_detail::UiaRegionProperties properties{
+      {100, 200, 260, 240}, window_detail::UiaControlType::TabItem, true,
+      true, true, true, true};
+  properties.control_type_id = UIA_TabItemControlTypeId;
+  properties.supported_pattern_flags =
+      static_cast<std::uint8_t>(window_detail::UiaPatternFlag::SelectionItem);
+  SmartRegionCandidate candidate;
+
+  ASSERT_TRUE(window_detail::makeUiaCandidate(
+      reinterpret_cast<HWND>(1), {180, 220}, properties, candidate));
+  EXPECT_TRUE(candidate.uia_metadata.available);
+  EXPECT_EQ(candidate.uia_metadata.control_type_id,
+            static_cast<std::uint32_t>(UIA_TabItemControlTypeId));
+  EXPECT_EQ(candidate.uia_metadata.pattern_flags,
+            properties.supported_pattern_flags);
+  EXPECT_TRUE(candidate.uia_metadata.is_control_element);
+  EXPECT_TRUE(candidate.uia_metadata.is_content_element);
+  EXPECT_TRUE(candidate.uia_metadata.is_enabled);
+  EXPECT_TRUE(candidate.uia_metadata.is_keyboard_focusable);
+  EXPECT_TRUE(candidate.uia_metadata.has_name);
+  EXPECT_EQ(candidate.uia_metadata.quality,
+            SmartRegionUiaQuality::NamedActionable);
 }
 
 TEST(UiaRegionLocatorTest, MapsNamedFocusableCustomControlToActionableCandidate)

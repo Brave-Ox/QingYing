@@ -35,6 +35,28 @@ enum class SmartRegionSemantic : std::uint8_t {
   Fallback,
 };
 
+// UIA 候选的质量等级。仅 UIA 候选填充，其他来源保持 None。
+enum class SmartRegionUiaQuality : std::uint8_t {
+  None,
+  Disabled,
+  UnnamedActionable,
+  NamedActionable,
+  ContentSurface,
+  GenericContainer,
+};
+
+struct SmartRegionUiaMetadata {
+  bool available{false};
+  bool is_control_element{false};
+  bool is_content_element{false};
+  bool is_enabled{false};
+  bool is_keyboard_focusable{false};
+  bool has_name{false};
+  std::uint32_t control_type_id{0};
+  std::uint8_t pattern_flags{0};
+  SmartRegionUiaQuality quality{SmartRegionUiaQuality::None};
+};
+
 // 智能吸附候选区域。rect 使用物理屏幕坐标，right/bottom 为开区间。
 struct SmartRegionCandidate {
   std::uintptr_t owner_window{0};
@@ -44,6 +66,7 @@ struct SmartRegionCandidate {
   SmartRegionDiagnosticSource source{SmartRegionDiagnosticSource::None};
   SmartRegionSemantic semantic{SmartRegionSemantic::Unknown};
   std::uint8_t visual_confidence{0};
+  SmartRegionUiaMetadata uia_metadata;
 
   bool valid() const noexcept;
   bool contains(int screen_x, int screen_y) const noexcept;

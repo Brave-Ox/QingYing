@@ -35,6 +35,16 @@ enum class UiaControlType : std::uint8_t {
   Custom,
 };
 
+enum class UiaPatternFlag : std::uint8_t {
+  Invoke = 1U << 0,
+  Toggle = 1U << 1,
+  SelectionItem = 1U << 2,
+  ExpandCollapse = 1U << 3,
+  Value = 1U << 4,
+  RangeValue = 1U << 5,
+  ScrollItem = 1U << 6,
+};
+
 struct UiaRegionProperties {
   WindowRect rect;
   UiaControlType control_type{UiaControlType::Unknown};
@@ -44,6 +54,8 @@ struct UiaRegionProperties {
   bool is_keyboard_focusable{false};
   bool has_name{false};
   HWND native_window{nullptr};
+  std::uint32_t control_type_id{0};
+  std::uint8_t supported_pattern_flags{0};
 };
 
 bool selectSmallestUiaChildAtPoint(

@@ -129,6 +129,10 @@ UiaControlType mapControlType(CONTROLTYPEID control_type) noexcept
 SmartRegionSemantic semanticFor(
     const UiaRegionProperties& properties) noexcept
 {
+  if (!properties.is_enabled)
+  {
+    return SmartRegionSemantic::Unknown;
+  }
   switch (properties.control_type) {
     case UiaControlType::Button:
     case UiaControlType::CheckBox:
@@ -183,6 +187,47 @@ SmartRegionSemantic semanticFor(
   return SmartRegionSemantic::Unknown;
 }
 
+SmartRegionUiaQuality qualityFor(
+    const UiaRegionProperties& properties,
+    SmartRegionSemantic semantic) noexcept
+{
+  if (!properties.is_enabled)
+  {
+    return SmartRegionUiaQuality::Disabled;
+  }
+  if (semantic == SmartRegionSemantic::ActionableControl)
+  {
+    return properties.has_name ? SmartRegionUiaQuality::NamedActionable
+                                : SmartRegionUiaQuality::UnnamedActionable;
+  }
+  if (semantic == SmartRegionSemantic::ContentSurface)
+  {
+    return SmartRegionUiaQuality::ContentSurface;
+  }
+  if (properties.control_type == UiaControlType::Pane ||
+      properties.control_type == UiaControlType::Group ||
+      properties.control_type == UiaControlType::Custom)
+  {
+    return SmartRegionUiaQuality::GenericContainer;
+  }
+  return SmartRegionUiaQuality::None;
+}
+
+void appendCachedPattern(IUIAutomationElement* element, PATTERNID pattern_id,
+                         UiaPatternFlag flag, std::uint8_t& out_flags) noexcept
+{
+  if (element == nullptr)
+  {
+    return;
+  }
+  Microsoft::WRL::ComPtr<IUnknown> pattern;
+  if (SUCCEEDED(element->GetCachedPattern(pattern_id, &pattern)) &&
+      pattern != nullptr)
+  {
+    out_flags |= static_cast<std::uint8_t>(flag);
+  }
+}
+
 bool readCachedProperties(IUIAutomationElement* element,
                           UiaRegionProperties& out) noexcept
 {
@@ -209,6 +254,7 @@ bool readCachedProperties(IUIAutomationElement* element,
 
   out.rect = {rect.left, rect.top, rect.right, rect.bottom};
   out.control_type = mapControlType(control_type);
+  out.control_type_id = static_cast<std::uint32_t>(control_type);
   out.is_control = is_control != FALSE;
   out.is_content = is_content != FALSE;
   if (SUCCEEDED(element->get_CachedIsEnabled(&is_enabled)))
@@ -228,6 +274,24 @@ bool readCachedProperties(IUIAutomationElement* element,
   {
     out.native_window = reinterpret_cast<HWND>(native_window);
   }
+  appendCachedPattern(element, UIA_InvokePatternId, UiaPatternFlag::Invoke,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_TogglePatternId, UiaPatternFlag::Toggle,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_SelectionItemPatternId,
+                      UiaPatternFlag::SelectionItem,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_ExpandCollapsePatternId,
+                      UiaPatternFlag::ExpandCollapse,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_ValuePatternId, UiaPatternFlag::Value,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_RangeValuePatternId,
+                      UiaPatternFlag::RangeValue,
+                      out.supported_pattern_flags);
+  appendCachedPattern(element, UIA_ScrollItemPatternId,
+                      UiaPatternFlag::ScrollItem,
+                      out.supported_pattern_flags);
   return true;
 }
 
@@ -261,7 +325,14 @@ bool configureCacheRequest(
              UIA_IsKeyboardFocusablePropertyId)) &&
          SUCCEEDED(cache_request->AddProperty(UIA_NamePropertyId)) &&
          SUCCEEDED(cache_request->AddProperty(
-             UIA_NativeWindowHandlePropertyId));
+             UIA_NativeWindowHandlePropertyId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_InvokePatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_TogglePatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_SelectionItemPatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_ExpandCollapsePatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_ValuePatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_RangeValuePatternId)) &&
+         SUCCEEDED(cache_request->AddPattern(UIA_ScrollItemPatternId));
 }
 
 }  // namespace
@@ -584,6 +655,17 @@ bool makeUiaCandidate(HWND root_window, POINT screen_point,
       SmartRegionKind::KnownContent};
   candidate.source = SmartRegionDiagnosticSource::Uia;
   candidate.semantic = semantic;
+  candidate.uia_metadata.available = true;
+  candidate.uia_metadata.is_control_element = properties.is_control;
+  candidate.uia_metadata.is_content_element = properties.is_content;
+  candidate.uia_metadata.is_enabled = properties.is_enabled;
+  candidate.uia_metadata.is_keyboard_focusable =
+      properties.is_keyboard_focusable;
+  candidate.uia_metadata.has_name = properties.has_name;
+  candidate.uia_metadata.control_type_id = properties.control_type_id;
+  candidate.uia_metadata.pattern_flags =
+      properties.supported_pattern_flags;
+  candidate.uia_metadata.quality = qualityFor(properties, semantic);
   if (!candidate.valid()) {
     return false;
   }
