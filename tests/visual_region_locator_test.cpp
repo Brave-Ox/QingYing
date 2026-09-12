@@ -218,6 +218,46 @@ Image makeTextGlyphImage()
   return image;
 }
 
+Image makeOwnerWidthHorizontalBandImage()
+{
+  Image image;
+  image.width = 400;
+  image.height = 300;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 100; y < 160; ++y)
+  {
+    for (int x = 0; x < image.width; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
+Image makeOwnerHeightVerticalBandImage()
+{
+  Image image;
+  image.width = 400;
+  image.height = 300;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 0; y < image.height; ++y)
+  {
+    for (int x = 120; x < 200; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
 Image makeSmallRoundedControlImage(std::uint32_t background_pixel,
                                    std::uint32_t control_pixel)
 {
@@ -421,6 +461,38 @@ TEST(VisualRegionLocatorTest, FindsSidebarAttachedToOneOwnerEdge)
   EXPECT_EQ(result.top, 120);
   EXPECT_EQ(result.right, 280);
   EXPECT_EQ(result.bottom, 780);
+}
+
+TEST(VisualRegionLocatorTest,
+     FindsOwnerWidthBandWithOnlyTopAndBottomVisualBoundaries)
+{
+  const Image image = makeOwnerWidthHorizontalBandImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {200, 130}, result));
+  EXPECT_EQ(result.left, 0);
+  EXPECT_EQ(result.top, 100);
+  EXPECT_EQ(result.right, image.width);
+  EXPECT_EQ(result.bottom, 160);
+}
+
+TEST(VisualRegionLocatorTest,
+     FindsOwnerHeightBandWithOnlyLeftAndRightVisualBoundaries)
+{
+  const Image image = makeOwnerHeightVerticalBandImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {160, 150}, result));
+  EXPECT_EQ(result.left, 120);
+  EXPECT_EQ(result.top, 0);
+  EXPECT_EQ(result.right, 200);
+  EXPECT_EQ(result.bottom, image.height);
 }
 
 TEST(VisualRegionLocatorTest,

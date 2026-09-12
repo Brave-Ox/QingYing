@@ -496,11 +496,27 @@ bool findVisualRegion(const Image& background,
                                    static_cast<int>(bottom.confirmed);
             const bool has_horizontal_pair = top.confirmed && bottom.confirmed;
             const bool has_vertical_pair = left.confirmed && right.confirmed;
+            const bool spans_owner_width =
+                !left.confirmed && !right.confirmed &&
+                left.coordinate == owner_client_rect.left &&
+                right.coordinate == owner_client_rect.right;
+            const bool spans_owner_height =
+                !top.confirmed && !bottom.confirmed &&
+                top.coordinate == owner_client_rect.top &&
+                bottom.coordinate == owner_client_rect.bottom;
+            // Standard mode accepts a full-width row or full-height sidebar
+            // with one real pair of opposite boundaries. Both omitted sides
+            // must be exactly anchored to Owner, so texture strokes and a
+            // uniform background still have no valid rectangle evidence.
+            const bool has_owner_anchored_boundary_pair =
+                (has_horizontal_pair && spans_owner_width) ||
+                (has_vertical_pair && spans_owner_height);
             const bool requires_complete_boundaries =
                 compact_candidate ||
                 policy == VisualRegionSearchPolicy::RequireCompleteBoundaries;
             if ((requires_complete_boundaries && edge_count != 4) ||
-                (!requires_complete_boundaries && edge_count < 3) ||
+                (!requires_complete_boundaries && edge_count < 3 &&
+                 !has_owner_anchored_boundary_pair) ||
                 (!has_horizontal_pair && !has_vertical_pair) ||
                 !missingBoundaryIsAttachedToOwner(left, right, top, bottom,
                                                   owner_client_rect) ||
