@@ -174,6 +174,7 @@ struct SmartRegionDiagnosticEvent {
   bool msaa_candidate_found{false};
   bool known_content_lookup_attempted{false};
   bool visual_lookup_attempted{false};
+  bool visual_cache_hit{false};
   bool uia_async_result_received{false};
   bool uia_async_result_succeeded{false};
   bool uia_async_msaa_attempted{false};
@@ -193,6 +194,32 @@ struct SmartRegionVisualContext {
   WindowRect image_screen_rect;
 
   bool valid() const noexcept;
+};
+
+// 缓存冻结截图同一小网格内的视觉检测结果，避免鼠标微动时重复扫描。
+class SmartRegionVisualResultCache
+{
+ public:
+  bool lookup(std::uintptr_t root_window, const WindowRect& owner_rect,
+              int screen_x, int screen_y, SmartRegionCandidate& out,
+              bool& found) const noexcept;
+  void store(std::uintptr_t root_window, const WindowRect& owner_rect,
+             int screen_x, int screen_y,
+             const SmartRegionCandidate* candidate) noexcept;
+  void clear() noexcept;
+
+ private:
+  static constexpr std::size_t MaximumPositiveCandidates = 4;
+
+  std::uintptr_t m_root_window{0};
+  WindowRect m_owner_rect;
+  SmartRegionCandidate m_positive_candidates[MaximumPositiveCandidates];
+  std::size_t m_positive_candidate_count{0};
+  std::size_t m_next_positive_candidate_index{0};
+  int m_negative_cell_x{0};
+  int m_negative_cell_y{0};
+  bool m_valid{false};
+  bool m_has_negative_cell{false};
 };
 
 // 快速检测路径已经取得的窗口信息。Overlay 将其直接传递给后台 UIA
@@ -267,6 +294,8 @@ class SmartRegionHoverStabilizer {
 
   bool update(const SmartRegionCandidate& candidate,
               std::uint64_t now_ms) noexcept;
+  bool update(const SmartRegionCandidate& candidate,
+              std::uint64_t now_ms, POINT screen_point) noexcept;
   void clear() noexcept;
   bool hasStableCandidate() const noexcept;
   bool hasPendingCandidate() const noexcept;
@@ -318,7 +347,8 @@ class SmartRegionDetector {
                 SmartRegionDetectionPolicy policy =
                     SmartRegionDetectionPolicy::Complete,
                 SmartRegionCandidateCollection* collection = nullptr,
-                SmartRegionWindowSnapshot* window_snapshot = nullptr)
+                SmartRegionWindowSnapshot* window_snapshot = nullptr,
+                SmartRegionVisualResultCache* visual_cache = nullptr)
       const noexcept;
 };
 

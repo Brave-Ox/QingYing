@@ -24,11 +24,13 @@ enum class VisualRegionEdge : std::uint8_t {
 };
 
 // 默认策略允许候选与宿主客户区的一条边相连，适用于传统的侧边栏和
-// 窗口分区。Electron 工作台使用严格策略，避免将工作台边缘和代码纹理
-// 拼接成并不存在的大区域。
+// 窗口分区。Electron 工作台拒绝横跨大部分窗口的不完整候选，同时保留
+// 编辑器、终端和侧边栏等局部区域。
 enum class VisualRegionSearchPolicy : std::uint8_t {
   Standard,
   RequireCompleteBoundaries,
+  RejectLargeIncompleteBoundaries,
+  ElectronWorkbench,
 };
 
 // 视觉候选的边界证据。edge_mask 标识真正从图像识别出的边；

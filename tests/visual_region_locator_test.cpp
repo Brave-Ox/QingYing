@@ -218,6 +218,46 @@ Image makeTextGlyphImage()
   return image;
 }
 
+Image makeLargeOwnerAttachedWorkbenchImage()
+{
+  Image image;
+  image.width = 1600;
+  image.height = 900;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 40; y < 760; ++y)
+  {
+    for (int x = 0; x < 1140; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
+Image makeMediumOwnerAttachedWorkbenchImage()
+{
+  Image image;
+  image.width = 1600;
+  image.height = 900;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      kPagePixel);
+  for (int y = 40; y < 760; ++y)
+  {
+    for (int x = 0; x < 960; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = kSidebarPixel;
+    }
+  }
+  return image;
+}
+
 Image makeOwnerWidthHorizontalBandImage()
 {
   Image image;
@@ -382,6 +422,36 @@ Image makeWideRowWithLocallyVisibleRoundedTop()
   return image;
 }
 
+Image makeWorkbenchEditorAndTerminalImage()
+{
+  Image image;
+  image.width = 2000;
+  image.height = 1200;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      0xFF101010u);
+
+  for (int y = 100; y < 700; ++y)
+  {
+    for (int x = 100; x < 1500; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF202020u;
+    }
+  }
+  for (int y = 700; y < 1050; ++y)
+  {
+    for (int x = 100; x < 1500; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  return image;
+}
+
 TEST(VisualRegionLocatorTest,
      RejectsCandidateWhenAnySideFallsBackToTheOwnerClientArea)
 {
@@ -507,6 +577,101 @@ TEST(VisualRegionLocatorTest,
       image, image_screen_rect, owner_client_rect, {160, 400}, result,
       window_detail::VisualRegionSearchPolicy::RequireCompleteBoundaries));
   EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     WorkbenchPolicyRejectsLargeIncompleteCandidateSpanningPanels)
+{
+  const Image image = makeLargeOwnerAttachedWorkbenchImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  EXPECT_FALSE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {640, 400}, result,
+      window_detail::VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries));
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     WorkbenchPolicyRejectsMediumIncompleteCandidateSpanningPanels)
+{
+  const Image image = makeMediumOwnerAttachedWorkbenchImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  EXPECT_FALSE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {640, 400}, result,
+      window_detail::VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries));
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(VisualRegionLocatorTest,
+     WorkbenchPolicyKeepsSmallOwnerAttachedSidebar)
+{
+  const Image image = makeOwnerAttachedSidebarImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect result;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {160, 400}, result,
+      window_detail::VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries));
+  EXPECT_EQ(result.left, 0);
+  EXPECT_EQ(result.right, 280);
+}
+
+TEST(VisualRegionLocatorTest,
+     WorkbenchPolicyFindsEditorAndTerminalBeyondLocalSearchDistance)
+{
+  const Image image = makeWorkbenchEditorAndTerminalImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect editor;
+  WindowRect terminal;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 400}, editor,
+      window_detail::VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries));
+  EXPECT_EQ(editor.left, 100);
+  EXPECT_EQ(editor.top, 100);
+  EXPECT_EQ(editor.right, 1500);
+  EXPECT_EQ(editor.bottom, 700);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 900}, terminal,
+      window_detail::VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries));
+  EXPECT_EQ(terminal.left, 100);
+  EXPECT_EQ(terminal.top, 700);
+  EXPECT_EQ(terminal.right, 1500);
+  EXPECT_EQ(terminal.bottom, 1050);
+}
+
+TEST(VisualRegionLocatorTest,
+     ElectronWorkbenchPolicySeparatesEditorAndTerminalWithoutGenericSearch)
+{
+  const Image image = makeWorkbenchEditorAndTerminalImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect editor;
+  WindowRect terminal;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 400}, editor,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(editor.left, 100);
+  EXPECT_EQ(editor.top, 100);
+  EXPECT_EQ(editor.right, 1500);
+  EXPECT_EQ(editor.bottom, 700);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 900}, terminal,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(terminal.left, 100);
+  EXPECT_EQ(terminal.top, 700);
+  EXPECT_EQ(terminal.right, 1500);
+  EXPECT_EQ(terminal.bottom, 1050);
 }
 
 TEST(VisualRegionLocatorTest,

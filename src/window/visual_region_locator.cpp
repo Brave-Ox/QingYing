@@ -26,6 +26,9 @@ constexpr int kRequiredEdgeCoveragePercent = 60;
 constexpr int kLocalProbeHalfExtent = 96;
 constexpr int kCompactProbeHalfExtent = 12;
 constexpr std::int64_t kMaximumRegionPercent = 85;
+constexpr std::int64_t kWorkbenchIncompleteMaximumOwnerSpanPercent = 50;
+constexpr int kWorkbenchGlobalSeparatorCoveragePercent = 45;
+constexpr ULONGLONG kWorkbenchGlobalSeparatorBudgetMs = 16;
 constexpr std::size_t kMaximumConfirmedBoundaries = 3;
 constexpr std::size_t kMaximumBoundaryCandidates =
     kMaximumConfirmedBoundaries + 1;
@@ -363,6 +366,132 @@ int rectangleEvidenceScore(const BoundaryCandidate& left,
          boundaryQuality(top) + boundaryQuality(bottom);
 }
 
+BoundaryCandidate findNearestGlobalVerticalSeparator(
+    const Image& image, const WindowRect& image_screen_rect,
+    const SearchBounds& bounds, POINT point, bool search_left,
+    ULONGLONG start_time_ms) noexcept
+{
+  const int start = search_left ? static_cast<int>(point.x) - 1
+                                : static_cast<int>(point.x) + 1;
+  const int limit = search_left ? bounds.left + 1 : bounds.right - 1;
+  const int step = search_left ? -1 : 1;
+  for (int x = start; search_left ? x >= limit : x <= limit; x += step)
+  {
+    if (GetTickCount64() - start_time_ms >
+        kWorkbenchGlobalSeparatorBudgetMs)
+    {
+      break;
+    }
+    const int coverage = verticalEdgeCoverage(
+        image, image_screen_rect, bounds, x, bounds.top, bounds.bottom);
+    if (coverage >= kWorkbenchGlobalSeparatorCoveragePercent)
+    {
+      return {x, coverage, 0, true};
+    }
+  }
+  return {search_left ? bounds.left : bounds.right, 0, 0, false};
+}
+
+BoundaryCandidate findNearestGlobalHorizontalSeparator(
+    const Image& image, const WindowRect& image_screen_rect,
+    const SearchBounds& bounds, POINT point, bool search_top,
+    ULONGLONG start_time_ms) noexcept
+{
+  const int start = search_top ? static_cast<int>(point.y) - 1
+                               : static_cast<int>(point.y) + 1;
+  const int limit = search_top ? bounds.top + 1 : bounds.bottom - 1;
+  const int step = search_top ? -1 : 1;
+  for (int y = start; search_top ? y >= limit : y <= limit; y += step)
+  {
+    if (GetTickCount64() - start_time_ms >
+        kWorkbenchGlobalSeparatorBudgetMs)
+    {
+      break;
+    }
+    const int coverage = horizontalEdgeCoverage(
+        image, image_screen_rect, bounds, y, bounds.left, bounds.right);
+    if (coverage >= kWorkbenchGlobalSeparatorCoveragePercent)
+    {
+      return {y, coverage, 0, true};
+    }
+  }
+  return {search_top ? bounds.top : bounds.bottom, 0, 0, false};
+}
+
+bool findWorkbenchPanelByGlobalSeparators(
+    const Image& image, const WindowRect& image_screen_rect,
+    const SearchBounds& bounds, POINT point,
+    const WindowRect& owner_client_rect, WindowRect& out,
+    VisualRegionDiagnostic& diagnostics,
+    bool allow_owner_attached_boundaries) noexcept
+{
+  const ULONGLONG start_time_ms = GetTickCount64();
+  const BoundaryCandidate left = findNearestGlobalVerticalSeparator(
+      image, image_screen_rect, bounds, point, true, start_time_ms);
+  const BoundaryCandidate right = findNearestGlobalVerticalSeparator(
+      image, image_screen_rect, bounds, point, false, start_time_ms);
+  const SearchBounds panel_column_bounds{
+      left.confirmed ? left.coordinate : bounds.left, bounds.top,
+      right.confirmed ? right.coordinate : bounds.right, bounds.bottom};
+  if (!valid(panel_column_bounds) ||
+      GetTickCount64() - start_time_ms > kWorkbenchGlobalSeparatorBudgetMs)
+  {
+    return false;
+  }
+  const BoundaryCandidate top = findNearestGlobalHorizontalSeparator(
+      image, image_screen_rect, panel_column_bounds, point, true,
+      start_time_ms);
+  const BoundaryCandidate bottom = findNearestGlobalHorizontalSeparator(
+      image, image_screen_rect, panel_column_bounds, point, false,
+      start_time_ms);
+  const int confirmed_edge_count = static_cast<int>(left.confirmed) +
+                                   static_cast<int>(right.confirmed) +
+                                   static_cast<int>(top.confirmed) +
+                                   static_cast<int>(bottom.confirmed);
+  const int minimum_confirmed_edge_count =
+      allow_owner_attached_boundaries ? 3 : 4;
+  if (confirmed_edge_count < minimum_confirmed_edge_count ||
+      (allow_owner_attached_boundaries &&
+       !missingBoundaryIsAttachedToOwner(left, right, top, bottom,
+                                         owner_client_rect)))
+  {
+    return false;
+  }
+
+  const WindowRect candidate{left.coordinate, top.coordinate,
+                             right.coordinate, bottom.coordinate};
+  if (candidate.width() < kMinimumRegionWidth ||
+      candidate.height() < kMinimumRegionHeight ||
+      !contains(candidate, point) ||
+      areaOf(candidate) * 100 >=
+          areaOf(owner_client_rect) * kMaximumRegionPercent)
+  {
+    return false;
+  }
+
+  diagnostics.candidate = candidate;
+  constexpr VisualRegionEdge EdgeKinds[4] = {
+      VisualRegionEdge::Left, VisualRegionEdge::Right,
+      VisualRegionEdge::Top, VisualRegionEdge::Bottom};
+  const BoundaryCandidate edges[4] = {left, right, top, bottom};
+  for (std::size_t index = 0; index < std::size(edges); ++index)
+  {
+    if (edges[index].confirmed)
+    {
+      diagnostics.edge_mask |= static_cast<std::uint8_t>(EdgeKinds[index]);
+    }
+  }
+  diagnostics.edge_coverage[0] = static_cast<std::uint8_t>(left.coverage);
+  diagnostics.edge_coverage[1] = static_cast<std::uint8_t>(right.coverage);
+  diagnostics.edge_coverage[2] = static_cast<std::uint8_t>(top.coverage);
+  diagnostics.edge_coverage[3] = static_cast<std::uint8_t>(bottom.coverage);
+  diagnostics.confidence = static_cast<std::uint8_t>((std::min)(
+      100, rectangleEvidenceScore(left, right, top, bottom) * 100 / 800));
+  diagnostics.accepted = true;
+  out = candidate;
+  return true;
+}
+
 }  // namespace
 
 bool findVisualRegion(const Image& background,
@@ -407,6 +536,16 @@ bool findVisualRegion(const Image& background,
       intersection(owner_client_rect, image_screen_rect);
   if (!valid(available_bounds)) {
     return false;
+  }
+
+  // Electron 工作台面板不能复用通用控件扫描：编辑器与终端的分隔线
+  // 通常只覆盖本列/本行，且通用扫描会把相邻面板合成一个大候选。该路径
+  // 只依据穿过鼠标所在列的分隔线，并受独立 16ms 总预算保护。
+  if (policy == VisualRegionSearchPolicy::ElectronWorkbench)
+  {
+    return findWorkbenchPanelByGlobalSeparators(
+        background, image_screen_rect, available_bounds, screen_point,
+        owner_client_rect, out, diagnostics, true);
   }
 
   // local_sample_bounds 只限制边界覆盖率的采样跨度；候选边界仍可在
@@ -514,7 +653,15 @@ bool findVisualRegion(const Image& background,
             const bool requires_complete_boundaries =
                 compact_candidate ||
                 policy == VisualRegionSearchPolicy::RequireCompleteBoundaries;
+            const bool workbench_incomplete_candidate_is_too_large =
+                policy ==
+                    VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries &&
+                edge_count != 4 &&
+                static_cast<std::int64_t>(candidate.width()) * 100 >=
+                    static_cast<std::int64_t>(owner_client_rect.width()) *
+                        kWorkbenchIncompleteMaximumOwnerSpanPercent;
             if ((requires_complete_boundaries && edge_count != 4) ||
+                workbench_incomplete_candidate_is_too_large ||
                 (!requires_complete_boundaries && edge_count < 3 &&
                  !has_owner_anchored_boundary_pair) ||
                 (!has_horizontal_pair && !has_vertical_pair) ||
@@ -658,6 +805,14 @@ bool findVisualRegion(const Image& background,
 
   if (best_score < 0)
   {
+    if (policy ==
+            VisualRegionSearchPolicy::RejectLargeIncompleteBoundaries &&
+        findWorkbenchPanelByGlobalSeparators(
+            background, image_screen_rect, available_bounds, screen_point,
+            owner_client_rect, out, diagnostics, false))
+    {
+      return true;
+    }
     return false;
   }
 

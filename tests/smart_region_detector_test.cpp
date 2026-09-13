@@ -258,6 +258,66 @@ TEST(SmartRegionHoverStabilizerTest,
 }
 
 TEST(SmartRegionHoverStabilizerTest,
+     PromotesAccessibilityActionableOverDetailedVisualCandidateImmediately)
+{
+  SmartRegionCandidate visual_region{1, 11, {0, 60, 384, 635},
+                                     SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  visual_region.visual_confidence = 90;
+  SmartRegionCandidate browser_button{1, 12, {63, 69, 114, 120},
+                                      SmartRegionKind::KnownContent};
+  browser_button.source = SmartRegionDiagnosticSource::Msaa;
+  browser_button.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(visual_region, 100));
+  EXPECT_TRUE(stabilizer.update(browser_button, 116));
+  EXPECT_FALSE(stabilizer.hasPendingCandidate());
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 12U);
+}
+
+TEST(SmartRegionHoverStabilizerTest,
+     KeepsAccessibilityActionableCandidateWhenVisualFallbackContainsIt)
+{
+  SmartRegionCandidate visual_region{1, 11, {0, 60, 384, 635},
+                                     SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate browser_button{1, 12, {63, 69, 114, 120},
+                                      SmartRegionKind::KnownContent};
+  browser_button.source = SmartRegionDiagnosticSource::Msaa;
+  browser_button.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(visual_region, 100, {80, 80}));
+  ASSERT_TRUE(stabilizer.update(browser_button, 116, {80, 80}));
+  EXPECT_FALSE(stabilizer.update(visual_region, 132, {80, 80}));
+  EXPECT_FALSE(stabilizer.update(visual_region, 180, {80, 80}));
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 12U);
+}
+
+TEST(SmartRegionHoverStabilizerTest,
+     AllowsVisualFallbackAfterPointerLeavesAccessibilityCandidate)
+{
+  SmartRegionCandidate visual_region{1, 11, {0, 60, 384, 635},
+                                     SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate browser_button{1, 12, {63, 69, 114, 120},
+                                      SmartRegionKind::KnownContent};
+  browser_button.source = SmartRegionDiagnosticSource::Msaa;
+  browser_button.semantic = SmartRegionSemantic::ActionableControl;
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(visual_region, 100, {80, 80}));
+  ASSERT_TRUE(stabilizer.update(browser_button, 116, {80, 80}));
+  EXPECT_FALSE(stabilizer.update(visual_region, 132, {160, 160}));
+  EXPECT_TRUE(stabilizer.update(visual_region, 180, {160, 160}));
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 11U);
+}
+
+TEST(SmartRegionHoverStabilizerTest,
      UsesLatestPendingDetailedCandidateForClickSelection)
 {
   SmartRegionCandidate first{1, 11, {100, 100, 300, 200},
@@ -556,6 +616,63 @@ TEST(SmartRegionCandidateSelectorTest,
       candidates, std::size(candidates), 200, 260, owner_rect, selected));
   EXPECT_EQ(selected.target_window, 12U);
   EXPECT_EQ(selected.semantic, SmartRegionSemantic::ActionableControl);
+}
+
+TEST(SmartRegionVisualResultCacheTest,
+     ReusesConfirmedLocalCandidateInsideItsBoundsAndNegativeWithinSameCell)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  SmartRegionCandidate visual_region{
+      1, 2, {96, 96, 240, 240}, SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionVisualResultCache cache;
+  SmartRegionCandidate cached;
+  bool found = false;
+
+  cache.store(1, owner_rect, 100, 100, &visual_region);
+  EXPECT_TRUE(cache.lookup(1, owner_rect, 107, 106, cached, found));
+  EXPECT_TRUE(found);
+  EXPECT_EQ(cached.rect.left, 96);
+  EXPECT_TRUE(cache.lookup(1, owner_rect, 224, 224, cached, found));
+  EXPECT_TRUE(found);
+  EXPECT_EQ(cached.rect.left, 96);
+  EXPECT_FALSE(cache.lookup(1, owner_rect, 240, 224, cached, found));
+
+  cache.store(1, owner_rect, 200, 200, nullptr);
+  EXPECT_TRUE(cache.lookup(1, owner_rect, 207, 207, cached, found));
+  EXPECT_FALSE(found);
+  EXPECT_FALSE(cached.valid());
+  EXPECT_TRUE(cache.lookup(1, owner_rect, 232, 232, cached, found));
+  EXPECT_FALSE(found);
+  EXPECT_FALSE(cache.lookup(2, owner_rect, 207, 207, cached, found));
+}
+
+TEST(SmartRegionVisualResultCacheTest,
+     RetainsIndependentWorkbenchPanelsAcrossPanelTransitions)
+{
+  const WindowRect owner_rect{0, 0, 1600, 1000};
+  SmartRegionCandidate editor{
+      1, 2, {200, 80, 1300, 620}, SmartRegionKind::KnownContent};
+  editor.source = SmartRegionDiagnosticSource::Visual;
+  editor.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate terminal{
+      1, 2, {200, 620, 1300, 920}, SmartRegionKind::KnownContent};
+  terminal.source = SmartRegionDiagnosticSource::Visual;
+  terminal.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionVisualResultCache cache;
+  SmartRegionCandidate cached;
+  bool found = false;
+
+  cache.store(1, owner_rect, 800, 300, &editor);
+  cache.store(1, owner_rect, 800, 760, &terminal);
+
+  ASSERT_TRUE(cache.lookup(1, owner_rect, 800, 300, cached, found));
+  EXPECT_TRUE(found);
+  EXPECT_EQ(cached.rect.top, 80);
+  ASSERT_TRUE(cache.lookup(1, owner_rect, 800, 760, cached, found));
+  EXPECT_TRUE(found);
+  EXPECT_EQ(cached.rect.top, 620);
 }
 
 TEST(SmartRegionCandidateSelectorTest,
@@ -1168,13 +1285,34 @@ TEST(UiaRegionQueryWorkerTest, CoolsDownRepeatedFailureForTheSameWindow)
   ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
   EXPECT_FALSE(first_result.succeeded);
 
-  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {140, 140},
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {102, 102},
                               {0, 0, 1000, 800}, 140}));
   window_detail::UiaRegionQueryResult cooled_result;
   ASSERT_TRUE(waitForUiaQueryResult(worker, cooled_result));
   EXPECT_EQ(cooled_result.request_id, 2U);
   EXPECT_TRUE(cooled_result.suppressed_by_cooldown);
   EXPECT_EQ(context.call_count, 1);
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     DoesNotCooldownFailureForAnotherControlInTheSameWindow)
+{
+  CountingUiaQueryContext context;
+  context.succeed = false;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+  EXPECT_FALSE(first_result.succeeded);
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {240, 100},
+                              {0, 0, 1000, 800}, 140}));
+  window_detail::UiaRegionQueryResult other_control_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, other_control_result));
+  EXPECT_FALSE(other_control_result.suppressed_by_cooldown);
+  EXPECT_EQ(context.call_count, 2);
 }
 
 TEST(UiaRegionQueryWorkerTest, AccessibilityCandidateCompetesWithFastFallback)
@@ -1201,6 +1339,35 @@ TEST(UiaRegionQueryWorkerTest, AccessibilityCandidateCompetesWithFastFallback)
       selected));
   EXPECT_EQ(selected.target_window, 2U);
   EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Uia);
+}
+
+TEST(UiaRegionQueryWorkerTest,
+     ChromeAddressBarActionableBeatsHighConfidenceVisualToolbarRow)
+{
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 1;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {1410, 82};
+  result.owner_rect = {0, 0, 2560, 1528};
+  result.succeeded = true;
+  result.candidate_count = 1;
+  result.candidates[0] = {
+      1, 2, {237, 77, 1887, 114}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Msaa;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  result.candidates[0].accessibility_role = ROLE_SYSTEM_TEXT;
+  SmartRegionCandidate visual_toolbar{
+      1, 1, {0, 69, 2560, 120}, SmartRegionKind::KnownContent};
+  visual_toolbar.source = SmartRegionDiagnosticSource::Visual;
+  visual_toolbar.semantic = SmartRegionSemantic::ContentSurface;
+  visual_toolbar.visual_confidence = 100;
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(window_detail::selectUiaQueryCandidate(
+      result, visual_toolbar, result.screen_point, result.owner_rect,
+      selected));
+  EXPECT_EQ(selected.target_window, 2U);
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Msaa);
 }
 
 TEST(UiaRegionQueryWorkerTest,
@@ -1704,6 +1871,40 @@ TEST(MsaaRegionLocatorTest, MapsFocusableTextToActionableCandidate)
   EXPECT_EQ(candidate.target_window, 2U);
 }
 
+TEST(MsaaRegionLocatorTest,
+     MapsBrowserChromeControlsAndToolbarFallbackToLocalCandidates)
+{
+  const window_detail::MsaaRegionProperties bookmark_link{
+      {120, 80, 260, 112}, ROLE_SYSTEM_LINK, 0};
+  const window_detail::MsaaRegionProperties address_text{
+      {300, 72, 1400, 120}, ROLE_SYSTEM_TEXT, STATE_SYSTEM_FOCUSABLE};
+  const window_detail::MsaaRegionProperties reload_button{
+      {252, 72, 284, 120}, ROLE_SYSTEM_PUSHBUTTON, 0};
+  const window_detail::MsaaRegionProperties toolbar{
+      {0, 64, 1920, 128}, ROLE_SYSTEM_TOOLBAR, 0};
+  const window_detail::MsaaRegionProperties properties[] = {
+      bookmark_link, address_text, reload_button, toolbar};
+  const POINT points[] = {{180, 96}, {640, 96}, {268, 96}, {1800, 96}};
+  const SmartRegionSemantic expected_semantics[] = {
+      SmartRegionSemantic::ActionableControl,
+      SmartRegionSemantic::ActionableControl,
+      SmartRegionSemantic::ActionableControl,
+      SmartRegionSemantic::ContentSurface};
+
+  for (std::size_t index = 0; index < std::size(properties); ++index)
+  {
+    SmartRegionCandidate candidate;
+    ASSERT_TRUE(window_detail::makeMsaaCandidate(
+        reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(1), points[index],
+        properties[index], candidate));
+    EXPECT_EQ(candidate.semantic, expected_semantics[index]);
+    EXPECT_EQ(candidate.rect.left, properties[index].rect.left);
+    EXPECT_EQ(candidate.rect.top, properties[index].rect.top);
+    EXPECT_EQ(candidate.rect.right, properties[index].rect.right);
+    EXPECT_EQ(candidate.rect.bottom, properties[index].rect.bottom);
+  }
+}
+
 TEST(MsaaRegionLocatorTest, PreservesRoleAndBoundedHitTestDepth)
 {
   const window_detail::MsaaRegionProperties properties{
@@ -1716,6 +1917,40 @@ TEST(MsaaRegionLocatorTest, PreservesRoleAndBoundedHitTestDepth)
   EXPECT_EQ(candidate.accessibility_role,
             static_cast<std::uint32_t>(ROLE_SYSTEM_PAGETAB));
   EXPECT_EQ(candidate.accessibility_depth, 4U);
+}
+
+TEST(MsaaRegionLocatorTest, UsesDeeperHitTestTraversalOnlyForBrowsers)
+{
+  EXPECT_EQ(window_detail::msaaHitTestDepthLimit(false), 6U);
+  EXPECT_EQ(window_detail::msaaHitTestDepthLimit(true), 10U);
+}
+
+TEST(MsaaRegionLocatorTest,
+     EnumeratesOnlyBrowserToolbarAndPaneContainerChildren)
+{
+  const window_detail::MsaaRegionProperties toolbar{
+      {0, 60, 2560, 120}, ROLE_SYSTEM_TOOLBAR, 0};
+  const window_detail::MsaaRegionProperties pane{
+      {1091, 0, 1249, 62}, ROLE_SYSTEM_PANE, 0};
+  const window_detail::MsaaRegionProperties button{
+      {2022, 0, 2064, 62}, ROLE_SYSTEM_PUSHBUTTON, 0};
+  const window_detail::MsaaRegionProperties document{
+      {0, 180, 2560, 1528}, ROLE_SYSTEM_DOCUMENT, 0};
+
+  EXPECT_TRUE(window_detail::msaaShouldEnumerateChildren(toolbar));
+  EXPECT_TRUE(window_detail::msaaShouldEnumerateChildren(pane));
+  EXPECT_FALSE(window_detail::msaaShouldEnumerateChildren(button));
+  EXPECT_FALSE(window_detail::msaaShouldEnumerateChildren(document));
+}
+
+TEST(MsaaRegionLocatorTest,
+     RequestsBoundedAccessibleChildrenWhenChromiumReportsNoChildren)
+{
+  EXPECT_EQ(window_detail::msaaAccessibleChildrenRequestCount(12, 96), 12);
+  EXPECT_EQ(window_detail::msaaAccessibleChildrenRequestCount(48, 96), 32);
+  EXPECT_EQ(window_detail::msaaAccessibleChildrenRequestCount(0, 96), 32);
+  EXPECT_EQ(window_detail::msaaAccessibleChildrenRequestCount(48, 7), 7);
+  EXPECT_EQ(window_detail::msaaAccessibleChildrenRequestCount(0, 0), 0);
 }
 
 TEST(MsaaRegionLocatorTest, RejectsWindowSizedContentSurfaceAtSource)

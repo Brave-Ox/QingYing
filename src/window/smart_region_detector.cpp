@@ -36,6 +36,47 @@ constexpr int kNamedUiaActionableQualityScore = 250;
 constexpr int kPatternUiaActionableQualityScore = 200;
 constexpr int kUnnamedUiaActionableQualityScore = 50;
 constexpr int kGenericUiaContainerQualityScore = 25;
+constexpr int kVisualCacheCellSize = 16;
+constexpr int kVisualNegativeCacheCellSize = 48;
+constexpr std::int64_t kVisualCacheLocalCandidateMaximumOwnerSpanPercent =
+    75;
+
+int visualCacheCellFor(int coordinate, int cell_size) noexcept
+{
+  const std::int64_t value = coordinate;
+  if (value >= 0)
+  {
+    return static_cast<int>(value / cell_size);
+  }
+  return static_cast<int>(
+      -((-value + cell_size - 1) / cell_size));
+}
+
+bool isLocalVisualCacheCandidate(const SmartRegionCandidate& candidate,
+                                 const WindowRect& owner_rect) noexcept
+{
+  if (!candidate.valid() || owner_rect.empty() ||
+      candidate.rect.left < owner_rect.left ||
+      candidate.rect.top < owner_rect.top ||
+      candidate.rect.right > owner_rect.right ||
+      candidate.rect.bottom > owner_rect.bottom)
+  {
+    return false;
+  }
+  return static_cast<std::int64_t>(candidate.rect.width()) * 100 <
+             static_cast<std::int64_t>(owner_rect.width()) *
+                 kVisualCacheLocalCandidateMaximumOwnerSpanPercent &&
+         static_cast<std::int64_t>(candidate.rect.height()) * 100 <
+             static_cast<std::int64_t>(owner_rect.height()) *
+                 kVisualCacheLocalCandidateMaximumOwnerSpanPercent;
+}
+
+bool rectanglesEqual(const WindowRect& left,
+                     const WindowRect& right) noexcept
+{
+  return left.left == right.left && left.top == right.top &&
+         left.right == right.right && left.bottom == right.bottom;
+}
 
 struct CandidateScoreBreakdown
 {
@@ -68,6 +109,16 @@ bool isDetailedCandidate(const SmartRegionCandidate& candidate) noexcept
 {
   return candidate.valid() && candidate.kind == SmartRegionKind::KnownContent &&
          candidate.semantic != SmartRegionSemantic::Fallback;
+}
+
+bool isAccessibilityActionableCandidate(
+    const SmartRegionCandidate& candidate) noexcept
+{
+  const bool accessibility_source =
+      candidate.source == SmartRegionDiagnosticSource::Uia ||
+      candidate.source == SmartRegionDiagnosticSource::Msaa;
+  return candidate.valid() && accessibility_source &&
+         candidate.semantic == SmartRegionSemantic::ActionableControl;
 }
 
 bool getRootClientScreenRect(HWND root_window, WindowRect& out) noexcept
@@ -550,6 +601,19 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
       {
         continue;
       }
+      const bool left_is_actionable =
+          isAccessibilityActionableCandidate(candidates[left_index]);
+      const bool right_is_actionable =
+          isAccessibilityActionableCandidate(candidates[right_index]);
+      if (left_is_actionable != right_is_actionable)
+      {
+        duplicate[left_is_actionable ? right_index : left_index] = true;
+        if (right_is_actionable)
+        {
+          break;
+        }
+        continue;
+      }
       const CandidateScoreBreakdown left_score = candidateScore(
           candidates[left_index], candidates, processing_count, screen_x,
           screen_y, owner_rect);
@@ -562,6 +626,20 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
         break;
       }
       duplicate[right_index] = true;
+    }
+  }
+
+  bool has_accessibility_actionable = false;
+  for (std::size_t index = 0; index < processing_count; ++index)
+  {
+    if (!duplicate[index] &&
+        candidateRejection(candidates[index], screen_x, screen_y,
+                           owner_rect) ==
+            SmartRegionCandidateRejection::None &&
+        isAccessibilityActionableCandidate(candidates[index]))
+    {
+      has_accessibility_actionable = true;
+      break;
     }
   }
 
@@ -593,6 +671,11 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
       diagnostic.rejection = rejection;
     }
     if (rejection != SmartRegionCandidateRejection::None) {
+      continue;
+    }
+    if (has_accessibility_actionable &&
+        !isAccessibilityActionableCandidate(candidate))
+    {
       continue;
     }
 
@@ -813,6 +896,101 @@ bool SmartRegionVisualContext::valid() const noexcept
          background->height == image_screen_rect.height();
 }
 
+bool SmartRegionVisualResultCache::lookup(
+    std::uintptr_t root_window, const WindowRect& owner_rect, int screen_x,
+    int screen_y, SmartRegionCandidate& out, bool& found) const noexcept
+{
+  out = SmartRegionCandidate{};
+  found = false;
+  if (!m_valid || root_window != m_root_window ||
+      !rectanglesEqual(owner_rect, m_owner_rect))
+  {
+    return false;
+  }
+  if (m_has_negative_cell &&
+      visualCacheCellFor(screen_x, kVisualNegativeCacheCellSize) ==
+          m_negative_cell_x &&
+      visualCacheCellFor(screen_y, kVisualNegativeCacheCellSize) ==
+          m_negative_cell_y)
+  {
+    return true;
+  }
+  for (std::size_t index = 0; index < m_positive_candidate_count; ++index)
+  {
+    const SmartRegionCandidate& candidate =
+        m_positive_candidates[index];
+    if (isLocalVisualCacheCandidate(candidate, owner_rect) &&
+        candidate.contains(screen_x, screen_y))
+    {
+      found = true;
+      out = candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
+void SmartRegionVisualResultCache::store(
+    std::uintptr_t root_window, const WindowRect& owner_rect, int screen_x,
+    int screen_y, const SmartRegionCandidate* candidate) noexcept
+{
+  if (!m_valid || root_window != m_root_window ||
+      !rectanglesEqual(owner_rect, m_owner_rect))
+  {
+    clear();
+    m_root_window = root_window;
+    m_owner_rect = owner_rect;
+    m_valid = root_window != 0 && !owner_rect.empty();
+  }
+  if (!m_valid)
+  {
+    return;
+  }
+
+  if (candidate != nullptr && candidate->valid())
+  {
+    for (std::size_t index = 0; index < m_positive_candidate_count; ++index)
+    {
+      if (rectanglesEqual(m_positive_candidates[index].rect,
+                          candidate->rect))
+      {
+        m_positive_candidates[index] = *candidate;
+        return;
+      }
+    }
+    const std::size_t index =
+        m_positive_candidate_count < MaximumPositiveCandidates
+            ? m_positive_candidate_count++
+            : m_next_positive_candidate_index;
+    m_positive_candidates[index] = *candidate;
+    m_next_positive_candidate_index =
+        (index + 1) % MaximumPositiveCandidates;
+    return;
+  }
+
+  m_negative_cell_x =
+      visualCacheCellFor(screen_x, kVisualNegativeCacheCellSize);
+  m_negative_cell_y =
+      visualCacheCellFor(screen_y, kVisualNegativeCacheCellSize);
+  m_has_negative_cell = true;
+}
+
+void SmartRegionVisualResultCache::clear() noexcept
+{
+  m_root_window = 0;
+  m_owner_rect = WindowRect{};
+  for (SmartRegionCandidate& candidate : m_positive_candidates)
+  {
+    candidate = SmartRegionCandidate{};
+  }
+  m_positive_candidate_count = 0;
+  m_next_positive_candidate_index = 0;
+  m_negative_cell_x = 0;
+  m_negative_cell_y = 0;
+  m_valid = false;
+  m_has_negative_cell = false;
+}
+
 bool SmartRegionWindowSnapshot::valid() const noexcept
 {
   return root_window != 0 && !owner_rect.empty();
@@ -1012,6 +1190,13 @@ const wchar_t* smartRegionCandidateRejectionName(
 bool SmartRegionHoverStabilizer::update(
     const SmartRegionCandidate& candidate, std::uint64_t now_ms) noexcept
 {
+  return update(candidate, now_ms, {});
+}
+
+bool SmartRegionHoverStabilizer::update(
+    const SmartRegionCandidate& candidate, std::uint64_t now_ms,
+    POINT screen_point) noexcept
+{
   if (!candidate.valid()) {
     clear();
     return false;
@@ -1028,6 +1213,24 @@ bool SmartRegionHoverStabilizer::update(
     m_pending = SmartRegionCandidate{};
     m_pending_since_ms = 0;
     return false;
+  }
+
+  if (isAccessibilityActionableCandidate(m_stable) &&
+      !isAccessibilityActionableCandidate(candidate) &&
+      m_stable.contains(screen_point.x, screen_point.y))
+  {
+    m_pending = SmartRegionCandidate{};
+    m_pending_since_ms = 0;
+    return false;
+  }
+
+  if (m_stable.semantic != SmartRegionSemantic::ActionableControl &&
+      isAccessibilityActionableCandidate(candidate))
+  {
+    m_stable = candidate;
+    m_pending = SmartRegionCandidate{};
+    m_pending_since_ms = 0;
+    return true;
   }
 
   if (!isDetailedCandidate(m_stable) && isDetailedCandidate(candidate))
@@ -1134,7 +1337,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                                    const SmartRegionVisualContext* visual_context,
                                    SmartRegionDetectionPolicy policy,
                                    SmartRegionCandidateCollection* collection,
-                                   SmartRegionWindowSnapshot* window_snapshot)
+                                   SmartRegionWindowSnapshot* window_snapshot,
+                                   SmartRegionVisualResultCache* visual_cache)
     const noexcept
 {
   const std::uint64_t begin_ms = GetTickCount64();
@@ -1226,7 +1430,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     }
   }
   WindowRect chromium_browser_chrome;
-  bool require_complete_visual_boundaries = false;
+  bool use_workbench_visual_policy = false;
   if (policy != SmartRegionDetectionPolicy::WindowOnly)
   {
     SmartRegionCandidate known_content;
@@ -1235,7 +1439,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     if (window_detail::locateKnownContent(root_window, screen_point,
                                           known_content,
                                           &chromium_browser_chrome,
-                                          &require_complete_visual_boundaries)) {
+                                          &use_workbench_visual_policy)) {
       known_content.source = SmartRegionDiagnosticSource::KnownContent;
       known_content.semantic = SmartRegionSemantic::ContentSurface;
       if (candidate_count < SmartRegionMaxCandidates) {
@@ -1268,18 +1472,37 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     const WindowRect& visual_owner_rect =
         chromium_browser_chrome.empty() ? client_rect
                                         : chromium_browser_chrome;
-    const bool found_visual_region = window_detail::findVisualRegionCandidate(
-        *visual_context->background, visual_context->image_screen_rect,
-        visual_owner_rect, screen_point,
-        reinterpret_cast<std::uintptr_t>(root_window), visual_candidate,
-        diagnostic_enabled ? &visual_diagnostic : nullptr,
-        require_complete_visual_boundaries
-            ? window_detail::VisualRegionSearchPolicy::RequireCompleteBoundaries
-            : window_detail::VisualRegionSearchPolicy::Standard);
+    bool found_visual_region = false;
+    const bool visual_cache_hit =
+        visual_cache != nullptr &&
+        visual_cache->lookup(reinterpret_cast<std::uintptr_t>(root_window),
+                             visual_owner_rect, screen_x, screen_y,
+                             visual_candidate, found_visual_region);
+    if (!visual_cache_hit)
+    {
+      found_visual_region = window_detail::findVisualRegionCandidate(
+          *visual_context->background, visual_context->image_screen_rect,
+          visual_owner_rect, screen_point,
+          reinterpret_cast<std::uintptr_t>(root_window), visual_candidate,
+          diagnostic_enabled ? &visual_diagnostic : nullptr,
+          use_workbench_visual_policy
+              ? window_detail::VisualRegionSearchPolicy::ElectronWorkbench
+              : window_detail::VisualRegionSearchPolicy::Standard);
+      if (visual_cache != nullptr)
+      {
+        visual_cache->store(
+            reinterpret_cast<std::uintptr_t>(root_window), visual_owner_rect,
+            screen_x, screen_y,
+            found_visual_region ? &visual_candidate : nullptr);
+      }
+    }
     if (diagnostic_enabled) {
-      diagnostic_event.visual_lookup_attempted = true;
-      diagnostic_event.visual_lookup_ms =
-          GetTickCount64() - visual_lookup_begin_ms;
+      diagnostic_event.visual_lookup_attempted = !visual_cache_hit;
+      diagnostic_event.visual_cache_hit = visual_cache_hit;
+      diagnostic_event.visual_lookup_ms = visual_cache_hit
+                                              ? 0
+                                              : GetTickCount64() -
+                                                    visual_lookup_begin_ms;
       diagnostic_event.visual_edge_mask = visual_diagnostic.edge_mask;
     }
     if (found_visual_region) {
