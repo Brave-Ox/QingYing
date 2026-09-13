@@ -545,12 +545,21 @@ TEST(SmartRegionDiagnosticTraceTest,
   async_candidate.rect = {120, 8, 260, 40};
   async_candidate.accessibility_role = ROLE_SYSTEM_PAGETAB;
   async_candidate.accessibility_depth = 3;
+  SmartRegionMsaaTraversalDiagnostic msaa_diagnostic{
+      SmartRegionMsaaTraversalPath::AccessibleChildren,
+      SmartRegionMsaaTraversalStopReason::CandidateFound, 24};
+  msaa_diagnostic.filtered_node.reason =
+      SmartRegionMsaaFilteredNodeReason::UnknownSemantic;
+  msaa_diagnostic.filtered_node.role = ROLE_SYSTEM_BUTTONMENU;
+  msaa_diagnostic.filtered_node.state = STATE_SYSTEM_FOCUSABLE;
+  msaa_diagnostic.filtered_node.rect = {180, 12, 220, 44};
+  msaa_diagnostic.filtered_node.accessibility_depth = 4;
   trace.setEnabled(true);
   ASSERT_TRUE(trace.record(event));
 
   ASSERT_TRUE(trace.recordAsyncUiaResult(
       9, 11, 17, true, true, true, false, SmartRegionMaxUiaCandidates, true,
-      true, &async_candidate, 1));
+      true, msaa_diagnostic, &async_candidate, 1));
   const SmartRegionDiagnosticEvent& recorded = trace.latestEvent();
   EXPECT_EQ(recorded.root_window, 42U);
   EXPECT_EQ(recorded.cursor_x, 320);
@@ -569,6 +578,24 @@ TEST(SmartRegionDiagnosticTraceTest,
   EXPECT_EQ(recorded.uia_async_candidate_count, SmartRegionMaxUiaCandidates);
   EXPECT_TRUE(recorded.uia_async_matches_current_request);
   EXPECT_TRUE(recorded.uia_async_result_applied);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.path,
+            SmartRegionMsaaTraversalPath::AccessibleChildren);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.stop_reason,
+            SmartRegionMsaaTraversalStopReason::CandidateFound);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.visited_child_count, 24U);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.reason,
+            SmartRegionMsaaFilteredNodeReason::UnknownSemantic);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.role,
+            ROLE_SYSTEM_BUTTONMENU);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.state,
+            STATE_SYSTEM_FOCUSABLE);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.rect.left, 180);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.rect.top, 12);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.rect.right, 220);
+  EXPECT_EQ(recorded.uia_async_msaa_diagnostic.filtered_node.rect.bottom, 44);
+  EXPECT_EQ(
+      recorded.uia_async_msaa_diagnostic.filtered_node.accessibility_depth,
+      4U);
   ASSERT_EQ(recorded.uia_async_diagnostic_candidate_count, 1U);
   EXPECT_EQ(recorded.uia_async_candidates[0].source,
             SmartRegionDiagnosticSource::Msaa);
@@ -579,6 +606,23 @@ TEST(SmartRegionDiagnosticTraceTest,
   EXPECT_EQ(recorded.uia_async_candidates[0].accessibility_role,
             static_cast<std::uint32_t>(ROLE_SYSTEM_PAGETAB));
   EXPECT_EQ(recorded.uia_async_candidates[0].accessibility_depth, 3U);
+}
+
+TEST(SmartRegionDiagnosticTraceTest, NamesMsaaTraversalPathAndStopReason)
+{
+  EXPECT_STREQ(smartRegionMsaaTraversalPathName(
+                   SmartRegionMsaaTraversalPath::AccessibleChildren),
+               L"AccessibleChildren");
+  EXPECT_STREQ(smartRegionMsaaTraversalStopReasonName(
+                   SmartRegionMsaaTraversalStopReason::TimeBudgetExhausted),
+               L"TimeBudgetExhausted");
+}
+
+TEST(SmartRegionDiagnosticTraceTest, NamesMsaaFilteredNodeReason)
+{
+  EXPECT_STREQ(smartRegionMsaaFilteredNodeReasonName(
+                   SmartRegionMsaaFilteredNodeReason::UnknownSemantic),
+               L"UnknownSemantic");
 }
 
 TEST(SmartRegionWin32FixtureTest, CreatesCompactBrowserChromeLikeChildWindow)
@@ -1880,12 +1924,16 @@ TEST(MsaaRegionLocatorTest,
       {300, 72, 1400, 120}, ROLE_SYSTEM_TEXT, STATE_SYSTEM_FOCUSABLE};
   const window_detail::MsaaRegionProperties reload_button{
       {252, 72, 284, 120}, ROLE_SYSTEM_PUSHBUTTON, 0};
+  const window_detail::MsaaRegionProperties menu_button{
+      {2069, 69, 2121, 120}, ROLE_SYSTEM_BUTTONMENU, STATE_SYSTEM_FOCUSABLE};
   const window_detail::MsaaRegionProperties toolbar{
       {0, 64, 1920, 128}, ROLE_SYSTEM_TOOLBAR, 0};
   const window_detail::MsaaRegionProperties properties[] = {
-      bookmark_link, address_text, reload_button, toolbar};
-  const POINT points[] = {{180, 96}, {640, 96}, {268, 96}, {1800, 96}};
+      bookmark_link, address_text, reload_button, menu_button, toolbar};
+  const POINT points[] = {
+      {180, 96}, {640, 96}, {268, 96}, {2095, 94}, {1800, 96}};
   const SmartRegionSemantic expected_semantics[] = {
+      SmartRegionSemantic::ActionableControl,
       SmartRegionSemantic::ActionableControl,
       SmartRegionSemantic::ActionableControl,
       SmartRegionSemantic::ActionableControl,
@@ -1919,6 +1967,28 @@ TEST(MsaaRegionLocatorTest, PreservesRoleAndBoundedHitTestDepth)
   EXPECT_EQ(candidate.accessibility_depth, 4U);
 }
 
+TEST(MsaaRegionLocatorTest, RecordsUnknownSemanticFilteredNode)
+{
+  const window_detail::MsaaRegionProperties properties{
+      {100, 200, 260, 240}, ROLE_SYSTEM_SEPARATOR, STATE_SYSTEM_FOCUSABLE};
+  SmartRegionCandidate candidate;
+  SmartRegionMsaaFilteredNodeDiagnostic filtered_node;
+
+  EXPECT_FALSE(window_detail::makeMsaaCandidate(
+      reinterpret_cast<HWND>(1), reinterpret_cast<HWND>(1), {180, 220},
+      properties, candidate, 4, &filtered_node));
+  EXPECT_FALSE(candidate.valid());
+  EXPECT_EQ(filtered_node.reason,
+            SmartRegionMsaaFilteredNodeReason::UnknownSemantic);
+  EXPECT_EQ(filtered_node.role, ROLE_SYSTEM_SEPARATOR);
+  EXPECT_EQ(filtered_node.state, STATE_SYSTEM_FOCUSABLE);
+  EXPECT_EQ(filtered_node.rect.left, 100);
+  EXPECT_EQ(filtered_node.rect.top, 200);
+  EXPECT_EQ(filtered_node.rect.right, 260);
+  EXPECT_EQ(filtered_node.rect.bottom, 240);
+  EXPECT_EQ(filtered_node.accessibility_depth, 4U);
+}
+
 TEST(MsaaRegionLocatorTest, UsesDeeperHitTestTraversalOnlyForBrowsers)
 {
   EXPECT_EQ(window_detail::msaaHitTestDepthLimit(false), 6U);
@@ -1941,6 +2011,39 @@ TEST(MsaaRegionLocatorTest,
   EXPECT_TRUE(window_detail::msaaShouldEnumerateChildren(pane));
   EXPECT_FALSE(window_detail::msaaShouldEnumerateChildren(button));
   EXPECT_FALSE(window_detail::msaaShouldEnumerateChildren(document));
+}
+
+TEST(MsaaRegionLocatorTest,
+     DefersOnlyDirectBrowserContainerCandidatesForChildTraversal)
+{
+  const window_detail::MsaaRegionProperties toolbar{
+      {0, 60, 2560, 120}, ROLE_SYSTEM_TOOLBAR, 0};
+  const window_detail::MsaaRegionProperties pane{
+      {0, 60, 2560, 120}, ROLE_SYSTEM_PANE, 0};
+  const window_detail::MsaaRegionProperties button{
+      {2022, 0, 2064, 62}, ROLE_SYSTEM_PUSHBUTTON, 0};
+
+  EXPECT_TRUE(window_detail::msaaShouldDeferDirectBrowserContainerCandidate(
+      true, toolbar));
+  EXPECT_TRUE(window_detail::msaaShouldDeferDirectBrowserContainerCandidate(
+      true, pane));
+  EXPECT_FALSE(window_detail::msaaShouldDeferDirectBrowserContainerCandidate(
+      true, button));
+  EXPECT_FALSE(window_detail::msaaShouldDeferDirectBrowserContainerCandidate(
+      false, toolbar));
+}
+
+TEST(MsaaRegionLocatorTest,
+     RecursesOnlyIntoBrowserChildrenThatContainTheCursor)
+{
+  const WindowRect bookmark_folder{320, 120, 460, 152};
+  const WindowRect earlier_bookmark{120, 120, 280, 152};
+  const POINT cursor{390, 136};
+
+  EXPECT_TRUE(
+      window_detail::msaaChildContainsScreenPoint(bookmark_folder, cursor));
+  EXPECT_FALSE(
+      window_detail::msaaChildContainsScreenPoint(earlier_bookmark, cursor));
 }
 
 TEST(MsaaRegionLocatorTest,

@@ -17,6 +17,7 @@ struct UiaRegionQueryRequest
   POINT screen_point{};
   WindowRect owner_rect;
   std::uint64_t requested_at_ms{0};
+  bool diagnostics_enabled{false};
 };
 
 struct UiaRegionQueryResult
@@ -33,6 +34,7 @@ struct UiaRegionQueryResult
   bool msaa_attempted{false};
   bool cache_hit{false};
   bool suppressed_by_cooldown{false};
+  SmartRegionMsaaTraversalDiagnostic msaa_diagnostic;
 };
 
 using UiaRegionQueryFunction = void (*)(

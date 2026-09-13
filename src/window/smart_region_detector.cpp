@@ -1089,7 +1089,9 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
     std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
     bool cache_hit, bool suppressed_by_cooldown,
     std::size_t candidate_count, bool matches_current_request,
-    bool applied, const SmartRegionCandidate* candidates,
+    bool applied,
+    const SmartRegionMsaaTraversalDiagnostic& msaa_diagnostic,
+    const SmartRegionCandidate* candidates,
     std::size_t diagnostic_candidate_count) noexcept
 {
   if (!m_enabled || !m_has_latest_event)
@@ -1108,6 +1110,7 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
   m_latest_event.uia_async_matches_current_request =
       matches_current_request;
   m_latest_event.uia_async_result_applied = applied;
+  m_latest_event.uia_async_msaa_diagnostic = msaa_diagnostic;
   m_latest_event.uia_async_diagnostic_candidate_count = 0;
   for (std::size_t index = 0;
        index < SmartRegionDiagnosticMaxCandidates; ++index)
@@ -1191,6 +1194,75 @@ bool SmartRegionHoverStabilizer::update(
     const SmartRegionCandidate& candidate, std::uint64_t now_ms) noexcept
 {
   return update(candidate, now_ms, {});
+}
+
+const wchar_t* smartRegionMsaaTraversalPathName(
+    SmartRegionMsaaTraversalPath path) noexcept
+{
+  switch (path)
+  {
+    case SmartRegionMsaaTraversalPath::DirectPoint:
+      return L"DirectPoint";
+    case SmartRegionMsaaTraversalPath::RootHitTest:
+      return L"RootHitTest";
+    case SmartRegionMsaaTraversalPath::AccessibleChildren:
+      return L"AccessibleChildren";
+    case SmartRegionMsaaTraversalPath::None:
+      break;
+  }
+  return L"None";
+}
+
+const wchar_t* smartRegionMsaaTraversalStopReasonName(
+    SmartRegionMsaaTraversalStopReason stop_reason) noexcept
+{
+  switch (stop_reason)
+  {
+    case SmartRegionMsaaTraversalStopReason::CandidateFound:
+      return L"CandidateFound";
+    case SmartRegionMsaaTraversalStopReason::NoChildren:
+      return L"NoChildren";
+    case SmartRegionMsaaTraversalStopReason::HitTestFailed:
+      return L"HitTestFailed";
+    case SmartRegionMsaaTraversalStopReason::NodeBudgetExhausted:
+      return L"NodeBudgetExhausted";
+    case SmartRegionMsaaTraversalStopReason::TimeBudgetExhausted:
+      return L"TimeBudgetExhausted";
+    case SmartRegionMsaaTraversalStopReason::DepthLimitReached:
+      return L"DepthLimitReached";
+    case SmartRegionMsaaTraversalStopReason::NoCandidate:
+      return L"NoCandidate";
+    case SmartRegionMsaaTraversalStopReason::None:
+      break;
+  }
+  return L"None";
+}
+
+const wchar_t* smartRegionMsaaFilteredNodeReasonName(
+    SmartRegionMsaaFilteredNodeReason reason) noexcept
+{
+  switch (reason)
+  {
+    case SmartRegionMsaaFilteredNodeReason::MissingAccessible:
+      return L"MissingAccessible";
+    case SmartRegionMsaaFilteredNodeReason::RoleUnavailable:
+      return L"RoleUnavailable";
+    case SmartRegionMsaaFilteredNodeReason::RectUnavailable:
+      return L"RectUnavailable";
+    case SmartRegionMsaaFilteredNodeReason::UnknownSemantic:
+      return L"UnknownSemantic";
+    case SmartRegionMsaaFilteredNodeReason::OutsideOwner:
+      return L"OutsideOwner";
+    case SmartRegionMsaaFilteredNodeReason::WindowSizedContentSurface:
+      return L"WindowSizedContentSurface";
+    case SmartRegionMsaaFilteredNodeReason::InvisibleOrOffscreen:
+      return L"InvisibleOrOffscreen";
+    case SmartRegionMsaaFilteredNodeReason::PointerOutside:
+      return L"PointerOutside";
+    case SmartRegionMsaaFilteredNodeReason::None:
+      break;
+  }
+  return L"None";
 }
 
 bool SmartRegionHoverStabilizer::update(

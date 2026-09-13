@@ -84,8 +84,10 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
   {
     result.msaa_attempted = true;
     SmartRegionCandidate msaa_candidate;
+    SmartRegionMsaaTraversalDiagnostic* const msaa_diagnostic =
+        request.diagnostics_enabled ? &result.msaa_diagnostic : nullptr;
     if (locateMsaaCandidate(request.root_window, request.screen_point,
-                            msaa_candidate))
+                            msaa_candidate, msaa_diagnostic))
     {
       result.candidates[result.candidate_count++] = msaa_candidate;
     }
@@ -163,7 +165,8 @@ struct UiaRegionQueryWorker::Impl
             has_failure && request.value.root_window == failure_window &&
             request.value.requested_at_ms >= failure_at_ms &&
             request.value.requested_at_ms - failure_at_ms <
-                kFailureCooldownMs;
+                kFailureCooldownMs &&
+            pointsAreNear(request.value.screen_point, failure_point);
         if (!use_cached_result && cooldown_is_active)
         {
           suppress_for_cooldown = true;
@@ -224,6 +227,7 @@ struct UiaRegionQueryWorker::Impl
             else
             {
               failure_window = request.value.root_window;
+              failure_point = request.value.screen_point;
               failure_at_ms = request.value.requested_at_ms;
               has_failure = true;
             }
@@ -251,6 +255,7 @@ struct UiaRegionQueryWorker::Impl
   std::uint64_t cached_at_ms{0};
   std::uint64_t failure_at_ms{0};
   HWND failure_window{nullptr};
+  POINT failure_point{};
   bool started{false};
   bool stop_requested{false};
   bool has_request{false};

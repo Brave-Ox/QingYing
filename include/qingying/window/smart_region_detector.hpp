@@ -46,6 +46,57 @@ enum class SmartRegionUiaQuality : std::uint8_t {
   GenericContainer,
 };
 
+// MSAA 后台查询的最后一个有效遍历路径与停止原因。仅用于诊断，不参与候选排序。
+enum class SmartRegionMsaaTraversalPath : std::uint8_t {
+  None,
+  DirectPoint,
+  RootHitTest,
+  AccessibleChildren,
+};
+
+enum class SmartRegionMsaaTraversalStopReason : std::uint8_t {
+  None,
+  CandidateFound,
+  NoChildren,
+  HitTestFailed,
+  NodeBudgetExhausted,
+  TimeBudgetExhausted,
+  DepthLimitReached,
+  NoCandidate,
+};
+
+// MSAA 命中节点未形成候选时的明确过滤原因。仅诊断使用，不参与候选排序。
+enum class SmartRegionMsaaFilteredNodeReason : std::uint8_t {
+  None,
+  MissingAccessible,
+  RoleUnavailable,
+  RectUnavailable,
+  UnknownSemantic,
+  OutsideOwner,
+  WindowSizedContentSurface,
+  InvisibleOrOffscreen,
+  PointerOutside,
+};
+
+// 记录最后一个被候选规则拒绝的 MSAA 命中节点，便于定位浏览器控件的
+// role/state/坐标与过滤规则；默认值表示本次未记录到被拒绝节点。
+struct SmartRegionMsaaFilteredNodeDiagnostic {
+  SmartRegionMsaaFilteredNodeReason reason{
+      SmartRegionMsaaFilteredNodeReason::None};
+  WindowRect rect;
+  LONG role{0};
+  LONG state{0};
+  std::uint8_t accessibility_depth{0};
+};
+
+struct SmartRegionMsaaTraversalDiagnostic {
+  SmartRegionMsaaTraversalPath path{SmartRegionMsaaTraversalPath::None};
+  SmartRegionMsaaTraversalStopReason stop_reason{
+      SmartRegionMsaaTraversalStopReason::None};
+  std::size_t visited_child_count{0};
+  SmartRegionMsaaFilteredNodeDiagnostic filtered_node;
+};
+
 struct SmartRegionUiaMetadata {
   bool available{false};
   bool is_control_element{false};
@@ -182,6 +233,7 @@ struct SmartRegionDiagnosticEvent {
   bool uia_async_suppressed_by_cooldown{false};
   bool uia_async_matches_current_request{false};
   bool uia_async_result_applied{false};
+  SmartRegionMsaaTraversalDiagnostic uia_async_msaa_diagnostic;
   SmartRegionCandidate uia_async_candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t uia_async_diagnostic_candidate_count{0};
   SmartRegionCandidateDiagnostic candidates[SmartRegionDiagnosticMaxCandidates];
@@ -271,7 +323,9 @@ class SmartRegionDiagnosticTrace {
       std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
       bool cache_hit, bool suppressed_by_cooldown,
       std::size_t candidate_count, bool matches_current_request,
-      bool applied, const SmartRegionCandidate* candidates,
+      bool applied,
+      const SmartRegionMsaaTraversalDiagnostic& msaa_diagnostic,
+      const SmartRegionCandidate* candidates,
       std::size_t diagnostic_candidate_count) noexcept;
   bool hasLatestEvent() const noexcept;
   const SmartRegionDiagnosticEvent& latestEvent() const noexcept;
@@ -284,6 +338,12 @@ class SmartRegionDiagnosticTrace {
 
 const wchar_t* smartRegionDiagnosticSourceName(
     SmartRegionDiagnosticSource source) noexcept;
+const wchar_t* smartRegionMsaaTraversalPathName(
+    SmartRegionMsaaTraversalPath path) noexcept;
+const wchar_t* smartRegionMsaaTraversalStopReasonName(
+    SmartRegionMsaaTraversalStopReason stop_reason) noexcept;
+const wchar_t* smartRegionMsaaFilteredNodeReasonName(
+    SmartRegionMsaaFilteredNodeReason reason) noexcept;
 const wchar_t* smartRegionCandidateRejectionName(
     SmartRegionCandidateRejection rejection) noexcept;
 

@@ -60,6 +60,7 @@ struct OverlayWindowData {
   int handle_radius{handles::kHandleHitRadius};
   SelectionHandle active_handle{SelectionHandle::None};
   SmartRegionDetector smart_region_detector;
+  SmartRegionVisualResultCache smart_region_visual_cache;
   SmartRegionDiagnosticTrace smart_region_diagnostics;
   SmartRegionHoverStabilizer hover_stabilizer;
   SmartRegionHoverRenderGate hover_render_gate;
@@ -70,6 +71,7 @@ struct OverlayWindowData {
   SmartRegionCandidateCollection hover_candidates;
   SmartRegionModeSettings smart_region_mode_settings;
   SmartRegionMode smart_region_mode{SmartRegionMode::DetectElements};
+  POINT hover_screen_point{};
   std::uint64_t uia_request_id{0};
   window_detail::UiaRegionQueryRequest current_uia_request;
   bool has_hover{false};
@@ -120,7 +122,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) root=%p "
           L"cursor=(%d,%d) pid=%lu process=%s class=%s total=%llu ms "
           L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
-          L"msaaFound=%d known=%llu visual=%llu select=%llu render=%llu "
+          L"msaaFound=%d known=%llu visual=%llu visualCache=%d "
+          L"select=%llu render=%llu "
           L"settle=%llu edges=0x%02X asyncUia=(received:%d request:%llu "
           L"elapsed:%llu age:%llu succeeded:%d msaa:%d cache:%d cooldown:%d "
           L"resultCandidates:%llu current:%d applied:%d) candidates=%llu\n",
@@ -139,6 +142,7 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           event.msaa_candidate_found ? 1 : 0,
           static_cast<unsigned long long>(event.known_content_lookup_ms),
           static_cast<unsigned long long>(event.visual_lookup_ms),
+          event.visual_cache_hit ? 1 : 0,
           static_cast<unsigned long long>(event.selection_ms),
           static_cast<unsigned long long>(event.overlay_render_ms),
           static_cast<unsigned long long>(event.stabilization_delay_ms),
@@ -185,28 +189,67 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
       break;
     }
   }
+  OutputDebugStringW(message);
+  if (event.uia_async_msaa_attempted)
+  {
+    wchar_t msaa_message[384]{};
+    if (SUCCEEDED(StringCchPrintfW(
+            msaa_message, std::size(msaa_message),
+            L"[QingYing SmartRegion] asyncMsaa request=%llu path=%s "
+            L"stop=%s visited=%llu\n",
+            static_cast<unsigned long long>(event.uia_async_request_id),
+            smartRegionMsaaTraversalPathName(
+                event.uia_async_msaa_diagnostic.path),
+            smartRegionMsaaTraversalStopReasonName(
+                event.uia_async_msaa_diagnostic.stop_reason),
+            static_cast<unsigned long long>(
+                event.uia_async_msaa_diagnostic.visited_child_count))))
+    {
+      OutputDebugStringW(msaa_message);
+    }
+    const SmartRegionMsaaFilteredNodeDiagnostic& filtered_node =
+        event.uia_async_msaa_diagnostic.filtered_node;
+    if (filtered_node.reason != SmartRegionMsaaFilteredNodeReason::None)
+    {
+      wchar_t filtered_message[384]{};
+      if (SUCCEEDED(StringCchPrintfW(
+              filtered_message, std::size(filtered_message),
+              L"[QingYing SmartRegion] asyncMsaaFiltered request=%llu "
+              L"reason=%s role=%ld state=0x%08lX depth=%u "
+              L"rect=(%d,%d,%d,%d)\n",
+              static_cast<unsigned long long>(event.uia_async_request_id),
+              smartRegionMsaaFilteredNodeReasonName(filtered_node.reason),
+              static_cast<long>(filtered_node.role),
+              static_cast<unsigned long>(filtered_node.state),
+              static_cast<unsigned int>(filtered_node.accessibility_depth),
+              filtered_node.rect.left, filtered_node.rect.top,
+              filtered_node.rect.right, filtered_node.rect.bottom)))
+      {
+        OutputDebugStringW(filtered_message);
+      }
+    }
+  }
   for (std::size_t index = 0;
        index < event.uia_async_diagnostic_candidate_count; ++index)
   {
     const SmartRegionCandidate& candidate = event.uia_async_candidates[index];
-    wchar_t candidate_message[256]{};
-    if (FAILED(StringCchPrintfW(
+    wchar_t candidate_message[384]{};
+    if (SUCCEEDED(StringCchPrintfW(
             candidate_message, std::size(candidate_message),
-            L"  asyncCandidate[%llu] source=%s semantic=%u "
-            L"role=%u depth=%u rect=(%d,%d,%d,%d)\n",
+            L"[QingYing SmartRegion] asyncCandidate request=%llu index=%llu "
+            L"source=%s semantic=%u role=%u depth=%u rect=(%d,%d,%d,%d)\n",
+            static_cast<unsigned long long>(event.uia_async_request_id),
             static_cast<unsigned long long>(index),
             smartRegionDiagnosticSourceName(candidate.source),
             static_cast<unsigned int>(candidate.semantic),
             static_cast<unsigned int>(candidate.accessibility_role),
             static_cast<unsigned int>(candidate.accessibility_depth),
             candidate.rect.left, candidate.rect.top, candidate.rect.right,
-            candidate.rect.bottom)) ||
-        FAILED(StringCchCatW(message, std::size(message), candidate_message)))
+            candidate.rect.bottom)))
     {
-      break;
+      OutputDebugStringW(candidate_message);
     }
   }
-  OutputDebugStringW(message);
 }
 
 void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
@@ -459,7 +502,8 @@ OverlayClientRect screenRectToOverlayClient(
 }
 
 void applyHoverCandidate(OverlayWindowData* data,
-                         const SmartRegionCandidate& candidate)
+                         const SmartRegionCandidate& candidate,
+                         POINT screen_point)
 {
   if (data == nullptr || !candidate.valid())
   {
@@ -469,7 +513,7 @@ void applyHoverCandidate(OverlayWindowData* data,
   const bool had_pending_candidate =
       data->hover_stabilizer.hasPendingCandidate();
   static_cast<void>(
-      data->hover_stabilizer.update(candidate, GetTickCount64()));
+      data->hover_stabilizer.update(candidate, GetTickCount64(), screen_point));
   static_cast<void>(data->smart_region_diagnostics.recordStabilizationDelay(
       (had_pending_candidate || data->hover_stabilizer.hasPendingCandidate())
           ? SmartRegionHoverStabilizer::CandidateSwitchDelayMs
@@ -510,7 +554,9 @@ bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
 
   static_cast<void>(KillTimer(hwnd, kHoverStabilizeTimerId));
   data->hover_stabilizer.clear();
-  applyHoverCandidate(data, data->hover_candidates.current());
+  data->smart_region_visual_cache.clear();
+  applyHoverCandidate(data, data->hover_candidates.current(),
+                      data->hover_screen_point);
   if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
   {
     static_cast<void>(updateOverlay(hwnd, data));
@@ -529,6 +575,7 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   }
   const int screen_x = coord::clientToScreenX(client_x, data->screen);
   const int screen_y = coord::clientToScreenY(client_y, data->screen);
+  data->hover_screen_point = {screen_x, screen_y};
   const WindowRect image_screen_rect{data->screen.x, data->screen.y,
                                      data->screen.right(),
                                      data->screen.bottom()};
@@ -544,13 +591,13 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   if (!data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
           &visual_context, policy, &data->hover_candidates,
-          &window_snapshot))
+          &window_snapshot, &data->smart_region_visual_cache))
   {
     clearHover(data);
     return;
   }
   data->fast_hover_candidate = candidate;
-  applyHoverCandidate(data, candidate);
+  applyHoverCandidate(data, candidate, data->hover_screen_point);
 
   if (data->smart_region_mode != SmartRegionMode::DetectElements)
   {
@@ -567,7 +614,8 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
       reinterpret_cast<HWND>(window_snapshot.root_window),
       {screen_x, screen_y},
       window_snapshot.owner_rect,
-      GetTickCount64()};
+      GetTickCount64(),
+      data->smart_region_diagnostics.enabled()};
   if (data->uia_query_worker->request(data->current_uia_request))
   {
     static_cast<void>(SetTimer(data->overlay, kUiaResultPollTimerId,
@@ -623,7 +671,8 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
             data->current_uia_request.screen_point.y,
             data->current_uia_request.owner_rect, candidate);
         result_applied = true;
-        applyHoverCandidate(data, candidate);
+        applyHoverCandidate(data, candidate,
+                            data->current_uia_request.screen_point);
         if (data->hover_render_gate.update(data->hover_candidate,
                                            data->has_hover))
         {
@@ -636,8 +685,8 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
             result.request_id, result.elapsed_ms, result_age_ms,
             result.succeeded, result.msaa_attempted, result.cache_hit,
             result.suppressed_by_cooldown, result.candidate_count,
-            applies_to_current_request, result_applied, result.candidates,
-            result.candidate_count);
+            applies_to_current_request, result_applied, result.msaa_diagnostic,
+            result.candidates, result.candidate_count);
     if (recorded_async_result)
     {
       emitSmartRegionDiagnostic(data->smart_region_diagnostics);
