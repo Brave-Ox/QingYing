@@ -32,8 +32,10 @@ struct UiaRegionQueryResult
   std::size_t candidate_count{0};
   std::uint64_t requested_at_ms{0};
   std::uint64_t elapsed_ms{0};
+  std::uint64_t completed_at_ms{0};
   bool succeeded{false};
   bool msaa_attempted{false};
+  bool browser_semantic_miss{false};
   bool cache_hit{false};
   bool suppressed_by_cooldown{false};
   SmartRegionMsaaTraversalDiagnostic msaa_diagnostic;

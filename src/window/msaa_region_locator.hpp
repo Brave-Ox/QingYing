@@ -38,6 +38,12 @@ bool msaaChildContainsScreenPoint(const WindowRect& child_rect,
 LONG msaaAccessibleChildrenRequestCount(
     LONG reported_child_count, std::size_t remaining_budget) noexcept;
 
+// 仅在 Chromium 顶部浏览器壳中，对语义或可见性过滤的命中节点恢复
+// 父容器下钻；网页正文、普通窗口和其他过滤原因不得走该路径。
+bool msaaShouldRecoverBrowserFilteredNode(
+    bool is_browser_window, bool is_browser_top_chrome,
+    SmartRegionMsaaFilteredNodeReason reason) noexcept;
+
 // MSAA 的 accLocation 使用客户区屏幕坐标；用于拒绝覆盖整个根客户区的
 // ContentSurface，避免浏览器窗口外壳进入异步候选。
 bool msaaRectCoversRootClientArea(const WindowRect& rect,
@@ -59,6 +65,7 @@ bool makeMsaaCandidate(HWND root_window, HWND target_window,
 bool locateMsaaCandidate(HWND root_window, POINT screen_point,
                          SmartRegionCandidate& out,
                          SmartRegionMsaaTraversalDiagnostic*
-                             out_diagnostic = nullptr) noexcept;
+                             out_diagnostic = nullptr,
+                         bool* out_browser_semantic_miss = nullptr) noexcept;
 
 }  // namespace qingying::window_detail

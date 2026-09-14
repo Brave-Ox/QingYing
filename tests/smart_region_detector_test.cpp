@@ -32,6 +32,7 @@ struct CountingUiaQueryContext
 {
   int call_count{0};
   bool succeed{true};
+  bool browser_semantic_miss{false};
 };
 
 void runBlockingUiaQuery(
@@ -83,6 +84,7 @@ void runCountingUiaQuery(
   }
   ++query_context->call_count;
   result.succeeded = query_context->succeed;
+  result.browser_semantic_miss = query_context->browser_semantic_miss;
   if (!result.succeeded)
   {
     return;
@@ -259,6 +261,46 @@ TEST(SmartRegionHoverStabilizerTest,
 }
 
 TEST(SmartRegionHoverStabilizerTest,
+     KeepsOverlappingBrowserWideVisualFallbackStable)
+{
+  SmartRegionCandidate first{1, 1, {0, 40, 1920, 120},
+                             SmartRegionKind::KnownContent};
+  first.source = SmartRegionDiagnosticSource::Visual;
+  first.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate second{1, 1, {0, 80, 1920, 120},
+                              SmartRegionKind::KnownContent};
+  second.source = SmartRegionDiagnosticSource::Visual;
+  second.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionHoverStabilizer browser_stabilizer;
+  SmartRegionHoverStabilizer generic_stabilizer;
+
+  ASSERT_TRUE(browser_stabilizer.update(first, 100, {600, 100}, true));
+  EXPECT_FALSE(browser_stabilizer.update(second, 116, {600, 100}, true));
+  EXPECT_FALSE(browser_stabilizer.hasPendingCandidate());
+  EXPECT_EQ(browser_stabilizer.stableCandidate().rect.top, 40);
+
+  ASSERT_TRUE(generic_stabilizer.update(first, 100, {600, 100}, false));
+  EXPECT_FALSE(generic_stabilizer.update(second, 116, {600, 100}, false));
+  EXPECT_TRUE(generic_stabilizer.hasPendingCandidate());
+}
+
+TEST(SmartRegionHoverStabilizerTest,
+     RecordsPendingStartTimeForObservedSwitchDuration)
+{
+  const SmartRegionCandidate first{1, 11, {10, 20, 110, 220},
+                                   SmartRegionKind::KnownContent};
+  const SmartRegionCandidate second{1, 12, {20, 30, 120, 230},
+                                    SmartRegionKind::KnownContent};
+  SmartRegionHoverStabilizer stabilizer;
+
+  ASSERT_TRUE(stabilizer.update(first, 100));
+  ASSERT_FALSE(stabilizer.update(second, 120));
+  EXPECT_EQ(stabilizer.pendingSinceMs(), 120U);
+  ASSERT_TRUE(stabilizer.update(second, 168));
+  EXPECT_EQ(stabilizer.pendingSinceMs(), 0U);
+}
+
+TEST(SmartRegionHoverStabilizerTest,
      PromotesAccessibilityActionableOverDetailedVisualCandidateImmediately)
 {
   SmartRegionCandidate visual_region{1, 11, {0, 60, 384, 635},
@@ -368,6 +410,19 @@ TEST(SmartRegionUpdateGateTest, ProcessesFirstMoveAndCoalescesBurst)
   EXPECT_TRUE(gate.shouldProcess(116));
   gate.markProcessed(116);
   EXPECT_EQ(gate.remainingDelayMs(116), 16U);
+}
+
+TEST(SmartRegionUpdateGateTest, CountsNextIntervalFromUpdateStart)
+{
+  SmartRegionUpdateGate gate;
+
+  gate.markStarted(100);
+  EXPECT_FALSE(gate.shouldProcess(110));
+  EXPECT_EQ(gate.remainingDelayMs(110), 6U);
+  EXPECT_TRUE(gate.shouldProcess(116));
+
+  gate.markStarted(116);
+  EXPECT_EQ(gate.remainingDelayMs(120), 12U);
 }
 
 TEST(SmartRegionUpdateGateTest, ResetMakesTheNextMoveImmediate)
@@ -502,21 +557,90 @@ TEST(SmartRegionDetectorTest, RecordsWindowDetectionStageForAnInvalidPoint)
             trace.latestEvent().elapsed_ms);
 }
 
-TEST(SmartRegionDiagnosticTraceTest, AppendsOverlayAndStabilizationTimings)
+TEST(SmartRegionDiagnosticTraceTest, RecordsObservedHoverTimingParts)
 {
   SmartRegionDiagnosticTrace trace;
   SmartRegionDiagnosticEvent event;
   trace.setEnabled(true);
   ASSERT_TRUE(trace.record(event));
 
-  EXPECT_TRUE(trace.recordOverlayRenderElapsed(24));
-  EXPECT_TRUE(trace.recordStabilizationDelay(
-      SmartRegionHoverStabilizer::CandidateSwitchDelayMs));
+  EXPECT_TRUE(trace.recordOverlayRenderElapsed(24, 7));
+  EXPECT_TRUE(trace.recordOverlayRenderCount(8));
+  EXPECT_TRUE(trace.recordHoverInputDelay(12));
+  EXPECT_TRUE(trace.recordStabilizationDelay(37));
+  EXPECT_TRUE(trace.recordHoverMotion(-18, 6, 12, true));
   EXPECT_EQ(trace.latestEvent().overlay_render_ms, 24U);
-  EXPECT_EQ(trace.latestEvent().stabilization_delay_ms,
-            SmartRegionHoverStabilizer::CandidateSwitchDelayMs);
+  EXPECT_EQ(trace.latestEvent().overlay_render_count, 8U);
+  EXPECT_EQ(trace.latestEvent().hover_input_delay_ms, 12U);
+  EXPECT_EQ(trace.latestEvent().stabilization_delay_ms, 37U);
+  EXPECT_EQ(trace.latestEvent().hover_motion_delta_x, -18);
+  EXPECT_EQ(trace.latestEvent().hover_motion_delta_y, 6);
+  EXPECT_EQ(trace.latestEvent().hover_motion_elapsed_ms, 12U);
+  EXPECT_TRUE(trace.latestEvent().hover_motion_fast);
   EXPECT_FALSE(trace.latestEvent().msaa_lookup_attempted);
   EXPECT_EQ(trace.latestEvent().msaa_lookup_ms, 0U);
+}
+
+TEST(SmartRegionAsyncPresentationGateTest,
+     DefersOnlyChromiumResultsDuringRecentFastRawMotion)
+{
+  SmartRegionAsyncPresentationGate gate;
+
+  gate.recordRawMotion(100, 100, 100);
+  gate.recordRawMotion(108, 101, 108);
+
+  EXPECT_TRUE(gate.hasRecentFastMotion(108));
+  EXPECT_TRUE(gate.shouldDeferAsyncResult(true, 108));
+  EXPECT_FALSE(gate.shouldDeferAsyncResult(false, 108));
+}
+
+TEST(SmartRegionAsyncPresentationGateTest,
+     ReleasesDeferredResultsAfterTheMotionQuietPeriod)
+{
+  SmartRegionAsyncPresentationGate gate;
+
+  gate.recordRawMotion(100, 100, 100);
+  gate.recordRawMotion(108, 101, 108);
+
+  EXPECT_TRUE(gate.shouldDeferAsyncResult(
+      true, 108 + SmartRegionAsyncPresentationGate::FastMotionHoldMs - 1));
+  EXPECT_FALSE(gate.shouldDeferAsyncResult(
+      true, 108 + SmartRegionAsyncPresentationGate::FastMotionHoldMs));
+}
+
+TEST(SmartRegionAsyncPresentationGateTest,
+     IgnoresSmallOrSlowRawMotion)
+{
+  SmartRegionAsyncPresentationGate gate;
+
+  gate.recordRawMotion(100, 100, 100);
+  gate.recordRawMotion(102, 101, 108);
+  EXPECT_FALSE(gate.hasRecentFastMotion(108));
+
+  gate.recordRawMotion(110, 101,
+                       108 + SmartRegionAsyncPresentationGate::
+                                 FastMotionMaximumSampleIntervalMs +
+                           1);
+  EXPECT_FALSE(gate.hasRecentFastMotion(
+      108 + SmartRegionAsyncPresentationGate::
+                FastMotionMaximumSampleIntervalMs +
+      1));
+}
+
+TEST(SmartRegionAsyncPresentationGateTest, ResetDropsTheRawMotionBurst)
+{
+  SmartRegionAsyncPresentationGate gate;
+
+  gate.recordRawMotion(100, 100, 100);
+  gate.recordRawMotion(108, 101, 108);
+  ASSERT_TRUE(gate.hasRecentFastMotion(108));
+
+  gate.reset();
+
+  EXPECT_FALSE(gate.hasRecentFastMotion(108));
+  EXPECT_EQ(gate.latestDeltaX(), 0);
+  EXPECT_EQ(gate.latestDeltaY(), 0);
+  EXPECT_EQ(gate.latestElapsedMs(), 0U);
 }
 
 TEST(SmartRegionDiagnosticTraceTest,
@@ -559,8 +683,10 @@ TEST(SmartRegionDiagnosticTraceTest,
   ASSERT_TRUE(trace.record(event));
 
   ASSERT_TRUE(trace.recordAsyncUiaResult(
-      9, 11, 17, true, true, true, false, SmartRegionMaxUiaCandidates, true,
-      true, msaa_diagnostic, &async_candidate, 1));
+      9, 11, 17, 6, true, true, true, true, false,
+      SmartRegionMaxUiaCandidates,
+      true, true, false, SmartRegionAsyncDeferralReason::FastMotion,
+      msaa_diagnostic, &async_candidate, 1));
   const SmartRegionDiagnosticEvent& recorded = trace.latestEvent();
   EXPECT_EQ(recorded.root_window, 42U);
   EXPECT_EQ(recorded.cursor_x, 320);
@@ -572,13 +698,18 @@ TEST(SmartRegionDiagnosticTraceTest,
   EXPECT_EQ(recorded.uia_async_request_id, 9U);
   EXPECT_EQ(recorded.uia_async_elapsed_ms, 11U);
   EXPECT_EQ(recorded.uia_async_age_ms, 17U);
+  EXPECT_EQ(recorded.uia_async_poll_delay_ms, 6U);
   EXPECT_TRUE(recorded.uia_async_result_succeeded);
   EXPECT_TRUE(recorded.uia_async_msaa_attempted);
+  EXPECT_TRUE(recorded.uia_async_browser_semantic_miss);
   EXPECT_TRUE(recorded.uia_async_cache_hit);
   EXPECT_FALSE(recorded.uia_async_suppressed_by_cooldown);
   EXPECT_EQ(recorded.uia_async_candidate_count, SmartRegionMaxUiaCandidates);
   EXPECT_TRUE(recorded.uia_async_matches_current_request);
   EXPECT_TRUE(recorded.uia_async_result_applied);
+  EXPECT_FALSE(recorded.uia_async_result_deferred);
+  EXPECT_EQ(recorded.uia_async_deferral_reason,
+            SmartRegionAsyncDeferralReason::FastMotion);
   EXPECT_EQ(recorded.uia_async_msaa_diagnostic.path,
             SmartRegionMsaaTraversalPath::AccessibleChildren);
   EXPECT_EQ(recorded.uia_async_msaa_diagnostic.stop_reason,
@@ -691,6 +822,32 @@ TEST(SmartRegionVisualResultCacheTest,
   EXPECT_TRUE(cache.lookup(1, 101, owner_rect, 232, 232, cached, found));
   EXPECT_FALSE(found);
   EXPECT_FALSE(cache.lookup(2, 101, owner_rect, 207, 207, cached, found));
+}
+
+TEST(SmartRegionVisualResultCacheTest,
+     ReusesWideBrowserFallbackOnlyInsideTheSameCell)
+{
+  const WindowRect owner_rect{0, 0, 1920, 120};
+  SmartRegionCandidate visual_row{
+      1, 1, {0, 80, 1920, 120}, SmartRegionKind::KnownContent};
+  visual_row.source = SmartRegionDiagnosticSource::Visual;
+  visual_row.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionVisualResultCache browser_cache;
+  SmartRegionVisualResultCache generic_cache;
+  SmartRegionCandidate cached;
+  bool found = false;
+
+  browser_cache.store(1, 101, owner_rect, 200, 96, &visual_row, 0, true);
+  ASSERT_TRUE(
+      browser_cache.lookup(1, 101, owner_rect, 230, 103, cached, found, true));
+  EXPECT_TRUE(found);
+  EXPECT_EQ(cached.rect.top, 80);
+  EXPECT_FALSE(
+      browser_cache.lookup(1, 101, owner_rect, 249, 103, cached, found, true));
+
+  generic_cache.store(1, 101, owner_rect, 200, 96, &visual_row);
+  EXPECT_FALSE(
+      generic_cache.lookup(1, 101, owner_rect, 230, 103, cached, found));
 }
 
 TEST(SmartRegionVisualResultCacheTest,
@@ -1437,6 +1594,42 @@ TEST(UiaRegionQueryWorkerTest, CoolsDownRepeatedFailureForTheSameWindow)
 }
 
 TEST(UiaRegionQueryWorkerTest,
+     RetriesBrowserSemanticMissAtTheNextHoverInterval)
+{
+  CountingUiaQueryContext context;
+  context.succeed = false;
+  context.browser_semantic_miss = true;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+  EXPECT_TRUE(first_result.browser_semantic_miss);
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {102, 102},
+                              {0, 0, 1000, 800}, 116}));
+  window_detail::UiaRegionQueryResult retried_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, retried_result));
+  EXPECT_FALSE(retried_result.suppressed_by_cooldown);
+  EXPECT_EQ(context.call_count, 2);
+}
+
+TEST(UiaRegionQueryWorkerTest, StampsCompletionTimeBeforePublishingResult)
+{
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  const std::uint64_t requested_at_ms = GetTickCount64();
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, requested_at_ms}));
+
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_GE(result.completed_at_ms, requested_at_ms);
+}
+
+TEST(UiaRegionQueryWorkerTest,
      ReusesRecentResultWhenPointerMovesWithinTheSameCandidate)
 {
   CountingUiaQueryContext context;
@@ -2153,6 +2346,22 @@ TEST(MsaaRegionLocatorTest, RecordsUnknownSemanticFilteredNode)
   EXPECT_EQ(filtered_node.rect.right, 260);
   EXPECT_EQ(filtered_node.rect.bottom, 240);
   EXPECT_EQ(filtered_node.accessibility_depth, 4U);
+}
+
+TEST(MsaaRegionLocatorTest,
+     RecoversOnlyBrowserTopChromeSemanticAndVisibilityMisses)
+{
+  EXPECT_TRUE(window_detail::msaaShouldRecoverBrowserFilteredNode(
+      true, true, SmartRegionMsaaFilteredNodeReason::UnknownSemantic));
+  EXPECT_TRUE(window_detail::msaaShouldRecoverBrowserFilteredNode(
+      true, true,
+      SmartRegionMsaaFilteredNodeReason::InvisibleOrOffscreen));
+  EXPECT_FALSE(window_detail::msaaShouldRecoverBrowserFilteredNode(
+      false, true, SmartRegionMsaaFilteredNodeReason::UnknownSemantic));
+  EXPECT_FALSE(window_detail::msaaShouldRecoverBrowserFilteredNode(
+      true, false, SmartRegionMsaaFilteredNodeReason::UnknownSemantic));
+  EXPECT_FALSE(window_detail::msaaShouldRecoverBrowserFilteredNode(
+      true, true, SmartRegionMsaaFilteredNodeReason::PointerOutside));
 }
 
 TEST(MsaaRegionLocatorTest, UsesDeeperHitTestTraversalOnlyForBrowsers)

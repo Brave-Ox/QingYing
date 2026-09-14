@@ -17,6 +17,7 @@ constexpr LONG BrowserMaximumMsaaChildrenPerLevel = 32;
 constexpr std::size_t BrowserMaximumMsaaEnumeratedChildren = 96;
 constexpr DWORD ProcessPathCapacity = 32768;
 constexpr LONG MaximumRootContentInsetPx = 1;
+constexpr LONG BrowserTopChromeHeightDivisor = 3;
 
 class ScopedProcessHandle
 {
@@ -347,6 +348,56 @@ bool isWindowSizedContentSurface(HWND root_window,
       rect, {top_left.x, top_left.y, bottom_right.x, bottom_right.y});
 }
 
+bool isBrowserTopChromePoint(HWND root_window, POINT screen_point) noexcept
+{
+  RECT client_rect{};
+  if (GetClientRect(root_window, &client_rect) == FALSE ||
+      client_rect.bottom <= client_rect.top)
+  {
+    return false;
+  }
+  POINT top_left{client_rect.left, client_rect.top};
+  POINT bottom_right{client_rect.right, client_rect.bottom};
+  if (ClientToScreen(root_window, &top_left) == FALSE ||
+      ClientToScreen(root_window, &bottom_right) == FALSE)
+  {
+    return false;
+  }
+  const LONG height = bottom_right.y - top_left.y;
+  if (height <= 0)
+  {
+    return false;
+  }
+  const LONG top_chrome_bottom =
+      top_left.y + height / BrowserTopChromeHeightDivisor;
+  return screen_point.y >= top_left.y &&
+         screen_point.y < top_chrome_bottom;
+}
+
+bool shouldRecoverBrowserFilteredNode(
+    bool is_browser_window, bool is_browser_top_chrome,
+    SmartRegionMsaaFilteredNodeReason reason) noexcept
+{
+  if (!is_browser_window || !is_browser_top_chrome)
+  {
+    return false;
+  }
+  return reason == SmartRegionMsaaFilteredNodeReason::UnknownSemantic ||
+         reason ==
+             SmartRegionMsaaFilteredNodeReason::InvisibleOrOffscreen;
+}
+
+void recordLatestFilteredNode(
+    SmartRegionMsaaTraversalDiagnostic* diagnostic,
+    const SmartRegionMsaaFilteredNodeDiagnostic& filtered_node) noexcept
+{
+  if (diagnostic != nullptr &&
+      filtered_node.reason != SmartRegionMsaaFilteredNodeReason::None)
+  {
+    diagnostic->filtered_node = filtered_node;
+  }
+}
+
 void recordFilteredMsaaNode(
     SmartRegionMsaaFilteredNodeDiagnostic* out_filtered_node,
     SmartRegionMsaaFilteredNodeReason reason,
@@ -598,8 +649,13 @@ void enumerateContainingMsaaChildren(
 bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
                                    SmartRegionCandidate& out,
                                    SmartRegionMsaaTraversalDiagnostic*
-                                       diagnostic) noexcept
+                                       diagnostic,
+                                   bool* out_browser_semantic_miss) noexcept
 {
+  if (out_browser_semantic_miss != nullptr)
+  {
+    *out_browser_semantic_miss = false;
+  }
   if (diagnostic != nullptr)
   {
     *diagnostic = SmartRegionMsaaTraversalDiagnostic{};
@@ -621,6 +677,8 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
   bool has_candidate = false;
   std::uint8_t accessibility_depth = 0;
   const bool is_browser_window = isSupportedBrowserWindow(root_window);
+  const bool is_browser_top_chrome =
+      is_browser_window && isBrowserTopChromePoint(root_window, screen_point);
   const std::uint8_t maximum_depth =
       msaaHitTestDepthLimit(is_browser_window);
   const ULONGLONG start_time_ms = GetTickCount64();
@@ -644,10 +702,11 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
     if (hit.value().vt == VT_I4)
     {
       SmartRegionCandidate hit_candidate;
+      SmartRegionMsaaFilteredNodeDiagnostic filtered_node;
       if (makeCandidateFromAccessible(
               root_window, current_accessible.Get(), hit.value(), screen_point,
               child_depth, hit_candidate, nullptr,
-              filteredNodeDiagnostic(diagnostic)))
+              &filtered_node))
       {
         rememberCandidate(hit_candidate, best_candidate, has_candidate);
         if (is_browser_window &&
@@ -655,6 +714,23 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
                 {hit_candidate.rect,
                  static_cast<LONG>(hit_candidate.accessibility_role), 0}))
         {
+          enumerateContainingMsaaChildren(
+              root_window, current_accessible.Get(), screen_point, child_depth,
+              maximum_depth, enumeration_budget, best_candidate, has_candidate,
+              diagnostic);
+        }
+      }
+      else
+      {
+        recordLatestFilteredNode(diagnostic, filtered_node);
+        const bool should_recover = shouldRecoverBrowserFilteredNode(
+            is_browser_window, is_browser_top_chrome, filtered_node.reason);
+        if (should_recover)
+        {
+          if (out_browser_semantic_miss != nullptr)
+          {
+            *out_browser_semantic_miss = true;
+          }
           enumerateContainingMsaaChildren(
               root_window, current_accessible.Get(), screen_point, child_depth,
               maximum_depth, enumeration_budget, best_candidate, has_candidate,
@@ -695,10 +771,11 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
     ScopedVariant self;
     self.setLong(CHILDID_SELF);
     SmartRegionCandidate hit_candidate;
+    SmartRegionMsaaFilteredNodeDiagnostic filtered_node;
     if (makeCandidateFromAccessible(root_window, child_accessible.Get(),
                                     self.value(), screen_point, child_depth,
                                     hit_candidate, nullptr,
-                                    filteredNodeDiagnostic(diagnostic)))
+                                    &filtered_node))
     {
       rememberCandidate(hit_candidate, best_candidate, has_candidate);
       if (is_browser_window &&
@@ -708,6 +785,23 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
       {
         enumerateContainingMsaaChildren(
             root_window, child_accessible.Get(), screen_point, child_depth,
+            maximum_depth, enumeration_budget, best_candidate, has_candidate,
+            diagnostic);
+      }
+    }
+    else
+    {
+      recordLatestFilteredNode(diagnostic, filtered_node);
+      const bool should_recover = shouldRecoverBrowserFilteredNode(
+          is_browser_window, is_browser_top_chrome, filtered_node.reason);
+      if (should_recover)
+      {
+        if (out_browser_semantic_miss != nullptr)
+        {
+          *out_browser_semantic_miss = true;
+        }
+        enumerateContainingMsaaChildren(
+            root_window, current_accessible.Get(), screen_point, child_depth,
             maximum_depth, enumeration_budget, best_candidate, has_candidate,
             diagnostic);
       }
@@ -729,9 +823,34 @@ bool locateRootScopedMsaaCandidate(HWND root_window, POINT screen_point,
   }
   ScopedVariant self;
   self.setLong(CHILDID_SELF);
+  SmartRegionMsaaFilteredNodeDiagnostic filtered_node;
   const bool made_candidate = makeCandidateFromAccessible(
       root_window, current_accessible.Get(), self.value(), screen_point,
-      accessibility_depth, out, nullptr, filteredNodeDiagnostic(diagnostic));
+      accessibility_depth, out, nullptr, &filtered_node);
+  if (!made_candidate)
+  {
+    recordLatestFilteredNode(diagnostic, filtered_node);
+    const bool should_recover = shouldRecoverBrowserFilteredNode(
+        is_browser_window, is_browser_top_chrome, filtered_node.reason);
+    if (should_recover)
+    {
+      if (out_browser_semantic_miss != nullptr)
+      {
+        *out_browser_semantic_miss = true;
+      }
+      enumerateContainingMsaaChildren(
+          root_window, current_accessible.Get(), screen_point,
+          accessibility_depth, maximum_depth, enumeration_budget,
+          best_candidate, has_candidate, diagnostic);
+    }
+  }
+  if (has_candidate)
+  {
+    setMsaaTraversalStopReason(
+        diagnostic, SmartRegionMsaaTraversalStopReason::CandidateFound);
+    out = best_candidate;
+    return true;
+  }
   setMsaaTraversalStopReason(
       diagnostic, made_candidate ? SmartRegionMsaaTraversalStopReason::CandidateFound
                                   : SmartRegionMsaaTraversalStopReason::NoCandidate);
@@ -782,6 +901,14 @@ LONG msaaAccessibleChildrenRequestCount(
   const std::size_t bounded_request =
       (std::min)(static_cast<std::size_t>(requested), remaining_budget);
   return static_cast<LONG>(bounded_request);
+}
+
+bool msaaShouldRecoverBrowserFilteredNode(
+    bool is_browser_window, bool is_browser_top_chrome,
+    SmartRegionMsaaFilteredNodeReason reason) noexcept
+{
+  return shouldRecoverBrowserFilteredNode(
+      is_browser_window, is_browser_top_chrome, reason);
 }
 
 std::uint8_t msaaHitTestDepthLimit(bool is_browser_window) noexcept
@@ -885,12 +1012,20 @@ bool makeMsaaCandidate(HWND root_window, HWND target_window,
 bool locateMsaaCandidate(HWND root_window, POINT screen_point,
                          SmartRegionCandidate& out,
                          SmartRegionMsaaTraversalDiagnostic*
-                             out_diagnostic) noexcept
+                             out_diagnostic,
+                         bool* out_browser_semantic_miss) noexcept
 {
   out = SmartRegionCandidate{};
-  if (out_diagnostic != nullptr)
+  if (out_browser_semantic_miss != nullptr)
   {
-    *out_diagnostic = SmartRegionMsaaTraversalDiagnostic{};
+    *out_browser_semantic_miss = false;
+  }
+  SmartRegionMsaaTraversalDiagnostic local_diagnostic;
+  SmartRegionMsaaTraversalDiagnostic* const diagnostic =
+      out_diagnostic != nullptr ? out_diagnostic : &local_diagnostic;
+  if (diagnostic != nullptr)
+  {
+    *diagnostic = SmartRegionMsaaTraversalDiagnostic{};
   }
   if (root_window == nullptr || !IsWindow(root_window) ||
       !IsWindowVisible(root_window))
@@ -915,30 +1050,31 @@ bool locateMsaaCandidate(HWND root_window, POINT screen_point,
       makeCandidateFromAccessible(root_window, accessible.Get(), child.value(),
                                   screen_point, 0, direct_candidate,
                                   &direct_properties,
-                                  filteredNodeDiagnostic(out_diagnostic)))
+                                  filteredNodeDiagnostic(diagnostic)))
   {
-    if (out_diagnostic != nullptr)
+    if (diagnostic != nullptr)
     {
-      out_diagnostic->path = SmartRegionMsaaTraversalPath::DirectPoint;
+      diagnostic->path = SmartRegionMsaaTraversalPath::DirectPoint;
     }
     if (msaaShouldDeferDirectBrowserContainerCandidate(
             is_browser_window, direct_properties))
     {
       SmartRegionCandidate descendant_candidate;
       if (locateRootScopedMsaaCandidate(root_window, screen_point,
-                                        descendant_candidate, out_diagnostic))
+                                        descendant_candidate, diagnostic,
+                                        out_browser_semantic_miss))
       {
         out = descendant_candidate;
         return true;
       }
     }
     setMsaaTraversalStopReason(
-        out_diagnostic, SmartRegionMsaaTraversalStopReason::CandidateFound);
+        diagnostic, SmartRegionMsaaTraversalStopReason::CandidateFound);
     out = direct_candidate;
     return true;
   }
   return locateRootScopedMsaaCandidate(root_window, screen_point, out,
-                                       out_diagnostic);
+                                       diagnostic, out_browser_semantic_miss);
 }
 
 }  // namespace qingying::window_detail

@@ -65,13 +65,22 @@ struct OverlayWindowData {
   SmartRegionHoverStabilizer hover_stabilizer;
   SmartRegionHoverRenderGate hover_render_gate;
   SmartRegionUpdateGate hover_update_gate;
+  SmartRegionAsyncPresentationGate async_presentation_gate;
   window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
   SmartRegionCandidate hover_candidate;
   SmartRegionCandidate fast_hover_candidate;
   SmartRegionCandidateCollection hover_candidates;
   SmartRegionModeSettings smart_region_mode_settings;
   SmartRegionMode smart_region_mode{SmartRegionMode::DetectElements};
+  bool use_browser_chrome_visual_fallback{false};
   POINT hover_screen_point{};
+  window_detail::UiaRegionQueryResult deferred_uia_result;
+  std::int64_t hover_motion_delta_x{0};
+  std::int64_t hover_motion_delta_y{0};
+  std::uint64_t hover_motion_elapsed_ms{0};
+  std::uint64_t smart_region_overlay_render_count{0};
+  bool hover_motion_fast{false};
+  bool has_deferred_uia_result{false};
   std::uint64_t uia_request_id{0};
   window_detail::UiaRegionQueryRequest current_uia_request;
   bool has_hover{false};
@@ -79,6 +88,7 @@ struct OverlayWindowData {
   bool first_frame_committed{false};
   int pending_hover_x{0};
   int pending_hover_y{0};
+  std::uint64_t pending_hover_queued_at_ms{0};
   OverlayClientRect hover_rect;
   Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
@@ -97,7 +107,8 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
 void handleToolbarCommand(OverlayWindowData* data,
                           SelectionToolbarCommand command);
 void requestHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
-                        int client_y);
+                        int client_y,
+                        std::uint64_t queued_at_ms = 0);
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
 
@@ -127,11 +138,12 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           L"cursor=(%d,%d) pid=%lu process=%s class=%s total=%llu ms "
           L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
           L"msaaFound=%d known=%llu visual=%llu visualCache=%s "
-          L"visualConfidence=%u "
-          L"select=%llu render=%llu "
-          L"settle=%llu edges=0x%02X asyncUia=(received:%d request:%llu "
-          L"elapsed:%llu age:%llu succeeded:%d msaa:%d cache:%d cooldown:%d "
-          L"resultCandidates:%llu current:%d applied:%d) candidates=%llu\n",
+           L"visualConfidence=%u "
+           L"select=%llu render=%llu renderCount=%llu inputDelay=%llu "
+           L"settle=%llu motion=(dx:%lld dy:%lld elapsed:%llu fast:%d) "
+           L"edges=0x%02X asyncUia=(received:%d request:%llu "
+           L"elapsed:%llu age:%llu pollDelay:%llu succeeded:%d msaa:%d semanticMiss:%d cache:%d cooldown:%d "
+           L"resultCandidates:%llu current:%d applied:%d deferred:%d deferEligibility:%s) candidates=%llu\n",
           smartRegionDiagnosticSourceName(event.source), event.rect.left,
           event.rect.top, event.rect.right, event.rect.bottom,
           reinterpret_cast<void*>(event.root_window), event.cursor_x,
@@ -148,23 +160,34 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           static_cast<unsigned long long>(event.known_content_lookup_ms),
           static_cast<unsigned long long>(event.visual_lookup_ms),
           visual_cache_state,
-          static_cast<unsigned int>(event.visual_candidate_confidence),
-          static_cast<unsigned long long>(event.selection_ms),
-          static_cast<unsigned long long>(event.overlay_render_ms),
-          static_cast<unsigned long long>(event.stabilization_delay_ms),
-          static_cast<unsigned int>(event.visual_edge_mask),
+           static_cast<unsigned int>(event.visual_candidate_confidence),
+           static_cast<unsigned long long>(event.selection_ms),
+           static_cast<unsigned long long>(event.overlay_render_ms),
+           static_cast<unsigned long long>(event.overlay_render_count),
+           static_cast<unsigned long long>(event.hover_input_delay_ms),
+           static_cast<unsigned long long>(event.stabilization_delay_ms),
+           static_cast<long long>(event.hover_motion_delta_x),
+           static_cast<long long>(event.hover_motion_delta_y),
+           static_cast<unsigned long long>(event.hover_motion_elapsed_ms),
+           event.hover_motion_fast ? 1 : 0,
+           static_cast<unsigned int>(event.visual_edge_mask),
           event.uia_async_result_received ? 1 : 0,
           static_cast<unsigned long long>(event.uia_async_request_id),
           static_cast<unsigned long long>(event.uia_async_elapsed_ms),
           static_cast<unsigned long long>(event.uia_async_age_ms),
+          static_cast<unsigned long long>(event.uia_async_poll_delay_ms),
           event.uia_async_result_succeeded ? 1 : 0,
           event.uia_async_msaa_attempted ? 1 : 0,
+          event.uia_async_browser_semantic_miss ? 1 : 0,
           event.uia_async_cache_hit ? 1 : 0,
           event.uia_async_suppressed_by_cooldown ? 1 : 0,
-          static_cast<unsigned long long>(event.uia_async_candidate_count),
-          event.uia_async_matches_current_request ? 1 : 0,
-          event.uia_async_result_applied ? 1 : 0,
-          static_cast<unsigned long long>(event.candidate_count)))) {
+           static_cast<unsigned long long>(event.uia_async_candidate_count),
+           event.uia_async_matches_current_request ? 1 : 0,
+           event.uia_async_result_applied ? 1 : 0,
+           event.uia_async_result_deferred ? 1 : 0,
+           smartRegionAsyncDeferralReasonName(
+               event.uia_async_deferral_reason),
+           static_cast<unsigned long long>(event.candidate_count)))) {
     return;
   }
   for (std::size_t index = 0; index < event.candidate_count; ++index) {
@@ -297,13 +320,18 @@ void clearHover(OverlayWindowData* data) noexcept
   data->hover_stabilizer.clear();
   data->smart_region_visual_cache.clear();
   data->hover_update_gate.reset();
+  data->async_presentation_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
   data->fast_hover_candidate = SmartRegionCandidate{};
   data->current_uia_request = window_detail::UiaRegionQueryRequest{};
+  data->deferred_uia_result = window_detail::UiaRegionQueryResult{};
+  data->pending_hover_queued_at_ms = 0;
+  data->use_browser_chrome_visual_fallback = false;
   data->hover_candidates.clear();
   data->hover_rect = OverlayClientRect{};
   data->has_hover = false;
   data->has_pending_hover_update = false;
+  data->has_deferred_uia_result = false;
 }
 
 void destroyToolbar(OverlayWindowData* data) {
@@ -517,13 +545,19 @@ void applyHoverCandidate(OverlayWindowData* data,
     return;
   }
 
+  const std::uint64_t now_ms = GetTickCount64();
   const bool had_pending_candidate =
       data->hover_stabilizer.hasPendingCandidate();
-  static_cast<void>(
-      data->hover_stabilizer.update(candidate, GetTickCount64(), screen_point));
+  const std::uint64_t pending_since_ms =
+      data->hover_stabilizer.pendingSinceMs();
+  const bool stable_candidate_changed =
+      data->hover_stabilizer.update(
+          candidate, now_ms, screen_point,
+          data->use_browser_chrome_visual_fallback);
   static_cast<void>(data->smart_region_diagnostics.recordStabilizationDelay(
-      (had_pending_candidate || data->hover_stabilizer.hasPendingCandidate())
-          ? SmartRegionHoverStabilizer::CandidateSwitchDelayMs
+      stable_candidate_changed && had_pending_candidate &&
+              pending_since_ms != 0 && now_ms >= pending_since_ms
+          ? now_ms - pending_since_ms
           : 0));
   if (!data->hover_stabilizer.hasStableCandidate()) {
     clearHover(data);
@@ -546,6 +580,27 @@ void applyHoverCandidate(OverlayWindowData* data,
   }
   // 候选已稳定，不保留后台定时器，避免空闲覆盖层周期性重绘。
   static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
+}
+
+void recordRawHoverMotion(OverlayWindowData* data, int client_x,
+                          int client_y) noexcept
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+  const int screen_x = coord::clientToScreenX(client_x, data->screen);
+  const int screen_y = coord::clientToScreenY(client_y, data->screen);
+  const std::uint64_t now_ms = GetTickCount64();
+  data->async_presentation_gate.recordRawMotion(screen_x, screen_y, now_ms);
+  data->hover_motion_delta_x =
+      data->async_presentation_gate.latestDeltaX();
+  data->hover_motion_delta_y =
+      data->async_presentation_gate.latestDeltaY();
+  data->hover_motion_elapsed_ms =
+      data->async_presentation_gate.latestElapsedMs();
+  data->hover_motion_fast =
+      data->async_presentation_gate.hasRecentFastMotion(now_ms);
 }
 
 bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
@@ -583,6 +638,15 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   const int screen_x = coord::clientToScreenX(client_x, data->screen);
   const int screen_y = coord::clientToScreenY(client_y, data->screen);
   data->hover_screen_point = {screen_x, screen_y};
+  const std::uint64_t motion_now_ms = GetTickCount64();
+  data->hover_motion_delta_x =
+      data->async_presentation_gate.latestDeltaX();
+  data->hover_motion_delta_y =
+      data->async_presentation_gate.latestDeltaY();
+  data->hover_motion_elapsed_ms =
+      data->async_presentation_gate.latestElapsedMs();
+  data->hover_motion_fast =
+      data->async_presentation_gate.hasRecentFastMotion(motion_now_ms);
   const WindowRect image_screen_rect{data->screen.x, data->screen.y,
                                      data->screen.right(),
                                      data->screen.bottom()};
@@ -600,10 +664,22 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
           &visual_context, policy, &data->hover_candidates,
           &window_snapshot, &data->smart_region_visual_cache))
   {
+    static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
+        data->hover_motion_delta_x, data->hover_motion_delta_y,
+        data->hover_motion_elapsed_ms, data->hover_motion_fast));
+    static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
+        data->smart_region_overlay_render_count));
     clearHover(data);
     return;
   }
+  static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
+      data->hover_motion_delta_x, data->hover_motion_delta_y,
+      data->hover_motion_elapsed_ms, data->hover_motion_fast));
+  static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
+      data->smart_region_overlay_render_count));
   data->fast_hover_candidate = candidate;
+  data->use_browser_chrome_visual_fallback =
+      window_snapshot.is_chromium_browser_chrome;
   applyHoverCandidate(data, candidate, data->hover_screen_point);
 
   if (data->smart_region_mode != SmartRegionMode::DetectElements)
@@ -630,6 +706,71 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   }
 }
 
+bool applyUiaQueryCandidate(
+    HWND hwnd, OverlayWindowData* data,
+    const window_detail::UiaRegionQueryResult& result, POINT screen_point,
+    const WindowRect& owner_rect)
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+
+  SmartRegionCandidate candidate;
+  if (!window_detail::selectUiaQueryCandidate(
+          result, data->fast_hover_candidate, screen_point, owner_rect,
+          candidate))
+  {
+    return false;
+  }
+
+  SmartRegionCandidate combined[SmartRegionMaxCandidates];
+  std::size_t combined_count = window_detail::retainAccessibilityCandidates(
+      result.candidates, result.candidate_count, combined, std::size(combined));
+  for (std::size_t index = 0;
+       index < data->hover_candidates.count() &&
+       combined_count < SmartRegionMaxCandidates;
+       ++index)
+  {
+    combined[combined_count++] = data->hover_candidates.candidateAt(index);
+  }
+  data->hover_candidates.replace(combined, combined_count, screen_point.x,
+                                 screen_point.y, owner_rect, candidate);
+  applyHoverCandidate(data, candidate, screen_point);
+  if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
+  {
+    static_cast<void>(updateOverlay(hwnd, data));
+  }
+  return true;
+}
+
+bool applyDeferredUiaQueryResult(HWND hwnd, OverlayWindowData* data,
+                                 POINT screen_point, bool force)
+{
+  if (data == nullptr || !data->has_deferred_uia_result ||
+      (!force && data->async_presentation_gate.shouldDeferAsyncResult(
+                     data->use_browser_chrome_visual_fallback,
+                     GetTickCount64())))
+  {
+    return false;
+  }
+
+  const window_detail::UiaRegionQueryResult deferred_result =
+      data->deferred_uia_result;
+  data->deferred_uia_result = window_detail::UiaRegionQueryResult{};
+  data->has_deferred_uia_result = false;
+  window_detail::UiaRegionQueryRequest current_request =
+      data->current_uia_request;
+  current_request.screen_point = screen_point;
+  if (!window_detail::isUiaQueryResultApplicable(
+          deferred_result, current_request, GetTickCount64()))
+  {
+    return false;
+  }
+  return applyUiaQueryCandidate(hwnd, data, deferred_result, screen_point,
+                                current_request.owner_rect);
+}
+
 void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
 {
   if (data == nullptr || data->uia_query_worker == nullptr ||
@@ -647,10 +788,22 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     return;
   }
 
+  const std::uint64_t now_ms = GetTickCount64();
+  if (data->has_deferred_uia_result &&
+      !data->async_presentation_gate.shouldDeferAsyncResult(
+          data->use_browser_chrome_visual_fallback, now_ms))
+  {
+    POINT screen_point{};
+    if (GetCursorPos(&screen_point) != FALSE)
+    {
+      static_cast<void>(
+          applyDeferredUiaQueryResult(hwnd, data, screen_point, false));
+    }
+  }
+
   window_detail::UiaRegionQueryResult result;
   if (data->uia_query_worker->tryTakeLatest(result))
   {
-    const std::uint64_t now_ms = GetTickCount64();
     const bool applies_to_current_request =
         window_detail::isUiaQueryResultApplicable(
             result, data->current_uia_request, now_ms);
@@ -658,7 +811,21 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
         now_ms >= result.requested_at_ms
             ? now_ms - result.requested_at_ms
             : 0;
+    const std::uint64_t poll_delay_ms =
+        result.completed_at_ms != 0 && now_ms >= result.completed_at_ms
+            ? now_ms - result.completed_at_ms
+            : 0;
     bool result_applied = false;
+    bool result_deferred = false;
+    const bool should_defer_async_result =
+        data->async_presentation_gate.shouldDeferAsyncResult(
+            data->use_browser_chrome_visual_fallback, now_ms);
+    const SmartRegionAsyncDeferralReason deferral_reason =
+        !data->use_browser_chrome_visual_fallback
+            ? SmartRegionAsyncDeferralReason::NotChromiumBrowser
+            : (should_defer_async_result
+                   ? SmartRegionAsyncDeferralReason::FastMotion
+                   : SmartRegionAsyncDeferralReason::MotionBelowThreshold);
     if (applies_to_current_request)
     {
       SmartRegionCandidate candidate;
@@ -667,47 +834,39 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
               data->current_uia_request.screen_point,
               data->current_uia_request.owner_rect, candidate))
       {
-        SmartRegionCandidate combined[SmartRegionMaxCandidates];
-        std::size_t combined_count =
-            window_detail::retainAccessibilityCandidates(
-                result.candidates, result.candidate_count, combined,
-                std::size(combined));
-        for (std::size_t index = 0;
-             index < data->hover_candidates.count() &&
-             combined_count < SmartRegionMaxCandidates;
-             ++index)
+        if (should_defer_async_result)
         {
-          combined[combined_count++] =
-              data->hover_candidates.candidateAt(index);
+          data->deferred_uia_result = result;
+          data->has_deferred_uia_result = true;
+          result_deferred = true;
         }
-        data->hover_candidates.replace(
-            combined, combined_count,
-            data->current_uia_request.screen_point.x,
-            data->current_uia_request.screen_point.y,
-            data->current_uia_request.owner_rect, candidate);
-        result_applied = true;
-        applyHoverCandidate(data, candidate,
-                            data->current_uia_request.screen_point);
-        if (data->hover_render_gate.update(data->hover_candidate,
-                                           data->has_hover))
+        else
         {
-          static_cast<void>(updateOverlay(hwnd, data));
+          result_applied = applyUiaQueryCandidate(
+              hwnd, data, result, data->current_uia_request.screen_point,
+              data->current_uia_request.owner_rect);
         }
       }
     }
+    static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
+        data->smart_region_overlay_render_count));
     const bool recorded_async_result =
         data->smart_region_diagnostics.recordAsyncUiaResult(
-            result.request_id, result.elapsed_ms, result_age_ms,
-            result.succeeded, result.msaa_attempted, result.cache_hit,
+            result.request_id, result.elapsed_ms, result_age_ms, poll_delay_ms,
+            result.succeeded, result.msaa_attempted,
+            result.browser_semantic_miss, result.cache_hit,
             result.suppressed_by_cooldown, result.candidate_count,
-            applies_to_current_request, result_applied, result.msaa_diagnostic,
+            applies_to_current_request, result_applied, result_deferred,
+            deferral_reason,
+            result.msaa_diagnostic,
             result.candidates, result.candidate_count);
     if (recorded_async_result)
     {
       emitSmartRegionDiagnostic(data->smart_region_diagnostics);
     }
   }
-  if (!data->uia_query_worker->hasPendingWork())
+  if (!data->uia_query_worker->hasPendingWork() &&
+      !data->has_deferred_uia_result)
   {
     static_cast<void>(KillTimer(hwnd, kUiaResultPollTimerId));
   }
@@ -748,40 +907,52 @@ void setSmartRegionMode(HWND hwnd, OverlayWindowData* data,
     requestHoverUpdate(hwnd, data, point.x, point.y);
   }
 }
-
 void processHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
-                        int client_y)
+                        int client_y, std::uint64_t queued_at_ms)
 {
-  if (data == nullptr) {
+  if (data == nullptr)
+  {
     return;
   }
   updateHover(data, client_x, client_y);
-  if (data->hover_render_gate.update(data->hover_candidate, data->has_hover)) {
+  const std::uint64_t now_ms = GetTickCount64();
+  const std::uint64_t input_delay_ms =
+      now_ms >= queued_at_ms ? now_ms - queued_at_ms : 0;
+  static_cast<void>(
+      data->smart_region_diagnostics.recordHoverInputDelay(input_delay_ms));
+  if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
+  {
     static_cast<void>(updateOverlay(hwnd, data));
   }
   emitSmartRegionDiagnostic(data->smart_region_diagnostics);
-  data->hover_update_gate.markProcessed(GetTickCount64());
 }
 
 // 鼠标移动频率可能远高于 UIA 查询和整屏绘制的处理速度。保留最后一个坐标，
 // 用短定时器合并中间事件，首帧仍立即展示智能吸附框。
 void requestHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
-                        int client_y)
+                        int client_y, std::uint64_t queued_at_ms)
 {
-  if (data == nullptr) {
+  if (data == nullptr)
+  {
     return;
   }
 
   const std::uint64_t now_ms = GetTickCount64();
-  if (data->hover_update_gate.shouldProcess(now_ms)) {
+  const std::uint64_t effective_queued_at_ms =
+      queued_at_ms == 0 ? now_ms : queued_at_ms;
+  if (data->hover_update_gate.shouldProcess(now_ms))
+  {
     static_cast<void>(KillTimer(hwnd, kHoverUpdateTimerId));
     data->has_pending_hover_update = false;
-    processHoverUpdate(hwnd, data, client_x, client_y);
+    data->hover_update_gate.markStarted(now_ms);
+    processHoverUpdate(hwnd, data, client_x, client_y,
+                       effective_queued_at_ms);
     return;
   }
 
   data->pending_hover_x = client_x;
   data->pending_hover_y = client_y;
+  data->pending_hover_queued_at_ms = effective_queued_at_ms;
   data->has_pending_hover_update = true;
   const std::uint64_t delay_ms =
       data->hover_update_gate.remainingDelayMs(now_ms);
@@ -833,9 +1004,11 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   const bool rendered =
       OverlayRenderer::render(hwnd, data->screen, render_state);
   if (diagnostics_enabled) {
+    ++data->smart_region_overlay_render_count;
     static_cast<void>(
         data->smart_region_diagnostics.recordOverlayRenderElapsed(
-            GetTickCount64() - render_begin_ms));
+            GetTickCount64() - render_begin_ms,
+            data->smart_region_overlay_render_count));
   }
   return rendered;
 }
@@ -972,6 +1145,11 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
 
       if (!overlayPhaseHasSelection(data->phase)) {
+        const POINT screen_point{
+            coord::clientToScreenX(x, data->screen),
+            coord::clientToScreenY(y, data->screen)};
+        static_cast<void>(
+            applyDeferredUiaQueryResult(hwnd, data, screen_point, true));
         // 尚无有效选区：开始拖出矩形。
         if (!transitionOverlayPhase(data->phase, OverlayPhase::Creating)) {
           return 0;
@@ -1023,6 +1201,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         // 空闲悬停：无按键且未确认选区 → 智能吸附高亮。
         if ((wparam & MK_LBUTTON) == 0 &&
             data->phase == OverlayPhase::Sniffing) {
+          recordRawHoverMotion(data, x, y);
           requestHoverUpdate(hwnd, data, x, y);
         }
         return 0;
@@ -1093,8 +1272,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         const int x = data->pending_hover_x;
         const int y = data->pending_hover_y;
+        const std::uint64_t queued_at_ms = data->pending_hover_queued_at_ms;
         data->has_pending_hover_update = false;
-        requestHoverUpdate(hwnd, data, x, y);
+        data->pending_hover_queued_at_ms = 0;
+        requestHoverUpdate(hwnd, data, x, y, queued_at_ms);
         return 0;
       }
       if (wparam != kHoverStabilizeTimerId ||

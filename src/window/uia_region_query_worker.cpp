@@ -15,6 +15,7 @@ namespace {
 constexpr int kPositionCacheRadiusPx = 4;
 constexpr std::uint64_t kPositionCacheLifetimeMs = 80;
 constexpr std::uint64_t kFailureCooldownMs = 100;
+constexpr std::uint64_t kBrowserSemanticMissCooldownMs = 16;
 constexpr std::uint64_t kReusableResultMaximumAgeMs = 120;
 
 class ScopedMtaApartment
@@ -91,13 +92,17 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
   {
     result.msaa_attempted = true;
     SmartRegionCandidate msaa_candidate;
+    bool browser_semantic_miss = false;
     SmartRegionMsaaTraversalDiagnostic* const msaa_diagnostic =
         request.diagnostics_enabled ? &result.msaa_diagnostic : nullptr;
     if (locateMsaaCandidate(request.root_window, request.screen_point,
-                            msaa_candidate, msaa_diagnostic))
+                            msaa_candidate, msaa_diagnostic,
+                            &browser_semantic_miss))
     {
       result.candidates[result.candidate_count++] = msaa_candidate;
     }
+    result.browser_semantic_miss =
+        browser_semantic_miss && result.candidate_count == 0;
   }
   result.succeeded = result.candidate_count != 0;
 }
@@ -178,7 +183,7 @@ struct UiaRegionQueryWorker::Impl
             has_failure && request.value.root_window == failure_window &&
             request.value.requested_at_ms >= failure_at_ms &&
             request.value.requested_at_ms - failure_at_ms <
-                kFailureCooldownMs &&
+                failure_cooldown_ms &&
             pointsAreNear(request.value.screen_point, failure_point);
         if (!use_cached_result && cooldown_is_active)
         {
@@ -214,7 +219,8 @@ struct UiaRegionQueryWorker::Impl
       query_result.screen_point = request.value.screen_point;
       query_result.owner_rect = request.value.owner_rect;
       query_result.requested_at_ms = request.value.requested_at_ms;
-      query_result.elapsed_ms = GetTickCount64() - begin_ms;
+      query_result.completed_at_ms = GetTickCount64();
+      query_result.elapsed_ms = query_result.completed_at_ms - begin_ms;
 
       {
         std::lock_guard<std::mutex> lock(mutex);
@@ -244,6 +250,9 @@ struct UiaRegionQueryWorker::Impl
               failure_window = request.value.root_window;
               failure_point = request.value.screen_point;
               failure_at_ms = request.value.requested_at_ms;
+              failure_cooldown_ms = query_result.browser_semantic_miss
+                                        ? kBrowserSemanticMissCooldownMs
+                                        : kFailureCooldownMs;
               has_failure = true;
             }
           }
@@ -281,6 +290,7 @@ struct UiaRegionQueryWorker::Impl
   std::uint64_t failure_at_ms{0};
   std::uint64_t active_request_id{0};
   std::uint64_t last_completed_request_id{0};
+  std::uint64_t failure_cooldown_ms{kFailureCooldownMs};
   HWND failure_window{nullptr};
   POINT failure_point{};
   bool started{false};

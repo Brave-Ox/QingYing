@@ -142,6 +142,15 @@ enum class SmartRegionCandidateRejection : std::uint8_t {
   LowerScore,
 };
 
+// 仅用于诊断：当前异步结果是否具备未来“快速移动时延后显示”策略的条件。
+// 该枚举不改变候选选择、异步查询或覆盖层渲染行为。
+enum class SmartRegionAsyncDeferralReason : std::uint8_t {
+  NotEvaluated,
+  NotChromiumBrowser,
+  MotionBelowThreshold,
+  FastMotion,
+};
+
 // 固定容量中始终为已知内容/视觉、客户区和窗口保留四个回退槽。
 constexpr std::size_t SmartRegionMaxCandidates = 9;
 constexpr std::size_t SmartRegionReservedFallbackCandidates = 4;
@@ -212,10 +221,16 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t visual_lookup_ms{0};
   std::uint64_t selection_ms{0};
   std::uint64_t overlay_render_ms{0};
+  std::uint64_t overlay_render_count{0};
+  std::uint64_t hover_input_delay_ms{0};
   std::uint64_t stabilization_delay_ms{0};
+  std::int64_t hover_motion_delta_x{0};
+  std::int64_t hover_motion_delta_y{0};
+  std::uint64_t hover_motion_elapsed_ms{0};
   std::uint64_t uia_async_request_id{0};
   std::uint64_t uia_async_elapsed_ms{0};
   std::uint64_t uia_async_age_ms{0};
+  std::uint64_t uia_async_poll_delay_ms{0};
   std::size_t uia_async_candidate_count{0};
   std::uint8_t visual_edge_mask{0};
   std::uint8_t visual_candidate_confidence{0};
@@ -231,10 +246,15 @@ struct SmartRegionDiagnosticEvent {
   bool uia_async_result_received{false};
   bool uia_async_result_succeeded{false};
   bool uia_async_msaa_attempted{false};
+  bool uia_async_browser_semantic_miss{false};
   bool uia_async_cache_hit{false};
   bool uia_async_suppressed_by_cooldown{false};
   bool uia_async_matches_current_request{false};
   bool uia_async_result_applied{false};
+  bool uia_async_result_deferred{false};
+  bool hover_motion_fast{false};
+  SmartRegionAsyncDeferralReason uia_async_deferral_reason{
+      SmartRegionAsyncDeferralReason::NotEvaluated};
   SmartRegionMsaaTraversalDiagnostic uia_async_msaa_diagnostic;
   SmartRegionCandidate uia_async_candidates[SmartRegionDiagnosticMaxCandidates];
   std::size_t uia_async_diagnostic_candidate_count{0};
@@ -256,11 +276,13 @@ class SmartRegionVisualResultCache
  public:
   bool lookup(std::uintptr_t root_window, std::uintptr_t background_identity,
               const WindowRect& owner_rect, int screen_x, int screen_y,
-              SmartRegionCandidate& out, bool& found) const noexcept;
+              SmartRegionCandidate& out, bool& found,
+              bool allow_browser_wide_fallback = false) const noexcept;
   void store(std::uintptr_t root_window, std::uintptr_t background_identity,
              const WindowRect& owner_rect, int screen_x, int screen_y,
              const SmartRegionCandidate* candidate,
-             std::uint8_t minimum_visual_confidence = 0) noexcept;
+             std::uint8_t minimum_visual_confidence = 0,
+             bool allow_browser_wide_fallback = false) noexcept;
   void clear() noexcept;
 
  private:
@@ -270,11 +292,15 @@ class SmartRegionVisualResultCache
   std::uintptr_t m_background_identity{0};
   WindowRect m_owner_rect;
   SmartRegionCandidate m_positive_candidates[MaximumPositiveCandidates];
+  SmartRegionCandidate m_browser_wide_fallback;
   std::size_t m_positive_candidate_count{0};
   std::size_t m_next_positive_candidate_index{0};
+  int m_browser_wide_fallback_cell_x{0};
+  int m_browser_wide_fallback_cell_y{0};
   int m_negative_cell_x{0};
   int m_negative_cell_y{0};
   bool m_valid{false};
+  bool m_has_browser_wide_fallback{false};
   bool m_has_negative_cell{false};
 };
 
@@ -285,6 +311,7 @@ struct SmartRegionWindowSnapshot
   std::uintptr_t root_window{0};
   WindowRect owner_rect;
   WindowRect client_rect;
+  bool is_chromium_browser_chrome{false};
 
   bool valid() const noexcept;
 };
@@ -331,15 +358,23 @@ class SmartRegionDiagnosticTrace {
   void setEnabled(bool enabled) noexcept;
   bool enabled() const noexcept;
   bool record(const SmartRegionDiagnosticEvent& event) noexcept;
-  bool recordOverlayRenderElapsed(std::uint64_t elapsed_ms) noexcept;
+  bool recordOverlayRenderElapsed(std::uint64_t elapsed_ms,
+                                  std::uint64_t render_count = 0) noexcept;
+  bool recordOverlayRenderCount(std::uint64_t render_count) noexcept;
+  bool recordHoverInputDelay(std::uint64_t delay_ms) noexcept;
   bool recordStabilizationDelay(std::uint64_t delay_ms) noexcept;
+  bool recordHoverMotion(std::int64_t delta_x, std::int64_t delta_y,
+                         std::uint64_t elapsed_ms, bool fast) noexcept;
   bool recordAsyncUiaResult(
       std::uint64_t request_id, std::uint64_t elapsed_ms,
-      std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
+      std::uint64_t age_ms, std::uint64_t poll_delay_ms, bool succeeded,
+      bool msaa_attempted,
+      bool browser_semantic_miss,
       bool cache_hit, bool suppressed_by_cooldown,
-      std::size_t candidate_count, bool matches_current_request,
-      bool applied,
-      const SmartRegionMsaaTraversalDiagnostic& msaa_diagnostic,
+       std::size_t candidate_count, bool matches_current_request,
+       bool applied, bool deferred,
+       SmartRegionAsyncDeferralReason deferral_reason,
+       const SmartRegionMsaaTraversalDiagnostic& msaa_diagnostic,
       const SmartRegionCandidate* candidates,
       std::size_t diagnostic_candidate_count) noexcept;
   bool hasLatestEvent() const noexcept;
@@ -361,6 +396,8 @@ const wchar_t* smartRegionMsaaFilteredNodeReasonName(
     SmartRegionMsaaFilteredNodeReason reason) noexcept;
 const wchar_t* smartRegionCandidateRejectionName(
     SmartRegionCandidateRejection rejection) noexcept;
+const wchar_t* smartRegionAsyncDeferralReasonName(
+    SmartRegionAsyncDeferralReason reason) noexcept;
 
 // 延迟切换相邻候选区域，防止指针经过重叠子窗口时高亮框闪烁。
 class SmartRegionHoverStabilizer {
@@ -370,10 +407,12 @@ class SmartRegionHoverStabilizer {
   bool update(const SmartRegionCandidate& candidate,
               std::uint64_t now_ms) noexcept;
   bool update(const SmartRegionCandidate& candidate,
-              std::uint64_t now_ms, POINT screen_point) noexcept;
+              std::uint64_t now_ms, POINT screen_point,
+              bool preserve_browser_wide_visual_fallback = false) noexcept;
   void clear() noexcept;
   bool hasStableCandidate() const noexcept;
   bool hasPendingCandidate() const noexcept;
+  std::uint64_t pendingSinceMs() const noexcept;
   const SmartRegionCandidate& stableCandidate() const noexcept;
   // 点击确认时优先使用已经检测完成的最新局部候选；泛化回退候选不会覆盖
   // 当前稳定的局部候选。
@@ -403,6 +442,9 @@ class SmartRegionUpdateGate {
   static constexpr std::uint64_t MinimumIntervalMs = 16;
 
   bool shouldProcess(std::uint64_t now_ms) const noexcept;
+  // 从处理开始时刻计算下一次允许处理时间，避免将一次检测耗时再叠加到
+  // 固定节流间隔上。
+  void markStarted(std::uint64_t now_ms) noexcept;
   void markProcessed(std::uint64_t now_ms) noexcept;
   std::uint64_t remainingDelayMs(std::uint64_t now_ms) const noexcept;
   void reset() noexcept;
@@ -410,6 +452,36 @@ class SmartRegionUpdateGate {
  private:
   bool m_has_last_update{false};
   std::uint64_t m_last_update_ms{0};
+};
+
+// 在原始鼠标消息到达时记录短暂的快速移动段。仅 Chromium 顶部控件区使用
+// 该状态延后异步候选的绘制，避免高频跨进程结果反复触发覆盖层重绘。
+class SmartRegionAsyncPresentationGate {
+ public:
+  static constexpr std::int64_t FastMotionMinimumDeltaPx = 4;
+  static constexpr std::uint64_t FastMotionMaximumSampleIntervalMs = 32;
+  static constexpr std::uint64_t FastMotionHoldMs = 24;
+
+  void recordRawMotion(int screen_x, int screen_y,
+                       std::uint64_t now_ms) noexcept;
+  bool hasRecentFastMotion(std::uint64_t now_ms) const noexcept;
+  bool shouldDeferAsyncResult(bool is_chromium_browser_chrome,
+                              std::uint64_t now_ms) const noexcept;
+  std::int64_t latestDeltaX() const noexcept;
+  std::int64_t latestDeltaY() const noexcept;
+  std::uint64_t latestElapsedMs() const noexcept;
+  void reset() noexcept;
+
+ private:
+  int m_last_screen_x{0};
+  int m_last_screen_y{0};
+  std::int64_t m_latest_delta_x{0};
+  std::int64_t m_latest_delta_y{0};
+  std::uint64_t m_latest_elapsed_ms{0};
+  std::uint64_t m_last_raw_motion_at_ms{0};
+  std::uint64_t m_last_fast_motion_at_ms{0};
+  bool m_has_raw_motion_sample{false};
+  bool m_has_fast_motion_sample{false};
 };
 
 // 根据屏幕坐标选择已知内容区、应用客户区或窗口边框。

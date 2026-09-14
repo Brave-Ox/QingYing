@@ -39,6 +39,8 @@ constexpr int kGenericUiaContainerQualityScore = 25;
 constexpr std::uint8_t kMinimumWorkbenchVisualConfidence = 45;
 constexpr int kVisualCacheCellSize = 16;
 constexpr int kVisualNegativeCacheCellSize = 48;
+constexpr int kBrowserWideVisualCacheCellWidth = 48;
+constexpr int kBrowserWideVisualCacheCellHeight = 16;
 constexpr std::int64_t kVisualCacheLocalCandidateMaximumOwnerSpanPercent =
     75;
 
@@ -70,6 +72,42 @@ bool isLocalVisualCacheCandidate(const SmartRegionCandidate& candidate,
          static_cast<std::int64_t>(candidate.rect.height()) * 100 <
              static_cast<std::int64_t>(owner_rect.height()) *
                  kVisualCacheLocalCandidateMaximumOwnerSpanPercent;
+}
+
+bool isBrowserWideVisualFallbackCandidate(
+    const SmartRegionCandidate& candidate,
+    const WindowRect& owner_rect) noexcept
+{
+  return candidate.valid() &&
+         candidate.source == SmartRegionDiagnosticSource::Visual &&
+         candidate.semantic == SmartRegionSemantic::ContentSurface &&
+         !isLocalVisualCacheCandidate(candidate, owner_rect);
+}
+
+bool areEquivalentBrowserWideVisualFallbacks(
+    const SmartRegionCandidate& left, const SmartRegionCandidate& right,
+    POINT screen_point) noexcept
+{
+  if (left.owner_window != right.owner_window ||
+      left.target_window != right.target_window ||
+      left.source != SmartRegionDiagnosticSource::Visual ||
+      right.source != SmartRegionDiagnosticSource::Visual ||
+      left.semantic != SmartRegionSemantic::ContentSurface ||
+      right.semantic != SmartRegionSemantic::ContentSurface ||
+      !left.contains(screen_point.x, screen_point.y) ||
+      !right.contains(screen_point.x, screen_point.y) ||
+      left.rect.left != right.rect.left || left.rect.right != right.rect.right)
+  {
+    return false;
+  }
+  const int overlap_top = (std::max)(left.rect.top, right.rect.top);
+  const int overlap_bottom = (std::min)(left.rect.bottom, right.rect.bottom);
+  const int overlap_height = overlap_bottom - overlap_top;
+  const int minimum_height =
+      (std::min)(left.rect.height(), right.rect.height());
+  return overlap_height > 0 && minimum_height > 0 &&
+         static_cast<std::int64_t>(overlap_height) * 100 >=
+             static_cast<std::int64_t>(minimum_height) * 75;
 }
 
 bool rectanglesEqual(const WindowRect& left,
@@ -903,7 +941,8 @@ bool SmartRegionVisualContext::valid() const noexcept
 bool SmartRegionVisualResultCache::lookup(
     std::uintptr_t root_window, std::uintptr_t background_identity,
     const WindowRect& owner_rect, int screen_x, int screen_y,
-    SmartRegionCandidate& out, bool& found) const noexcept
+    SmartRegionCandidate& out, bool& found,
+    bool allow_browser_wide_fallback) const noexcept
 {
   out = SmartRegionCandidate{};
   found = false;
@@ -912,6 +951,17 @@ bool SmartRegionVisualResultCache::lookup(
       !rectanglesEqual(owner_rect, m_owner_rect))
   {
     return false;
+  }
+  if (allow_browser_wide_fallback && m_has_browser_wide_fallback &&
+      visualCacheCellFor(screen_x, kBrowserWideVisualCacheCellWidth) ==
+          m_browser_wide_fallback_cell_x &&
+      visualCacheCellFor(screen_y, kBrowserWideVisualCacheCellHeight) ==
+          m_browser_wide_fallback_cell_y &&
+      m_browser_wide_fallback.contains(screen_x, screen_y))
+  {
+    found = true;
+    out = m_browser_wide_fallback;
+    return true;
   }
   if (m_has_negative_cell &&
       visualCacheCellFor(screen_x, kVisualNegativeCacheCellSize) ==
@@ -940,7 +990,8 @@ void SmartRegionVisualResultCache::store(
     std::uintptr_t root_window, std::uintptr_t background_identity,
     const WindowRect& owner_rect, int screen_x, int screen_y,
     const SmartRegionCandidate* candidate,
-    std::uint8_t minimum_visual_confidence) noexcept
+    std::uint8_t minimum_visual_confidence,
+    bool allow_browser_wide_fallback) noexcept
 {
   if (!m_valid || root_window != m_root_window ||
       background_identity != m_background_identity ||
@@ -955,6 +1006,20 @@ void SmartRegionVisualResultCache::store(
   }
   if (!m_valid)
   {
+    return;
+  }
+
+  if (allow_browser_wide_fallback && candidate != nullptr &&
+      isBrowserWideVisualFallbackCandidate(*candidate, owner_rect) &&
+      candidate->visual_confidence >= minimum_visual_confidence)
+  {
+    m_browser_wide_fallback = *candidate;
+    m_browser_wide_fallback_cell_x =
+        visualCacheCellFor(screen_x, kBrowserWideVisualCacheCellWidth);
+    m_browser_wide_fallback_cell_y =
+        visualCacheCellFor(screen_y, kBrowserWideVisualCacheCellHeight);
+    m_has_browser_wide_fallback = true;
+    m_has_negative_cell = false;
     return;
   }
 
@@ -1002,11 +1067,15 @@ void SmartRegionVisualResultCache::clear() noexcept
   {
     candidate = SmartRegionCandidate{};
   }
+  m_browser_wide_fallback = SmartRegionCandidate{};
   m_positive_candidate_count = 0;
   m_next_positive_candidate_index = 0;
+  m_browser_wide_fallback_cell_x = 0;
+  m_browser_wide_fallback_cell_y = 0;
   m_negative_cell_x = 0;
   m_negative_cell_y = 0;
   m_valid = false;
+  m_has_browser_wide_fallback = false;
   m_has_negative_cell = false;
 }
 
@@ -1108,12 +1177,35 @@ bool SmartRegionDiagnosticTrace::record(
 }
 
 bool SmartRegionDiagnosticTrace::recordOverlayRenderElapsed(
-    std::uint64_t elapsed_ms) noexcept
+    std::uint64_t elapsed_ms, std::uint64_t render_count) noexcept
 {
   if (!m_enabled || !m_has_latest_event) {
     return false;
   }
   m_latest_event.overlay_render_ms = elapsed_ms;
+  m_latest_event.overlay_render_count = render_count;
+  return true;
+}
+
+bool SmartRegionDiagnosticTrace::recordOverlayRenderCount(
+    std::uint64_t render_count) noexcept
+{
+  if (!m_enabled || !m_has_latest_event)
+  {
+    return false;
+  }
+  m_latest_event.overlay_render_count = render_count;
+  return true;
+}
+
+bool SmartRegionDiagnosticTrace::recordHoverInputDelay(
+    std::uint64_t delay_ms) noexcept
+{
+  if (!m_enabled || !m_has_latest_event)
+  {
+    return false;
+  }
+  m_latest_event.hover_input_delay_ms = delay_ms;
   return true;
 }
 
@@ -1127,12 +1219,29 @@ bool SmartRegionDiagnosticTrace::recordStabilizationDelay(
   return true;
 }
 
+bool SmartRegionDiagnosticTrace::recordHoverMotion(
+    std::int64_t delta_x, std::int64_t delta_y, std::uint64_t elapsed_ms,
+    bool fast) noexcept
+{
+  if (!m_enabled || !m_has_latest_event)
+  {
+    return false;
+  }
+  m_latest_event.hover_motion_delta_x = delta_x;
+  m_latest_event.hover_motion_delta_y = delta_y;
+  m_latest_event.hover_motion_elapsed_ms = elapsed_ms;
+  m_latest_event.hover_motion_fast = fast;
+  return true;
+}
+
 bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
     std::uint64_t request_id, std::uint64_t elapsed_ms,
-    std::uint64_t age_ms, bool succeeded, bool msaa_attempted,
+    std::uint64_t age_ms, std::uint64_t poll_delay_ms, bool succeeded,
+    bool msaa_attempted, bool browser_semantic_miss,
     bool cache_hit, bool suppressed_by_cooldown,
     std::size_t candidate_count, bool matches_current_request,
-    bool applied,
+    bool applied, bool deferred,
+    SmartRegionAsyncDeferralReason deferral_reason,
     const SmartRegionMsaaTraversalDiagnostic& msaa_diagnostic,
     const SmartRegionCandidate* candidates,
     std::size_t diagnostic_candidate_count) noexcept
@@ -1145,14 +1254,18 @@ bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
   m_latest_event.uia_async_request_id = request_id;
   m_latest_event.uia_async_elapsed_ms = elapsed_ms;
   m_latest_event.uia_async_age_ms = age_ms;
+  m_latest_event.uia_async_poll_delay_ms = poll_delay_ms;
   m_latest_event.uia_async_candidate_count = candidate_count;
   m_latest_event.uia_async_result_succeeded = succeeded;
   m_latest_event.uia_async_msaa_attempted = msaa_attempted;
+  m_latest_event.uia_async_browser_semantic_miss = browser_semantic_miss;
   m_latest_event.uia_async_cache_hit = cache_hit;
   m_latest_event.uia_async_suppressed_by_cooldown = suppressed_by_cooldown;
   m_latest_event.uia_async_matches_current_request =
       matches_current_request;
   m_latest_event.uia_async_result_applied = applied;
+  m_latest_event.uia_async_result_deferred = deferred;
+  m_latest_event.uia_async_deferral_reason = deferral_reason;
   m_latest_event.uia_async_msaa_diagnostic = msaa_diagnostic;
   m_latest_event.uia_async_diagnostic_candidate_count = 0;
   for (std::size_t index = 0;
@@ -1236,7 +1349,24 @@ const wchar_t* smartRegionCandidateRejectionName(
 bool SmartRegionHoverStabilizer::update(
     const SmartRegionCandidate& candidate, std::uint64_t now_ms) noexcept
 {
-  return update(candidate, now_ms, {});
+  return update(candidate, now_ms, {}, false);
+}
+
+const wchar_t* smartRegionAsyncDeferralReasonName(
+    SmartRegionAsyncDeferralReason reason) noexcept
+{
+  switch (reason)
+  {
+    case SmartRegionAsyncDeferralReason::NotChromiumBrowser:
+      return L"not-chromium";
+    case SmartRegionAsyncDeferralReason::MotionBelowThreshold:
+      return L"motion-below-threshold";
+    case SmartRegionAsyncDeferralReason::FastMotion:
+      return L"fast-motion";
+    case SmartRegionAsyncDeferralReason::NotEvaluated:
+      break;
+  }
+  return L"not-evaluated";
 }
 
 const wchar_t* smartRegionMsaaTraversalPathName(
@@ -1310,7 +1440,8 @@ const wchar_t* smartRegionMsaaFilteredNodeReasonName(
 
 bool SmartRegionHoverStabilizer::update(
     const SmartRegionCandidate& candidate, std::uint64_t now_ms,
-    POINT screen_point) noexcept
+    POINT screen_point,
+    bool preserve_browser_wide_visual_fallback) noexcept
 {
   if (!candidate.valid()) {
     clear();
@@ -1325,6 +1456,15 @@ bool SmartRegionHoverStabilizer::update(
   }
 
   if (candidatesEqual(candidate, m_stable)) {
+    m_pending = SmartRegionCandidate{};
+    m_pending_since_ms = 0;
+    return false;
+  }
+
+  if (preserve_browser_wide_visual_fallback &&
+      areEquivalentBrowserWideVisualFallbacks(candidate, m_stable,
+                                               screen_point))
+  {
     m_pending = SmartRegionCandidate{};
     m_pending_since_ms = 0;
     return false;
@@ -1389,6 +1529,11 @@ bool SmartRegionHoverStabilizer::hasPendingCandidate() const noexcept
   return m_pending.valid();
 }
 
+std::uint64_t SmartRegionHoverStabilizer::pendingSinceMs() const noexcept
+{
+  return m_pending_since_ms;
+}
+
 const SmartRegionCandidate& SmartRegionHoverStabilizer::stableCandidate()
     const noexcept
 {
@@ -1422,6 +1567,11 @@ bool SmartRegionUpdateGate::shouldProcess(std::uint64_t now_ms) const noexcept
 
 void SmartRegionUpdateGate::markProcessed(std::uint64_t now_ms) noexcept
 {
+  markStarted(now_ms);
+}
+
+void SmartRegionUpdateGate::markStarted(std::uint64_t now_ms) noexcept
+{
   m_has_last_update = true;
   m_last_update_ms = now_ms;
 }
@@ -1444,6 +1594,78 @@ void SmartRegionUpdateGate::reset() noexcept
 {
   m_has_last_update = false;
   m_last_update_ms = 0;
+}
+
+void SmartRegionAsyncPresentationGate::recordRawMotion(
+    int screen_x, int screen_y, std::uint64_t now_ms) noexcept
+{
+  m_latest_delta_x = 0;
+  m_latest_delta_y = 0;
+  m_latest_elapsed_ms = 0;
+  if (m_has_raw_motion_sample && now_ms >= m_last_raw_motion_at_ms)
+  {
+    m_latest_delta_x =
+        static_cast<std::int64_t>(screen_x) - m_last_screen_x;
+    m_latest_delta_y =
+        static_cast<std::int64_t>(screen_y) - m_last_screen_y;
+    m_latest_elapsed_ms = now_ms - m_last_raw_motion_at_ms;
+    const std::int64_t absolute_delta_x =
+        m_latest_delta_x >= 0 ? m_latest_delta_x : -m_latest_delta_x;
+    const std::int64_t absolute_delta_y =
+        m_latest_delta_y >= 0 ? m_latest_delta_y : -m_latest_delta_y;
+    if (m_latest_elapsed_ms <= FastMotionMaximumSampleIntervalMs &&
+        (absolute_delta_x >= FastMotionMinimumDeltaPx ||
+         absolute_delta_y >= FastMotionMinimumDeltaPx))
+    {
+      m_last_fast_motion_at_ms = now_ms;
+      m_has_fast_motion_sample = true;
+    }
+  }
+  m_last_screen_x = screen_x;
+  m_last_screen_y = screen_y;
+  m_last_raw_motion_at_ms = now_ms;
+  m_has_raw_motion_sample = true;
+}
+
+bool SmartRegionAsyncPresentationGate::hasRecentFastMotion(
+    std::uint64_t now_ms) const noexcept
+{
+  return m_has_fast_motion_sample && now_ms >= m_last_fast_motion_at_ms &&
+         now_ms - m_last_fast_motion_at_ms < FastMotionHoldMs;
+}
+
+bool SmartRegionAsyncPresentationGate::shouldDeferAsyncResult(
+    bool is_chromium_browser_chrome, std::uint64_t now_ms) const noexcept
+{
+  return is_chromium_browser_chrome && hasRecentFastMotion(now_ms);
+}
+
+std::int64_t SmartRegionAsyncPresentationGate::latestDeltaX() const noexcept
+{
+  return m_latest_delta_x;
+}
+
+std::int64_t SmartRegionAsyncPresentationGate::latestDeltaY() const noexcept
+{
+  return m_latest_delta_y;
+}
+
+std::uint64_t SmartRegionAsyncPresentationGate::latestElapsedMs() const noexcept
+{
+  return m_latest_elapsed_ms;
+}
+
+void SmartRegionAsyncPresentationGate::reset() noexcept
+{
+  m_last_screen_x = 0;
+  m_last_screen_y = 0;
+  m_latest_delta_x = 0;
+  m_latest_delta_y = 0;
+  m_latest_elapsed_ms = 0;
+  m_last_raw_motion_at_ms = 0;
+  m_last_fast_motion_at_ms = 0;
+  m_has_raw_motion_sample = false;
+  m_has_fast_motion_sample = false;
 }
 
 bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
@@ -1570,6 +1792,11 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
           SmartRegionDiagnosticSource::KnownContent,
           SmartRegionSemantic::ContentSurface);
     }
+    if (window_snapshot != nullptr)
+    {
+      window_snapshot->is_chromium_browser_chrome =
+          !chromium_browser_chrome.empty();
+    }
     if (diagnostic_enabled) {
       diagnostic_event.known_content_lookup_attempted = true;
       diagnostic_event.known_content_lookup_ms =
@@ -1594,12 +1821,15 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
         use_workbench_visual_policy ? kMinimumWorkbenchVisualConfidence
                                     : kMinimumVisualConfidence;
     bool found_visual_region = false;
+    const bool allow_browser_wide_fallback_cache =
+        !chromium_browser_chrome.empty();
     const bool visual_cache_hit =
         visual_cache != nullptr &&
         visual_cache->lookup(
             reinterpret_cast<std::uintptr_t>(root_window),
             background_identity, visual_owner_rect, screen_x, screen_y,
-            visual_candidate, found_visual_region);
+            visual_candidate, found_visual_region,
+            allow_browser_wide_fallback_cache);
     if (!visual_cache_hit)
     {
       found_visual_region = window_detail::findVisualRegionCandidate(
@@ -1616,7 +1846,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
             reinterpret_cast<std::uintptr_t>(root_window),
             background_identity, visual_owner_rect, screen_x, screen_y,
             found_visual_region ? &visual_candidate : nullptr,
-            minimum_visual_confidence);
+            minimum_visual_confidence,
+            allow_browser_wide_fallback_cache);
       }
     }
     if (diagnostic_enabled) {
