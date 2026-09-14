@@ -12,6 +12,7 @@ constexpr int kMinimumChromiumExtentPx = 200;
 constexpr DWORD kProcessPathCapacity = 32768;
 constexpr std::int64_t kMaximumBrowserChromeHeightNumerator = 1;
 constexpr std::int64_t kMaximumBrowserChromeHeightDenominator = 3;
+constexpr std::int64_t kElectronWholeRendererCoveragePercent = 85;
 
 class ScopedHandle {
  public:
@@ -271,23 +272,23 @@ BOOL CALLBACK findLargestClassChild(HWND window, LPARAM parameter)
 
 bool locateChromium(HWND root, POINT point, SmartRegionCandidate& out,
                     WindowRect* chromium_browser_chrome,
-                    bool* require_complete_visual_boundaries) noexcept
+                    bool* use_workbench_visual_policy) noexcept
 {
   if (chromium_browser_chrome != nullptr)
   {
     *chromium_browser_chrome = WindowRect{};
   }
-  if (require_complete_visual_boundaries != nullptr)
+  if (use_workbench_visual_policy != nullptr)
   {
-    *require_complete_visual_boundaries = false;
+    *use_workbench_visual_policy = false;
   }
   if (!classNameEquals(root, L"Chrome_WidgetWin_1")) {
     return false;
   }
   const ChromiumRootKind root_kind = chromiumRootKind(root);
-  if (require_complete_visual_boundaries != nullptr)
+  if (use_workbench_visual_policy != nullptr)
   {
-    *require_complete_visual_boundaries =
+    *use_workbench_visual_policy =
         root_kind == ChromiumRootKind::ElectronWorkbench;
   }
   ClassSearch search;
@@ -327,6 +328,12 @@ bool locateChromium(HWND root, POINT point, SmartRegionCandidate& out,
     {
       *chromium_browser_chrome = chrome_rect;
     }
+    return false;
+  }
+  if (root_kind == ChromiumRootKind::ElectronWorkbench &&
+      electronWorkbenchRendererCoversClientArea(root_client_rect,
+                                                renderer_rect))
+  {
     return false;
   }
   if (!pointInRect(point, search.candidate.rect))
@@ -482,19 +489,39 @@ bool chromiumBrowserChromeRect(const WindowRect& root_client_rect,
   return true;
 }
 
+bool electronWorkbenchRendererCoversClientArea(
+    const WindowRect& root_client_rect,
+    const WindowRect& renderer_rect) noexcept
+{
+  if (root_client_rect.empty() || renderer_rect.empty() ||
+      renderer_rect.left < root_client_rect.left ||
+      renderer_rect.top < root_client_rect.top ||
+      renderer_rect.right > root_client_rect.right ||
+      renderer_rect.bottom > root_client_rect.bottom)
+  {
+    return false;
+  }
+  return static_cast<std::int64_t>(renderer_rect.width()) * 100 >=
+             static_cast<std::int64_t>(root_client_rect.width()) *
+                 kElectronWholeRendererCoveragePercent &&
+         static_cast<std::int64_t>(renderer_rect.height()) * 100 >=
+             static_cast<std::int64_t>(root_client_rect.height()) *
+                 kElectronWholeRendererCoveragePercent;
+}
+
 bool locateKnownContent(HWND root_window, POINT screen_point,
                         SmartRegionCandidate& out,
                         WindowRect* chromium_browser_chrome,
-                        bool* require_complete_visual_boundaries) noexcept
+                        bool* use_workbench_visual_policy) noexcept
 {
   out = SmartRegionCandidate{};
   if (chromium_browser_chrome != nullptr)
   {
     *chromium_browser_chrome = WindowRect{};
   }
-  if (require_complete_visual_boundaries != nullptr)
+  if (use_workbench_visual_policy != nullptr)
   {
-    *require_complete_visual_boundaries = false;
+    *use_workbench_visual_policy = false;
   }
   if (root_window == nullptr || !IsWindow(root_window) ||
       !IsWindowVisible(root_window) || IsIconic(root_window) ||
@@ -505,7 +532,7 @@ bool locateKnownContent(HWND root_window, POINT screen_point,
   {
     return locateChromium(root_window, screen_point, out,
                           chromium_browser_chrome,
-                          require_complete_visual_boundaries);
+                          use_workbench_visual_policy);
   }
   return locateNotepad(root_window, screen_point, out) ||
          locateExplorer(root_window, screen_point, out);

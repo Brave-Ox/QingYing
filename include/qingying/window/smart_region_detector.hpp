@@ -218,6 +218,7 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t uia_async_age_ms{0};
   std::size_t uia_async_candidate_count{0};
   std::uint8_t visual_edge_mask{0};
+  std::uint8_t visual_candidate_confidence{0};
   bool window_detection_attempted{false};
   bool uia_lookup_attempted{false};
   bool uia_has_valid_local_candidate{false};
@@ -226,6 +227,7 @@ struct SmartRegionDiagnosticEvent {
   bool known_content_lookup_attempted{false};
   bool visual_lookup_attempted{false};
   bool visual_cache_hit{false};
+  bool visual_cache_contains_candidate{false};
   bool uia_async_result_received{false};
   bool uia_async_result_succeeded{false};
   bool uia_async_msaa_attempted{false};
@@ -252,18 +254,20 @@ struct SmartRegionVisualContext {
 class SmartRegionVisualResultCache
 {
  public:
-  bool lookup(std::uintptr_t root_window, const WindowRect& owner_rect,
-              int screen_x, int screen_y, SmartRegionCandidate& out,
-              bool& found) const noexcept;
-  void store(std::uintptr_t root_window, const WindowRect& owner_rect,
-             int screen_x, int screen_y,
-             const SmartRegionCandidate* candidate) noexcept;
+  bool lookup(std::uintptr_t root_window, std::uintptr_t background_identity,
+              const WindowRect& owner_rect, int screen_x, int screen_y,
+              SmartRegionCandidate& out, bool& found) const noexcept;
+  void store(std::uintptr_t root_window, std::uintptr_t background_identity,
+             const WindowRect& owner_rect, int screen_x, int screen_y,
+             const SmartRegionCandidate* candidate,
+             std::uint8_t minimum_visual_confidence = 0) noexcept;
   void clear() noexcept;
 
  private:
   static constexpr std::size_t MaximumPositiveCandidates = 4;
 
   std::uintptr_t m_root_window{0};
+  std::uintptr_t m_background_identity{0};
   WindowRect m_owner_rect;
   SmartRegionCandidate m_positive_candidates[MaximumPositiveCandidates];
   std::size_t m_positive_candidate_count{0};
@@ -304,6 +308,17 @@ class SmartRegionCandidateSelector {
                          int screen_y, const WindowRect& owner_rect,
                          SmartRegionCandidate& out,
                          SmartRegionDiagnosticEvent& diagnostics) noexcept;
+  static bool selectBest(const SmartRegionCandidate* candidates,
+                         std::size_t candidate_count, int screen_x,
+                         int screen_y, const WindowRect& owner_rect,
+                         SmartRegionCandidate& out,
+                         SmartRegionDiagnosticEvent& diagnostics,
+                         std::uint8_t minimum_visual_confidence) noexcept;
+  static bool selectBest(const SmartRegionCandidate* candidates,
+                         std::size_t candidate_count, int screen_x,
+                         int screen_y, const WindowRect& owner_rect,
+                         SmartRegionCandidate& out,
+                         std::uint8_t minimum_visual_confidence) noexcept;
   static bool hasValidLocalCandidate(
       const SmartRegionCandidate* candidates, std::size_t candidate_count,
       int screen_x, int screen_y, const WindowRect& owner_rect,

@@ -675,22 +675,85 @@ TEST(SmartRegionVisualResultCacheTest,
   SmartRegionCandidate cached;
   bool found = false;
 
-  cache.store(1, owner_rect, 100, 100, &visual_region);
-  EXPECT_TRUE(cache.lookup(1, owner_rect, 107, 106, cached, found));
+  cache.store(1, 101, owner_rect, 100, 100, &visual_region);
+  EXPECT_TRUE(cache.lookup(1, 101, owner_rect, 107, 106, cached, found));
   EXPECT_TRUE(found);
   EXPECT_EQ(cached.rect.left, 96);
-  EXPECT_TRUE(cache.lookup(1, owner_rect, 224, 224, cached, found));
+  EXPECT_TRUE(cache.lookup(1, 101, owner_rect, 224, 224, cached, found));
   EXPECT_TRUE(found);
   EXPECT_EQ(cached.rect.left, 96);
-  EXPECT_FALSE(cache.lookup(1, owner_rect, 240, 224, cached, found));
+  EXPECT_FALSE(cache.lookup(1, 101, owner_rect, 240, 224, cached, found));
 
-  cache.store(1, owner_rect, 200, 200, nullptr);
-  EXPECT_TRUE(cache.lookup(1, owner_rect, 207, 207, cached, found));
+  cache.store(1, 101, owner_rect, 200, 200, nullptr);
+  EXPECT_TRUE(cache.lookup(1, 101, owner_rect, 207, 207, cached, found));
   EXPECT_FALSE(found);
   EXPECT_FALSE(cached.valid());
-  EXPECT_TRUE(cache.lookup(1, owner_rect, 232, 232, cached, found));
+  EXPECT_TRUE(cache.lookup(1, 101, owner_rect, 232, 232, cached, found));
   EXPECT_FALSE(found);
-  EXPECT_FALSE(cache.lookup(2, owner_rect, 207, 207, cached, found));
+  EXPECT_FALSE(cache.lookup(2, 101, owner_rect, 207, 207, cached, found));
+}
+
+TEST(SmartRegionVisualResultCacheTest,
+     InvalidatesCachedCandidateWhenBackgroundIdentityChanges)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  SmartRegionCandidate visual_region{
+      1, 2, {96, 96, 240, 240}, SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionVisualResultCache cache;
+  SmartRegionCandidate cached;
+  bool found = false;
+
+  cache.store(1, 101, owner_rect, 100, 100, &visual_region);
+
+  EXPECT_FALSE(cache.lookup(1, 202, owner_rect, 107, 106, cached, found));
+  EXPECT_FALSE(found);
+  EXPECT_FALSE(cached.valid());
+}
+
+TEST(SmartRegionVisualResultCacheTest,
+     DoesNotReuseCandidateBelowRequiredVisualConfidence)
+{
+  const WindowRect owner_rect{0, 0, 1000, 800};
+  SmartRegionCandidate visual_region{
+      1, 2, {96, 96, 240, 240}, SmartRegionKind::KnownContent};
+  visual_region.source = SmartRegionDiagnosticSource::Visual;
+  visual_region.semantic = SmartRegionSemantic::ContentSurface;
+  visual_region.visual_confidence = 48;
+  SmartRegionVisualResultCache cache;
+  SmartRegionCandidate cached;
+  bool found = false;
+
+  cache.store(1, 101, owner_rect, 100, 100, &visual_region, 45);
+  ASSERT_TRUE(cache.lookup(1, 101, owner_rect, 107, 106, cached, found));
+  EXPECT_TRUE(found);
+
+  cache.clear();
+  cache.store(1, 101, owner_rect, 100, 100, &visual_region, 49);
+  EXPECT_FALSE(cache.lookup(1, 101, owner_rect, 107, 106, cached, found));
+}
+
+TEST(SmartRegionCandidateSelectorTest,
+     AllowsConfirmedWorkbenchVisualCandidateAtWorkbenchThreshold)
+{
+  const WindowRect owner_rect{0, 0, 1920, 1032};
+  SmartRegionCandidate full_renderer{
+      1, 2, owner_rect, SmartRegionKind::KnownContent};
+  full_renderer.source = SmartRegionDiagnosticSource::KnownContent;
+  full_renderer.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate terminal{
+      1, 3, {371, 672, 1399, 897}, SmartRegionKind::KnownContent};
+  terminal.source = SmartRegionDiagnosticSource::Visual;
+  terminal.semantic = SmartRegionSemantic::ContentSurface;
+  terminal.visual_confidence = 48;
+  const SmartRegionCandidate candidates[] = {full_renderer, terminal};
+  SmartRegionCandidate selected;
+
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 799, 845, owner_rect, selected, 45));
+  EXPECT_EQ(selected.target_window, 3U);
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Visual);
 }
 
 TEST(SmartRegionVisualResultCacheTest,
@@ -709,13 +772,13 @@ TEST(SmartRegionVisualResultCacheTest,
   SmartRegionCandidate cached;
   bool found = false;
 
-  cache.store(1, owner_rect, 800, 300, &editor);
-  cache.store(1, owner_rect, 800, 760, &terminal);
+  cache.store(1, 101, owner_rect, 800, 300, &editor);
+  cache.store(1, 101, owner_rect, 800, 760, &terminal);
 
-  ASSERT_TRUE(cache.lookup(1, owner_rect, 800, 300, cached, found));
+  ASSERT_TRUE(cache.lookup(1, 101, owner_rect, 800, 300, cached, found));
   EXPECT_TRUE(found);
   EXPECT_EQ(cached.rect.top, 80);
-  ASSERT_TRUE(cache.lookup(1, owner_rect, 800, 760, cached, found));
+  ASSERT_TRUE(cache.lookup(1, 101, owner_rect, 800, 760, cached, found));
   EXPECT_TRUE(found);
   EXPECT_EQ(cached.rect.top, 620);
 }

@@ -116,13 +116,18 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
     return;
   }
   const SmartRegionDiagnosticEvent& event = diagnostics.latestEvent();
+  const wchar_t* const visual_cache_state =
+      event.visual_cache_hit
+          ? (event.visual_cache_contains_candidate ? L"positive" : L"negative")
+          : L"miss";
   wchar_t message[4096]{};
   if (FAILED(StringCchPrintfW(
           message, std::size(message),
           L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) root=%p "
           L"cursor=(%d,%d) pid=%lu process=%s class=%s total=%llu ms "
           L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
-          L"msaaFound=%d known=%llu visual=%llu visualCache=%d "
+          L"msaaFound=%d known=%llu visual=%llu visualCache=%s "
+          L"visualConfidence=%u "
           L"select=%llu render=%llu "
           L"settle=%llu edges=0x%02X asyncUia=(received:%d request:%llu "
           L"elapsed:%llu age:%llu succeeded:%d msaa:%d cache:%d cooldown:%d "
@@ -142,7 +147,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           event.msaa_candidate_found ? 1 : 0,
           static_cast<unsigned long long>(event.known_content_lookup_ms),
           static_cast<unsigned long long>(event.visual_lookup_ms),
-          event.visual_cache_hit ? 1 : 0,
+          visual_cache_state,
+          static_cast<unsigned int>(event.visual_candidate_confidence),
           static_cast<unsigned long long>(event.selection_ms),
           static_cast<unsigned long long>(event.overlay_render_ms),
           static_cast<unsigned long long>(event.stabilization_delay_ms),
@@ -289,6 +295,7 @@ void clearHover(OverlayWindowData* data) noexcept
     data->uia_query_worker->clear();
   }
   data->hover_stabilizer.clear();
+  data->smart_region_visual_cache.clear();
   data->hover_update_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
   data->fast_hover_candidate = SmartRegionCandidate{};

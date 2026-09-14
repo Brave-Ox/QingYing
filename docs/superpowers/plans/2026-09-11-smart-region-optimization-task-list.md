@@ -97,13 +97,13 @@
 
 ## 阶段四：响应速度和异步结果质量
 
-- [ ] **任务 13：消除一次悬停更新中的重复窗口定位**
+- [x] **任务 13：消除一次悬停更新中的重复窗口定位**
 
   让快速路径产生的 Root HWND、Owner 矩形和窗口快照可直接传给 UIA 请求，避免同一鼠标位置重复调用窗口检测。
 
   验收：诊断日志中单次悬停更新只产生一次窗口定位；Window/Client/已知内容结果保持不变。
 
-- [ ] **任务 14：增加局部视觉候选缓存**
+- [x] **任务 14：增加局部视觉候选缓存**
 
   以 Root HWND、背景截图版本、量化鼠标区域和候选矩形作为缓存键；鼠标仍在同一可信区域时不重复执行完整边界扫描；窗口切换、模式切换、截图背景变化时清空缓存。
 
@@ -207,3 +207,5 @@
 | 2026-09-12 | 任务 10：识别浏览器 TabItem 和标签操作按钮 | `src/window/msaa_region_locator.cpp`、`src/window/msaa_region_locator.hpp`、`tests/smart_region_detector_test.cpp` | 日志出现 TabItem（role=37）和标签操作按钮（role=43）局部候选；整客户区 MSAA ContentSurface 候选为 0；新增最大化客户区回归测试及智能吸附专项 98/98 通过。 |
 | 2026-09-13 | 任务 11：识别浏览器书签栏、地址栏和工具栏控件 | `src/window/msaa_region_locator.cpp`、`src/window/msaa_region_locator.hpp`、`include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 真实 Chrome 手测确认：单个书签、书签文件夹、地址栏、后退/前进/刷新及扩展按钮均可局部吸附；role=57（BUTTONMENU）不再被过滤为 UnknownSemantic。 |
 | 2026-09-14 | 任务 12：处理浏览器弹出菜单和临时窗口 | `src/window/window_catalog.cpp`、`src/window/window_detector.cpp`、`src/window/window_query_helpers.h`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp`、本文档 | 真实 Chrome 手测与诊断日志确认：临时浏览器控件能生成并应用局部 MSAA 候选；未见异步结果异常、悬空候选或关闭弹窗后的残留高亮。 |
+| 2026-09-14 | 任务 13：消除一次悬停更新中的重复窗口定位 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/overlay/selection_overlay.cpp`、`src/window/uia_region_query_worker.cpp`、本文档 | 快路径生成并传递 `SmartRegionWindowSnapshot`；后台 UIA/MSAA worker 仅消费 Root HWND 与矩形，不重新调用窗口检测。专项自动化测试 17/17 通过，诊断日志中同步悬停事件只记录一次窗口定位耗时。 |
+| 2026-09-14 | 任务 14：增加局部视觉候选缓存 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp`、本文档 | 缓存以 Root HWND、冻结背景身份、Owner 矩形、候选矩形和负缓存网格为键；自动测试覆盖背景变化失效、候选内复用和工作台面板切换。真实 PyCharm 日志 3971 条事件中 3727 条正缓存命中，所有命中矩形均覆盖当前鼠标；跨编辑器、终端及侧栏候选可重新检测。5 次 31ms 首次视觉 miss 留待任务 16 统一性能测量与优化。 |

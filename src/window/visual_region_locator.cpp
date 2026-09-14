@@ -29,6 +29,12 @@ constexpr std::int64_t kMaximumRegionPercent = 85;
 constexpr std::int64_t kWorkbenchIncompleteMaximumOwnerSpanPercent = 50;
 constexpr int kWorkbenchGlobalSeparatorCoveragePercent = 45;
 constexpr ULONGLONG kWorkbenchGlobalSeparatorBudgetMs = 16;
+constexpr int kWorkbenchBudgetCheckStride = 16;
+constexpr int kWorkbenchMaximumStructuralDividerHeight = 12;
+constexpr int kWorkbenchNearbySeparatorDistance = 96;
+constexpr int kWorkbenchNearbySeparatorCoverageAdvantage = 15;
+constexpr int kWorkbenchCentralColumnMinimumOwnerWidthPercent = 40;
+constexpr std::size_t kWorkbenchMaximumSeparatorCount = 64;
 constexpr std::size_t kMaximumConfirmedBoundaries = 3;
 constexpr std::size_t kMaximumBoundaryCandidates =
     kMaximumConfirmedBoundaries + 1;
@@ -366,56 +372,286 @@ int rectangleEvidenceScore(const BoundaryCandidate& left,
          boundaryQuality(top) + boundaryQuality(bottom);
 }
 
-BoundaryCandidate findNearestGlobalVerticalSeparator(
-    const Image& image, const WindowRect& image_screen_rect,
-    const SearchBounds& bounds, POINT point, bool search_left,
-    ULONGLONG start_time_ms) noexcept
+struct WorkbenchSeparators
 {
-  const int start = search_left ? static_cast<int>(point.x) - 1
-                                : static_cast<int>(point.x) + 1;
-  const int limit = search_left ? bounds.left + 1 : bounds.right - 1;
-  const int step = search_left ? -1 : 1;
-  for (int x = start; search_left ? x >= limit : x <= limit; x += step)
+  std::array<BoundaryCandidate, kWorkbenchMaximumSeparatorCount> values{};
+  std::size_t count{0};
+};
+
+void retainWorkbenchSeparator(WorkbenchSeparators& separators,
+                              const BoundaryCandidate& candidate) noexcept
+{
+  if (separators.count < separators.values.size())
   {
-    if (GetTickCount64() - start_time_ms >
-        kWorkbenchGlobalSeparatorBudgetMs)
+    separators.values.at(separators.count) = candidate;
+    ++separators.count;
+    return;
+  }
+
+  std::size_t weakest = 0;
+  for (std::size_t index = 1; index < separators.count; ++index)
+  {
+    if (separators.values.at(index).coverage <
+        separators.values.at(weakest).coverage)
     {
-      break;
-    }
-    const int coverage = verticalEdgeCoverage(
-        image, image_screen_rect, bounds, x, bounds.top, bounds.bottom);
-    if (coverage >= kWorkbenchGlobalSeparatorCoveragePercent)
-    {
-      return {x, coverage, 0, true};
+      weakest = index;
     }
   }
-  return {search_left ? bounds.left : bounds.right, 0, 0, false};
+  if (candidate.coverage > separators.values.at(weakest).coverage)
+  {
+    separators.values.at(weakest) = candidate;
+  }
 }
 
-BoundaryCandidate findNearestGlobalHorizontalSeparator(
-    const Image& image, const WindowRect& image_screen_rect,
-    const SearchBounds& bounds, POINT point, bool search_top,
-    ULONGLONG start_time_ms) noexcept
+void sortWorkbenchSeparators(WorkbenchSeparators& separators) noexcept
 {
-  const int start = search_top ? static_cast<int>(point.y) - 1
-                               : static_cast<int>(point.y) + 1;
-  const int limit = search_top ? bounds.top + 1 : bounds.bottom - 1;
-  const int step = search_top ? -1 : 1;
-  for (int y = start; search_top ? y >= limit : y <= limit; y += step)
+  std::sort(separators.values.begin(),
+            separators.values.begin() + separators.count,
+            [](const BoundaryCandidate& left,
+               const BoundaryCandidate& right) noexcept
+            {
+              return left.coordinate < right.coordinate;
+            });
+}
+
+bool collectWorkbenchVerticalSeparators(
+    const Image& image, const WindowRect& image_screen_rect,
+    const SearchBounds& bounds, ULONGLONG start_time_ms,
+    WorkbenchSeparators& separators) noexcept
+{
+  bool inside_band = false;
+  BoundaryCandidate strongest_in_band;
+  for (int x = bounds.left + 1; x < bounds.right; ++x)
   {
-    if (GetTickCount64() - start_time_ms >
-        kWorkbenchGlobalSeparatorBudgetMs)
+    if ((x - bounds.left) % kWorkbenchBudgetCheckStride == 0 &&
+        GetTickCount64() - start_time_ms >
+            kWorkbenchGlobalSeparatorBudgetMs)
     {
-      break;
+      return false;
     }
-    const int coverage = horizontalEdgeCoverage(
-        image, image_screen_rect, bounds, y, bounds.left, bounds.right);
-    if (coverage >= kWorkbenchGlobalSeparatorCoveragePercent)
+
+    const int coverage = verticalEdgeCoverage(
+        image, image_screen_rect, bounds, x, bounds.top, bounds.bottom,
+        kWeakEdgeColorDifference);
+    const bool strong =
+        coverage >= kWorkbenchGlobalSeparatorCoveragePercent;
+    if (strong)
     {
-      return {y, coverage, 0, true};
+      if (!inside_band || coverage > strongest_in_band.coverage)
+      {
+        strongest_in_band = {x, coverage, 0, true};
+      }
+      inside_band = true;
+      continue;
+    }
+
+    if (inside_band)
+    {
+      retainWorkbenchSeparator(separators, strongest_in_band);
+      inside_band = false;
     }
   }
-  return {search_top ? bounds.top : bounds.bottom, 0, 0, false};
+  if (inside_band)
+  {
+    retainWorkbenchSeparator(separators, strongest_in_band);
+  }
+  sortWorkbenchSeparators(separators);
+  return GetTickCount64() - start_time_ms <=
+         kWorkbenchGlobalSeparatorBudgetMs;
+}
+
+bool collectWorkbenchHorizontalSeparators(
+    const Image& image, const WindowRect& image_screen_rect,
+    const SearchBounds& bounds, ULONGLONG start_time_ms,
+    WorkbenchSeparators& separators) noexcept
+{
+  bool inside_band = false;
+  BoundaryCandidate strongest_in_band;
+  for (int y = bounds.top + 1; y < bounds.bottom; ++y)
+  {
+    if ((y - bounds.top) % kWorkbenchBudgetCheckStride == 0 &&
+        GetTickCount64() - start_time_ms >
+            kWorkbenchGlobalSeparatorBudgetMs)
+    {
+      return false;
+    }
+
+    const int coverage = horizontalEdgeCoverage(
+        image, image_screen_rect, bounds, y, bounds.left, bounds.right,
+        kWeakEdgeColorDifference);
+    const bool strong =
+        coverage >= kWorkbenchGlobalSeparatorCoveragePercent;
+    if (strong)
+    {
+      if (!inside_band || coverage > strongest_in_band.coverage)
+      {
+        strongest_in_band = {y, coverage, 0, true};
+      }
+      inside_band = true;
+      continue;
+    }
+
+    if (inside_band)
+    {
+      retainWorkbenchSeparator(separators, strongest_in_band);
+      inside_band = false;
+    }
+  }
+  if (inside_band)
+  {
+    retainWorkbenchSeparator(separators, strongest_in_band);
+  }
+  sortWorkbenchSeparators(separators);
+  return GetTickCount64() - start_time_ms <=
+         kWorkbenchGlobalSeparatorBudgetMs;
+}
+
+bool isDominatedNearbySeparator(const WorkbenchSeparators& separators,
+                                std::size_t candidate_index) noexcept
+{
+  const BoundaryCandidate& candidate =
+      separators.values.at(candidate_index);
+  for (std::size_t index = 0; index < separators.count; ++index)
+  {
+    if (index == candidate_index)
+    {
+      continue;
+    }
+    const BoundaryCandidate& other = separators.values.at(index);
+    const int distance = other.coordinate >= candidate.coordinate
+                             ? other.coordinate - candidate.coordinate
+                             : candidate.coordinate - other.coordinate;
+    if (distance <= kWorkbenchNearbySeparatorDistance &&
+        other.coverage >=
+            candidate.coverage +
+                kWorkbenchNearbySeparatorCoverageAdvantage)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void selectWorkbenchColumn(const WorkbenchSeparators& separators,
+                           const SearchBounds& bounds, POINT point,
+                           BoundaryCandidate& left,
+                           BoundaryCandidate& right) noexcept
+{
+  left = {bounds.left, 0, 0, false};
+  right = {bounds.right, 0, 0, false};
+  for (std::size_t index = 0; index < separators.count; ++index)
+  {
+    if (isDominatedNearbySeparator(separators, index))
+    {
+      continue;
+    }
+    const BoundaryCandidate& separator = separators.values.at(index);
+    if (separator.coordinate <= point.x &&
+        separator.coordinate > left.coordinate)
+    {
+      left = separator;
+    }
+    if (separator.coordinate > point.x &&
+        separator.coordinate < right.coordinate)
+    {
+      right = separator;
+    }
+  }
+}
+
+bool selectWorkbenchRow(const WorkbenchSeparators& separators,
+                        const SearchBounds& column_bounds, POINT point,
+                        int owner_width, BoundaryCandidate& top,
+                        BoundaryCandidate& bottom) noexcept
+{
+  top = {column_bounds.top, 0, 0, false};
+  bottom = {column_bounds.bottom, 0, 0, false};
+  if (separators.count == 0)
+  {
+    return false;
+  }
+
+  top = separators.values.at(0);
+  bottom = separators.values.at(separators.count - 1);
+  const int column_width = column_bounds.right - column_bounds.left;
+  if (static_cast<std::int64_t>(column_width) * 100 <
+      static_cast<std::int64_t>(owner_width) *
+          kWorkbenchCentralColumnMinimumOwnerWidthPercent)
+  {
+    return true;
+  }
+
+  int best_pair_score = -1;
+  std::size_t best_pair_index = 0;
+  for (std::size_t index = 1; index + 2 < separators.count; ++index)
+  {
+    const BoundaryCandidate& pair_top = separators.values.at(index);
+    const BoundaryCandidate& pair_bottom = separators.values.at(index + 1);
+    if (pair_bottom.coordinate - pair_top.coordinate >
+        kWorkbenchMaximumStructuralDividerHeight)
+    {
+      continue;
+    }
+    const int space_before = pair_top.coordinate -
+                             separators.values.at(index - 1).coordinate;
+    const int space_after = separators.values.at(index + 2).coordinate -
+                            pair_bottom.coordinate;
+    const int score = space_before + space_after;
+    if (score > best_pair_score)
+    {
+      best_pair_score = score;
+      best_pair_index = index;
+    }
+  }
+
+  if (best_pair_score >= 0)
+  {
+    const BoundaryCandidate& divider_top =
+        separators.values.at(best_pair_index);
+    const BoundaryCandidate& divider_bottom =
+        separators.values.at(best_pair_index + 1);
+    if (point.y < divider_top.coordinate)
+    {
+      bottom = divider_top;
+      return true;
+    }
+    if (point.y >= divider_bottom.coordinate)
+    {
+      top = divider_bottom;
+      return true;
+    }
+    return false;
+  }
+
+  int best_single_score = -1;
+  std::size_t best_single_index = 0;
+  for (std::size_t index = 1; index + 1 < separators.count; ++index)
+  {
+    const int space_before = separators.values.at(index).coordinate -
+                             separators.values.at(index - 1).coordinate;
+    const int space_after = separators.values.at(index + 1).coordinate -
+                            separators.values.at(index).coordinate;
+    const int score = (std::min)(space_before, space_after);
+    if (score > best_single_score)
+    {
+      best_single_score = score;
+      best_single_index = index;
+    }
+  }
+  if (best_single_score >= kMinimumRegionHeight)
+  {
+    const BoundaryCandidate& divider =
+        separators.values.at(best_single_index);
+    if (point.y < divider.coordinate)
+    {
+      bottom = divider;
+    }
+    else
+    {
+      top = divider;
+    }
+  }
+  return true;
 }
 
 bool findWorkbenchPanelByGlobalSeparators(
@@ -426,24 +662,40 @@ bool findWorkbenchPanelByGlobalSeparators(
     bool allow_owner_attached_boundaries) noexcept
 {
   const ULONGLONG start_time_ms = GetTickCount64();
-  const BoundaryCandidate left = findNearestGlobalVerticalSeparator(
-      image, image_screen_rect, bounds, point, true, start_time_ms);
-  const BoundaryCandidate right = findNearestGlobalVerticalSeparator(
-      image, image_screen_rect, bounds, point, false, start_time_ms);
+  WorkbenchSeparators vertical_separators;
+  if (!collectWorkbenchVerticalSeparators(
+          image, image_screen_rect, bounds, start_time_ms,
+          vertical_separators))
+  {
+    return false;
+  }
+
+  BoundaryCandidate left;
+  BoundaryCandidate right;
+  selectWorkbenchColumn(vertical_separators, bounds, point, left, right);
   const SearchBounds panel_column_bounds{
-      left.confirmed ? left.coordinate : bounds.left, bounds.top,
-      right.confirmed ? right.coordinate : bounds.right, bounds.bottom};
+      left.coordinate, bounds.top, right.coordinate, bounds.bottom};
   if (!valid(panel_column_bounds) ||
       GetTickCount64() - start_time_ms > kWorkbenchGlobalSeparatorBudgetMs)
   {
     return false;
   }
-  const BoundaryCandidate top = findNearestGlobalHorizontalSeparator(
-      image, image_screen_rect, panel_column_bounds, point, true,
-      start_time_ms);
-  const BoundaryCandidate bottom = findNearestGlobalHorizontalSeparator(
-      image, image_screen_rect, panel_column_bounds, point, false,
-      start_time_ms);
+
+  WorkbenchSeparators horizontal_separators;
+  if (!collectWorkbenchHorizontalSeparators(
+          image, image_screen_rect, panel_column_bounds, start_time_ms,
+          horizontal_separators))
+  {
+    return false;
+  }
+
+  BoundaryCandidate top;
+  BoundaryCandidate bottom;
+  if (!selectWorkbenchRow(horizontal_separators, panel_column_bounds, point,
+                          owner_client_rect.width(), top, bottom))
+  {
+    return false;
+  }
   const int confirmed_edge_count = static_cast<int>(left.confirmed) +
                                    static_cast<int>(right.confirmed) +
                                    static_cast<int>(top.confirmed) +
@@ -540,7 +792,7 @@ bool findVisualRegion(const Image& background,
 
   // Electron 工作台面板不能复用通用控件扫描：编辑器与终端的分隔线
   // 通常只覆盖本列/本行，且通用扫描会把相邻面板合成一个大候选。该路径
-  // 只依据穿过鼠标所在列的分隔线，并受独立 16ms 总预算保护。
+  // 先解析全局列结构，再在命中列内选择主面板分隔，并受独立 16ms 总预算保护。
   if (policy == VisualRegionSearchPolicy::ElectronWorkbench)
   {
     return findWorkbenchPanelByGlobalSeparators(

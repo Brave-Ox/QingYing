@@ -13,10 +13,15 @@ bool chromiumBrowserChromeRect(const WindowRect& root_client_rect,
                                POINT screen_point,
                                WindowRect& out) noexcept;
 
+// Electron 工作台中的 Chromium Renderer 通常覆盖整个客户区；这种泛化
+// 容器不能作为编辑器、终端或侧栏的 KnownContent 候选。
+bool electronWorkbenchRendererCoversClientArea(
+    const WindowRect& root_client_rect,
+    const WindowRect& renderer_rect) noexcept;
+
 bool locateKnownContent(HWND root_window, POINT screen_point,
                         SmartRegionCandidate& out,
                         WindowRect* chromium_browser_chrome = nullptr,
-                        bool* require_complete_visual_boundaries =
-                            nullptr) noexcept;
+                        bool* use_workbench_visual_policy = nullptr) noexcept;
 
 }  // namespace qingying::window_detail

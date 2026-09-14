@@ -6,6 +6,7 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/window/smart_region_detector.hpp"
+#include "known_content_locator.hpp"
 #include "visual_region_locator.hpp"
 
 namespace qingying {
@@ -452,6 +453,183 @@ Image makeWorkbenchEditorAndTerminalImage()
   return image;
 }
 
+Image makeWorkbenchTerminalWithHeaderImage()
+{
+  Image image;
+  image.width = 2000;
+  image.height = 1200;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      0xFF101010u);
+
+  for (int y = 100; y < 694; ++y)
+  {
+    for (int x = 100; x < 1500; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF202020u;
+    }
+  }
+  for (int y = 700; y < 764; ++y)
+  {
+    for (int x = 100; x < 1500; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  for (int y = 771; y < 1050; ++y)
+  {
+    for (int x = 100; x < 1500; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  return image;
+}
+
+Image makeWorkbenchTerminalWithPromptGapImage()
+{
+  Image image;
+  image.width = 1920;
+  image.height = 1032;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      0xFF101010u);
+
+  for (int y = 129; y < 607; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF202020u;
+    }
+  }
+  for (int y = 613; y < 676; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  for (int y = 744; y < 999; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  return image;
+}
+
+Image makeTexturedWorkbenchLayoutImage()
+{
+  Image image;
+  image.width = 1920;
+  image.height = 1032;
+  image.pixels.assign(static_cast<std::size_t>(image.width) *
+                          static_cast<std::size_t>(image.height),
+                      0xFF101010u);
+
+  for (int y = 36; y < 999; ++y)
+  {
+    for (int x = 0; x < 302; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF181818u;
+    }
+    for (int x = 1399; x < image.width; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF242424u;
+    }
+  }
+
+  for (int y = 84; y < 607; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF303030u;
+    }
+  }
+  for (int y = 613; y < 676; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF282828u;
+    }
+  }
+  for (int y = 744; y < 999; ++y)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF282828u;
+    }
+  }
+
+  for (int y = 84; y < 607; ++y)
+  {
+    image.pixels.at(static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(image.width) +
+                    371) = 0xFF808080u;
+  }
+
+  for (int y = 744; y < 852; ++y)
+  {
+    image.pixels.at(static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(image.width) +
+                    371) = 0xFF808080u;
+  }
+
+  constexpr int InternalHorizontalEdges[] = {795, 802, 897, 904};
+  for (const int y : InternalHorizontalEdges)
+  {
+    for (int x = 302; x < 1399; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF808080u;
+    }
+  }
+
+  for (int y = 108; y < 936; y += 36)
+  {
+    for (int x = 48; x < 280; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF484848u;
+    }
+  }
+  for (int y = 96; y < 936; y += 48)
+  {
+    for (int x = 1420; x < 1880; ++x)
+    {
+      image.pixels.at(static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(image.width) +
+                      static_cast<std::size_t>(x)) = 0xFF505050u;
+    }
+  }
+  return image;
+}
+
 TEST(VisualRegionLocatorTest,
      RejectsCandidateWhenAnySideFallsBackToTheOwnerClientArea)
 {
@@ -672,6 +850,125 @@ TEST(VisualRegionLocatorTest,
   EXPECT_EQ(terminal.top, 700);
   EXPECT_EQ(terminal.right, 1500);
   EXPECT_EQ(terminal.bottom, 1050);
+}
+
+TEST(VisualRegionLocatorTest,
+     ElectronWorkbenchPolicyMergesTerminalHeaderWithTerminalBody)
+{
+  const Image image = makeWorkbenchTerminalWithHeaderImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect header;
+  WindowRect body;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 730}, header,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(header.left, 100);
+  EXPECT_EQ(header.top, 700);
+  EXPECT_EQ(header.right, 1500);
+  EXPECT_EQ(header.bottom, 1050);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 900}, body,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(body.left, 100);
+  EXPECT_EQ(body.top, 700);
+  EXPECT_EQ(body.right, 1500);
+  EXPECT_EQ(body.bottom, 1050);
+}
+
+TEST(VisualRegionLocatorTest,
+     ElectronWorkbenchPolicyMergesTerminalAcrossPromptGap)
+{
+  const Image image = makeWorkbenchTerminalWithPromptGapImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect header;
+  WindowRect prompt_gap;
+  WindowRect body;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 640}, header,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(header.left, 302);
+  EXPECT_EQ(header.top, 613);
+  EXPECT_EQ(header.right, 1399);
+  EXPECT_EQ(header.bottom, 999);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 700}, prompt_gap,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(prompt_gap.left, 302);
+  EXPECT_EQ(prompt_gap.top, 613);
+  EXPECT_EQ(prompt_gap.right, 1399);
+  EXPECT_EQ(prompt_gap.bottom, 999);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {800, 800}, body,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(body.left, 302);
+  EXPECT_EQ(body.top, 613);
+  EXPECT_EQ(body.right, 1399);
+  EXPECT_EQ(body.bottom, 999);
+}
+
+TEST(VisualRegionLocatorTest,
+     ElectronWorkbenchLayoutMergesTexturedTerminalIntoOnePanel)
+{
+  const Image image = makeTexturedWorkbenchLayoutImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  constexpr POINT TerminalPoints[] = {{800, 650}, {800, 811}, {800, 940}};
+
+  for (const POINT point : TerminalPoints)
+  {
+    WindowRect result;
+    ASSERT_TRUE(window_detail::findVisualRegion(
+        image, image_screen_rect, owner_client_rect, point, result,
+        window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+    EXPECT_EQ(result.left, 302);
+    EXPECT_EQ(result.top, 613);
+    EXPECT_EQ(result.right, 1399);
+    EXPECT_EQ(result.bottom, 999);
+  }
+}
+
+TEST(VisualRegionLocatorTest,
+     ElectronWorkbenchLayoutKeepsTexturedSidePanelsIndependent)
+{
+  const Image image = makeTexturedWorkbenchLayoutImage();
+  const WindowRect image_screen_rect{0, 0, image.width, image.height};
+  const WindowRect owner_client_rect{0, 0, image.width, image.height};
+  WindowRect left_panel;
+  WindowRect right_panel;
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {180, 400}, left_panel,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(left_panel.left, 0);
+  EXPECT_EQ(left_panel.top, 36);
+  EXPECT_EQ(left_panel.right, 302);
+  EXPECT_EQ(left_panel.bottom, 999);
+
+  ASSERT_TRUE(window_detail::findVisualRegion(
+      image, image_screen_rect, owner_client_rect, {1600, 400}, right_panel,
+      window_detail::VisualRegionSearchPolicy::ElectronWorkbench));
+  EXPECT_EQ(right_panel.left, 1399);
+  EXPECT_EQ(right_panel.top, 36);
+  EXPECT_EQ(right_panel.right, 1920);
+  EXPECT_EQ(right_panel.bottom, 999);
+}
+
+TEST(VisualRegionLocatorTest,
+     IdentifiesWholeClientElectronRendererAsGenericWorkbenchContainer)
+{
+  const WindowRect client_rect{0, 0, 1920, 1032};
+
+  EXPECT_TRUE(window_detail::electronWorkbenchRendererCoversClientArea(
+      client_rect, {0, 0, 1920, 1032}));
+  EXPECT_FALSE(window_detail::electronWorkbenchRendererCoversClientArea(
+      client_rect, {302, 129, 1399, 607}));
 }
 
 TEST(VisualRegionLocatorTest,

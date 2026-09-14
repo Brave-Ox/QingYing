@@ -36,6 +36,7 @@ constexpr int kNamedUiaActionableQualityScore = 250;
 constexpr int kPatternUiaActionableQualityScore = 200;
 constexpr int kUnnamedUiaActionableQualityScore = 50;
 constexpr int kGenericUiaContainerQualityScore = 25;
+constexpr std::uint8_t kMinimumWorkbenchVisualConfidence = 45;
 constexpr int kVisualCacheCellSize = 16;
 constexpr int kVisualNegativeCacheCellSize = 48;
 constexpr std::int64_t kVisualCacheLocalCandidateMaximumOwnerSpanPercent =
@@ -296,7 +297,8 @@ std::int64_t areaOf(const WindowRect& rect) noexcept
 
 SmartRegionCandidateRejection candidateRejection(
     const SmartRegionCandidate& candidate, int screen_x, int screen_y,
-    const WindowRect& owner_rect) noexcept
+    const WindowRect& owner_rect,
+    std::uint8_t minimum_visual_confidence = kMinimumVisualConfidence) noexcept
 {
   if (!candidate.valid()) {
     return SmartRegionCandidateRejection::Invalid;
@@ -321,7 +323,7 @@ SmartRegionCandidateRejection candidateRejection(
     return SmartRegionCandidateRejection::TooSmall;
   }
   if (candidate.source == SmartRegionDiagnosticSource::Visual &&
-      candidate.visual_confidence < kMinimumVisualConfidence)
+      candidate.visual_confidence < minimum_visual_confidence)
   {
     return SmartRegionCandidateRejection::LowConfidence;
   }
@@ -557,7 +559,8 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
                         std::size_t candidate_count, int screen_x,
                         int screen_y, const WindowRect& owner_rect,
                         SmartRegionCandidate& out,
-                        SmartRegionDiagnosticEvent* diagnostics) noexcept
+                        SmartRegionDiagnosticEvent* diagnostics,
+                        std::uint8_t minimum_visual_confidence) noexcept
 {
   out = SmartRegionCandidate{};
   if (diagnostics != nullptr) {
@@ -584,7 +587,7 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
   {
     if (duplicate[left_index] ||
         candidateRejection(candidates[left_index], screen_x, screen_y,
-                           owner_rect) !=
+                           owner_rect, minimum_visual_confidence) !=
         SmartRegionCandidateRejection::None)
     {
       continue;
@@ -594,7 +597,7 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
     {
       if (duplicate[right_index] ||
           candidateRejection(candidates[right_index], screen_x, screen_y,
-                             owner_rect) !=
+                             owner_rect, minimum_visual_confidence) !=
               SmartRegionCandidateRejection::None ||
           !rectanglesAreNearDuplicates(candidates[left_index].rect,
                                        candidates[right_index].rect))
@@ -634,7 +637,7 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
   {
     if (!duplicate[index] &&
         candidateRejection(candidates[index], screen_x, screen_y,
-                           owner_rect) ==
+                           owner_rect, minimum_visual_confidence) ==
             SmartRegionCandidateRejection::None &&
         isAccessibilityActionableCandidate(candidates[index]))
     {
@@ -649,7 +652,8 @@ bool selectBestInternal(const SmartRegionCandidate* candidates,
   for (std::size_t index = 0; index < processing_count; ++index) {
     const SmartRegionCandidate& candidate = candidates[index];
     SmartRegionCandidateRejection rejection =
-        candidateRejection(candidate, screen_x, screen_y, owner_rect);
+        candidateRejection(candidate, screen_x, screen_y, owner_rect,
+                           minimum_visual_confidence);
     if (rejection == SmartRegionCandidateRejection::None && duplicate[index])
     {
       rejection = SmartRegionCandidateRejection::Duplicate;
@@ -897,12 +901,14 @@ bool SmartRegionVisualContext::valid() const noexcept
 }
 
 bool SmartRegionVisualResultCache::lookup(
-    std::uintptr_t root_window, const WindowRect& owner_rect, int screen_x,
-    int screen_y, SmartRegionCandidate& out, bool& found) const noexcept
+    std::uintptr_t root_window, std::uintptr_t background_identity,
+    const WindowRect& owner_rect, int screen_x, int screen_y,
+    SmartRegionCandidate& out, bool& found) const noexcept
 {
   out = SmartRegionCandidate{};
   found = false;
   if (!m_valid || root_window != m_root_window ||
+      background_identity != m_background_identity ||
       !rectanglesEqual(owner_rect, m_owner_rect))
   {
     return false;
@@ -931,23 +937,30 @@ bool SmartRegionVisualResultCache::lookup(
 }
 
 void SmartRegionVisualResultCache::store(
-    std::uintptr_t root_window, const WindowRect& owner_rect, int screen_x,
-    int screen_y, const SmartRegionCandidate* candidate) noexcept
+    std::uintptr_t root_window, std::uintptr_t background_identity,
+    const WindowRect& owner_rect, int screen_x, int screen_y,
+    const SmartRegionCandidate* candidate,
+    std::uint8_t minimum_visual_confidence) noexcept
 {
   if (!m_valid || root_window != m_root_window ||
+      background_identity != m_background_identity ||
       !rectanglesEqual(owner_rect, m_owner_rect))
   {
     clear();
     m_root_window = root_window;
+    m_background_identity = background_identity;
     m_owner_rect = owner_rect;
-    m_valid = root_window != 0 && !owner_rect.empty();
+    m_valid = root_window != 0 && background_identity != 0 &&
+              !owner_rect.empty();
   }
   if (!m_valid)
   {
     return;
   }
 
-  if (candidate != nullptr && candidate->valid())
+  if (candidate != nullptr && candidate->valid() &&
+      (candidate->source != SmartRegionDiagnosticSource::Visual ||
+       candidate->visual_confidence >= minimum_visual_confidence))
   {
     for (std::size_t index = 0; index < m_positive_candidate_count; ++index)
     {
@@ -968,6 +981,11 @@ void SmartRegionVisualResultCache::store(
     return;
   }
 
+  if (candidate != nullptr)
+  {
+    return;
+  }
+
   m_negative_cell_x =
       visualCacheCellFor(screen_x, kVisualNegativeCacheCellSize);
   m_negative_cell_y =
@@ -978,6 +996,7 @@ void SmartRegionVisualResultCache::store(
 void SmartRegionVisualResultCache::clear() noexcept
 {
   m_root_window = 0;
+  m_background_identity = 0;
   m_owner_rect = WindowRect{};
   for (SmartRegionCandidate& candidate : m_positive_candidates)
   {
@@ -1002,7 +1021,8 @@ bool SmartRegionCandidateSelector::selectBest(
     SmartRegionCandidate& out) noexcept
 {
   return selectBestInternal(candidates, candidate_count, screen_x, screen_y,
-                            owner_rect, out, nullptr);
+                            owner_rect, out, nullptr,
+                            kMinimumVisualConfidence);
 }
 
 bool SmartRegionCandidateSelector::selectBest(
@@ -1011,7 +1031,30 @@ bool SmartRegionCandidateSelector::selectBest(
     SmartRegionCandidate& out, SmartRegionDiagnosticEvent& diagnostics) noexcept
 {
   return selectBestInternal(candidates, candidate_count, screen_x, screen_y,
-                            owner_rect, out, &diagnostics);
+                            owner_rect, out, &diagnostics,
+                            kMinimumVisualConfidence);
+}
+
+bool SmartRegionCandidateSelector::selectBest(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    int screen_x, int screen_y, const WindowRect& owner_rect,
+    SmartRegionCandidate& out,
+    std::uint8_t minimum_visual_confidence) noexcept
+{
+  return selectBestInternal(candidates, candidate_count, screen_x, screen_y,
+                            owner_rect, out, nullptr,
+                            minimum_visual_confidence);
+}
+
+bool SmartRegionCandidateSelector::selectBest(
+    const SmartRegionCandidate* candidates, std::size_t candidate_count,
+    int screen_x, int screen_y, const WindowRect& owner_rect,
+    SmartRegionCandidate& out, SmartRegionDiagnosticEvent& diagnostics,
+    std::uint8_t minimum_visual_confidence) noexcept
+{
+  return selectBestInternal(candidates, candidate_count, screen_x, screen_y,
+                            owner_rect, out, &diagnostics,
+                            minimum_visual_confidence);
 }
 
 bool SmartRegionCandidateSelector::hasValidLocalCandidate(
@@ -1544,12 +1587,19 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     const WindowRect& visual_owner_rect =
         chromium_browser_chrome.empty() ? client_rect
                                         : chromium_browser_chrome;
+    const std::uintptr_t background_identity =
+        reinterpret_cast<std::uintptr_t>(
+            visual_context->background->pixels.data());
+    const std::uint8_t minimum_visual_confidence =
+        use_workbench_visual_policy ? kMinimumWorkbenchVisualConfidence
+                                    : kMinimumVisualConfidence;
     bool found_visual_region = false;
     const bool visual_cache_hit =
         visual_cache != nullptr &&
-        visual_cache->lookup(reinterpret_cast<std::uintptr_t>(root_window),
-                             visual_owner_rect, screen_x, screen_y,
-                             visual_candidate, found_visual_region);
+        visual_cache->lookup(
+            reinterpret_cast<std::uintptr_t>(root_window),
+            background_identity, visual_owner_rect, screen_x, screen_y,
+            visual_candidate, found_visual_region);
     if (!visual_cache_hit)
     {
       found_visual_region = window_detail::findVisualRegionCandidate(
@@ -1563,9 +1613,10 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
       if (visual_cache != nullptr)
       {
         visual_cache->store(
-            reinterpret_cast<std::uintptr_t>(root_window), visual_owner_rect,
-            screen_x, screen_y,
-            found_visual_region ? &visual_candidate : nullptr);
+            reinterpret_cast<std::uintptr_t>(root_window),
+            background_identity, visual_owner_rect, screen_x, screen_y,
+            found_visual_region ? &visual_candidate : nullptr,
+            minimum_visual_confidence);
       }
     }
     if (diagnostic_enabled) {
@@ -1576,6 +1627,10 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
                                               : GetTickCount64() -
                                                     visual_lookup_begin_ms;
       diagnostic_event.visual_edge_mask = visual_diagnostic.edge_mask;
+      diagnostic_event.visual_cache_contains_candidate =
+          visual_cache_hit && found_visual_region;
+      diagnostic_event.visual_candidate_confidence =
+          found_visual_region ? visual_candidate.visual_confidence : 0;
     }
     if (found_visual_region) {
       if (candidate_count < SmartRegionMaxCandidates) {
@@ -1601,14 +1656,17 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
   const std::uint64_t selection_begin_ms =
       diagnostic_enabled ? GetTickCount64() : 0;
+  const std::uint8_t minimum_visual_confidence =
+      use_workbench_visual_policy ? kMinimumWorkbenchVisualConfidence
+                                  : kMinimumVisualConfidence;
   const bool detected =
       diagnostic_enabled
           ? SmartRegionCandidateSelector::selectBest(
                 candidates, candidate_count, screen_x, screen_y, window_rect,
-                out, diagnostic_event)
+                out, diagnostic_event, minimum_visual_confidence)
           : SmartRegionCandidateSelector::selectBest(
                 candidates, candidate_count, screen_x, screen_y, window_rect,
-                out);
+                out, minimum_visual_confidence);
   if (diagnostic_enabled) {
     diagnostic_event.selection_ms = GetTickCount64() - selection_begin_ms;
   }
