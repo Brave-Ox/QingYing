@@ -83,13 +83,13 @@
 
   验收：标签内容、标签关闭按钮和标签栏可以分别作为候选；快速经过多个标签时不出现持续闪烁或长期停留在整窗。
 
-- [ ] **任务 11：识别浏览器书签栏、地址栏和工具栏控件**
+- [x] **任务 11：识别浏览器书签栏、地址栏和工具栏控件**
 
   覆盖书签链接、书签文件夹、地址栏、刷新/返回/前进/扩展按钮等常见元素；UIA 不可用时只启用受约束的局部视觉兜底。
 
   验收：书签链接可以局部吸附；地址栏和工具栏不会被误判为网页内容；无法确认单个控件时安全回退到对应浏览器外壳区域。
 
-- [ ] **任务 12：处理浏览器弹出菜单和临时窗口**
+- [x] **任务 12：处理浏览器弹出菜单和临时窗口**
 
   覆盖右键菜单、书签下拉菜单、地址栏建议列表、工具提示和扩展弹窗等临时窗口；检查 `WindowFromPoint` 得到的 Owner/Root 关系。
 
@@ -205,3 +205,5 @@
 | 2026-09-11 | 检查点 A | 本文件及基线文件 | 任务 1～3 已完成；真实 Chrome/Edge、VSCode、PyCharm 人工复测仍待可连接桌面会话执行。 |
 | 2026-09-11 | 任务 4：为回退候选预留固定容量 | `include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 固定保留 4 个内容/视觉/Client/Window 回退槽；UIA 最多 4 个，MSAA 最多 1 个；专项 80/80 通过。 |
 | 2026-09-12 | 任务 10：识别浏览器 TabItem 和标签操作按钮 | `src/window/msaa_region_locator.cpp`、`src/window/msaa_region_locator.hpp`、`tests/smart_region_detector_test.cpp` | 日志出现 TabItem（role=37）和标签操作按钮（role=43）局部候选；整客户区 MSAA ContentSurface 候选为 0；新增最大化客户区回归测试及智能吸附专项 98/98 通过。 |
+| 2026-09-13 | 任务 11：识别浏览器书签栏、地址栏和工具栏控件 | `src/window/msaa_region_locator.cpp`、`src/window/msaa_region_locator.hpp`、`include/qingying/window/smart_region_detector.hpp`、`src/window/smart_region_detector.cpp`、`src/window/uia_region_query_worker.*`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp` | 真实 Chrome 手测确认：单个书签、书签文件夹、地址栏、后退/前进/刷新及扩展按钮均可局部吸附；role=57（BUTTONMENU）不再被过滤为 UnknownSemantic。 |
+| 2026-09-14 | 任务 12：处理浏览器弹出菜单和临时窗口 | `src/window/window_catalog.cpp`、`src/window/window_detector.cpp`、`src/window/window_query_helpers.h`、`src/overlay/selection_overlay.cpp`、`tests/smart_region_detector_test.cpp`、本文档 | 真实 Chrome 手测与诊断日志确认：临时浏览器控件能生成并应用局部 MSAA 候选；未见异步结果异常、悬空候选或关闭弹窗后的残留高亮。 |

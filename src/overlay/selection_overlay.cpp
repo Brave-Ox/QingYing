@@ -632,6 +632,14 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     return;
   }
 
+  const HWND current_root = data->current_uia_request.root_window;
+  if (current_root != nullptr && IsWindow(current_root) == FALSE)
+  {
+    clearHover(data);
+    static_cast<void>(updateOverlay(hwnd, data));
+    return;
+  }
+
   window_detail::UiaRegionQueryResult result;
   if (data->uia_query_worker->tryTakeLatest(result))
   {

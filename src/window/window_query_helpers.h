@@ -16,6 +16,9 @@ bool ownProcess(HWND hwnd) noexcept;
 bool desktopShell(HWND hwnd) noexcept;
 bool cloaked(HWND hwnd) noexcept;
 bool commonCandidate(HWND hwnd) noexcept;
+bool isBrowserOwnedTransientPopupStyle(LONG_PTR window_style,
+                                       bool has_browser_owner) noexcept;
+bool isBrowserOwnedTransientPopup(HWND hwnd) noexcept;
 bool readVisibleBounds(HWND hwnd, RECT& bounds,
                        BoundsReader dwm_reader = {},
                        BoundsReader fallback_reader = {});

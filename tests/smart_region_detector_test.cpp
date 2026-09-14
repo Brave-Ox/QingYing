@@ -14,6 +14,7 @@
 #include "msaa_region_locator.hpp"
 #include "uia_region_query_worker.hpp"
 #include "uia_region_locator.hpp"
+#include "window_query_helpers.h"
 
 namespace qingying {
 namespace {
@@ -1899,6 +1900,16 @@ TEST(UiaRegionLocatorTest, RejectsUnknownOrOutOfBoundsElement)
   EXPECT_FALSE(window_detail::makeUiaCandidate(
       reinterpret_cast<HWND>(1), {520, 220}, list_item, candidate));
   EXPECT_FALSE(candidate.valid());
+}
+
+TEST(WindowQueryHelpersTest, AcceptsOnlyBrowserOwnedPopupStyles)
+{
+  EXPECT_TRUE(window_detail::isBrowserOwnedTransientPopupStyle(WS_POPUP,
+                                                                true));
+  EXPECT_FALSE(window_detail::isBrowserOwnedTransientPopupStyle(
+      WS_OVERLAPPEDWINDOW, true));
+  EXPECT_FALSE(window_detail::isBrowserOwnedTransientPopupStyle(WS_POPUP,
+                                                                 false));
 }
 
 TEST(MsaaRegionLocatorTest, MapsFocusableTextToActionableCandidate)

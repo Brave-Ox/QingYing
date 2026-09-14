@@ -5,12 +5,43 @@
 #include <Windows.h>
 #include <dwmapi.h>
 
+#include <array>
 #include <cwchar>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace qingying::window_detail {
 namespace {
+constexpr DWORD BrowserProcessPathCapacity = 32768;
+
+class ScopedProcessHandle
+{
+ public:
+  explicit ScopedProcessHandle(HANDLE handle) noexcept : m_handle(handle)
+  {
+  }
+
+  ~ScopedProcessHandle()
+  {
+    if (m_handle != nullptr)
+    {
+      static_cast<void>(CloseHandle(m_handle));
+    }
+  }
+
+  ScopedProcessHandle(const ScopedProcessHandle&) = delete;
+  ScopedProcessHandle& operator=(const ScopedProcessHandle&) = delete;
+
+  HANDLE get() const noexcept
+  {
+    return m_handle;
+  }
+
+ private:
+  HANDLE m_handle{nullptr};
+};
+
 bool validRect(const RECT& r) noexcept { return r.right > r.left && r.bottom > r.top; }
 RECT desktopRect() noexcept {
   const LONG x = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -26,6 +57,46 @@ std::wstring fold(const std::wstring& s) {
   return LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, s.data(),
       static_cast<int>(s.size()), out.data(), n, nullptr, nullptr, 0) == n
       ? out : std::wstring{};
+}
+
+bool isSupportedBrowserExecutableName(
+    std::wstring_view executable_path) noexcept
+{
+  const std::size_t separator = executable_path.find_last_of(L"\\/");
+  const std::wstring_view executable_name =
+      separator == std::wstring_view::npos
+          ? executable_path
+          : executable_path.substr(separator + 1);
+  return executable_name == L"chrome.exe" || executable_name == L"msedge.exe" ||
+         executable_name == L"brave.exe";
+}
+
+bool isSupportedBrowserWindow(HWND hwnd) noexcept
+{
+  const std::uint32_t process_id = processId(hwnd);
+  if (process_id == 0)
+  {
+    return false;
+  }
+  ScopedProcessHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                          FALSE, process_id));
+  if (process.get() == nullptr)
+  {
+    return false;
+  }
+  std::array<wchar_t, BrowserProcessPathCapacity> executable_path{};
+  DWORD executable_path_length =
+      static_cast<DWORD>(executable_path.size());
+  if (QueryFullProcessImageNameW(process.get(), 0, executable_path.data(),
+                                 &executable_path_length) == FALSE ||
+      executable_path_length == 0 ||
+      executable_path_length >
+          static_cast<DWORD>(executable_path.size()))
+  {
+    return false;
+  }
+  return isSupportedBrowserExecutableName(
+      {executable_path.data(), executable_path_length});
 }
 }  // namespace
 
@@ -48,6 +119,32 @@ bool commonCandidate(HWND hwnd) noexcept {
   return hwnd && IsWindow(hwnd) && !ownProcess(hwnd) && IsWindowVisible(hwnd) &&
       !IsIconic(hwnd) && (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) == 0 &&
       !cloaked(hwnd) && !desktopShell(hwnd);
+}
+bool isBrowserOwnedTransientPopupStyle(LONG_PTR window_style,
+                                       bool has_browser_owner) noexcept
+{
+  return has_browser_owner && (window_style & WS_POPUP) != 0 &&
+         (window_style & WS_CHILD) == 0;
+}
+bool isBrowserOwnedTransientPopup(HWND hwnd) noexcept
+{
+  if (hwnd == nullptr || !IsWindow(hwnd) || ownProcess(hwnd) ||
+      !IsWindowVisible(hwnd) || IsIconic(hwnd) || cloaked(hwnd) ||
+      desktopShell(hwnd))
+  {
+    return false;
+  }
+  const HWND owner_window = GetWindow(hwnd, GW_OWNER);
+  const HWND owner_root = owner_window == nullptr
+                              ? nullptr
+                              : GetAncestor(owner_window, GA_ROOT);
+  if (!isBrowserOwnedTransientPopupStyle(
+          GetWindowLongPtrW(hwnd, GWL_STYLE), owner_root != nullptr) ||
+      owner_root == hwnd || !commonCandidate(owner_root))
+  {
+    return false;
+  }
+  return isSupportedBrowserWindow(owner_root);
 }
 bool readVisibleBounds(HWND hwnd, RECT& out, BoundsReader dwm, BoundsReader fallback) {
   RECT r{};

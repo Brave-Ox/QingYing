@@ -24,7 +24,8 @@ bool WindowDetector::detectAt(int screen_x, int screen_y, HWND& out_window,
   // QingYing 自身窗口，找到首个可吸附且包含该点的顶层窗口。
   while (hwnd != nullptr) {
     hwnd = GetAncestor(hwnd, GA_ROOT);
-    if (isSnappable(hwnd)) {
+    if (isSnappable(hwnd) ||
+        window_detail::isBrowserOwnedTransientPopup(hwnd)) {
       RECT r{};
       if (window_detail::readVisibleBounds(hwnd, r) &&
           pt.x >= r.left && pt.x < r.right &&
