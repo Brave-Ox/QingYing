@@ -1,5 +1,6 @@
 ﻿#include "qingying/longshot/dll_longshot_profile.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -259,6 +260,21 @@ bool DllLongShotProfile::queryScrollState(
   }
   out.valid = true;
   return true;
+}
+
+void DllLongShotProfile::cancel() const noexcept {
+  const PluginApi& plugin = impl_->plugin->api();
+  constexpr std::size_t kCancelFieldEnd =
+      offsetof(PluginApi, cancel) + sizeof(QingYingLongShotCancelFnV1);
+  if (plugin.struct_size < kCancelFieldEnd || plugin.cancel == nullptr) {
+    return;
+  }
+  try {
+    plugin.cancel(plugin.plugin_context);
+  } catch (...) {
+    // A plugin must not throw across the C ABI. Keep cancellation fail-closed
+    // if a non-conforming module does so anyway.
+  }
 }
 
 std::size_t addDllLongShotProfiles(const LongShotPluginHost& host,

@@ -358,6 +358,7 @@ void LongShotPluginHost::unloadAll() noexcept {
         plugin.api_.shutdown(plugin.api_.plugin_context);
         plugin.api_.shutdown = nullptr;
       }
+      plugin.api_.cancel = nullptr;
 
       if (plugin.module_ != nullptr) {
         (void)FreeLibrary(reinterpret_cast<HMODULE>(plugin.module_));

@@ -29,6 +29,7 @@ class DllLongShotProfile final : public LongShotProfile {
                   const LongShotProfileResult& profile) const override;
   bool queryScrollState(const LongShotProfileResult& profile,
                         LongShotScrollState& out) const override;
+  void cancel() const noexcept override;
 
  private:
   struct Impl;

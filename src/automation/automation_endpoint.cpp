@@ -303,19 +303,36 @@ void AutomationEndpoint::tick() {
   registry_.sweep();
   scheduler_.drain();
 }
-void AutomationEndpoint::shutdown() {
+void AutomationEndpoint::beginShutdown() {
   checkThread();
   if (stopping_) return;
   stopping_ = true;
   gate_.stop();
-  // AutomationRuntime revokes transport admission before entering here.
-  // Business/export workers must join before final reclamation.
   scheduler_.stopAccepting();
-  workflow_.shutdown();
+}
+void AutomationEndpoint::stopBusinessProducers() {
+  checkThread();
+  beginShutdown();
+  if (producers_stopped_) return;
+  producers_stopped_ = true;
   if (policy_.stop_producers) policy_.stop_producers();
+}
+void AutomationEndpoint::finishShutdown() {
+  checkThread();
+  beginShutdown();
+  if (shutdown_finished_) return;
+  // Business/export workers must join before final callback reclamation.
   scheduler_.shutdown();
   for (const auto& entry : connections_) registry_.disconnect(entry.second);
   connections_.clear();
   results_.clearAll();
+  shutdown_finished_ = true;
+}
+void AutomationEndpoint::shutdown() {
+  checkThread();
+  beginShutdown();
+  workflow_.shutdown();
+  stopBusinessProducers();
+  finishShutdown();
 }
 }  // namespace qingying

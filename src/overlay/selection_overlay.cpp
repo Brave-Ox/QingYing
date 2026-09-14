@@ -1326,8 +1326,7 @@ struct SelectionOverlay::Impl {
 SelectionOverlay::SelectionOverlay() : impl_(std::make_unique<Impl>()) {}
 
 SelectionOverlay::~SelectionOverlay() {
-  hide();
-  drainMessages();
+  shutdown();
 }
 
 bool SelectionOverlay::show(const Image& background,
@@ -1492,6 +1491,32 @@ void SelectionOverlay::hide() {
     }
   }
   impl_->messages.drain();
+}
+
+void SelectionOverlay::beginShutdown() noexcept {
+  impl_->accepting_messages.store(false);
+  impl_->uia_query_worker.beginStop();
+}
+
+bool SelectionOverlay::joinUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+  return impl_->uia_query_worker.joinUntil(deadline);
+}
+
+std::string SelectionOverlay::diagnosticSnapshot() const {
+  return impl_->uia_query_worker.diagnosticSnapshot();
+}
+
+void SelectionOverlay::finishShutdown() noexcept {
+  hide();
+  drainMessages();
+}
+
+void SelectionOverlay::shutdown() {
+  beginShutdown();
+  if (joinUntil((std::chrono::steady_clock::time_point::max)())) {
+    finishShutdown();
+  }
 }
 
 void SelectionOverlay::drainMessages() noexcept {

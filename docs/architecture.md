@@ -300,7 +300,7 @@ CaptureWorkflow 预先记录 owner_window
 | Action 异步提交 | `ActionDispatcher::submit()` 负责准入与 at-most-once completion；`IAsyncActionHandler` 使用注入的 `ActionExecutor`，不把 worker 生命周期交给调用方 |
 | SmartRegion 查询 | UI 线程提交 latest-wins 请求；UIA/MSAA worker 返回带 root/generation/age 的结果，Overlay 在 UI 线程丢弃迟到结果 |
 | 自动化 / IPC | Pipe worker 负责传输，Application 消息泵 drain 后进入 AutomationEndpoint；MCP stdio 只做协议边界，不直接调用捕获引擎 |
-| 应用退出 | `CaptureWorkflow::shutdown()` 同步中止并销毁两个 Overlay，再由顶层循环处理 `WM_QUIT` |
+| 应用退出 | `ApplicationShutdownCoordinator` 在组合根按四阶段停止接入、拒绝新任务、取消业务生产者并清理回调；Export / LongShot / UIA / PipeServer 按共享 deadline 等待，超时保留应用对象图 |
 | 单实例 | Named Mutex |
 
 “Win32 消息循环只在 app”现已落实：Overlay 只负责窗口过程和生命周期回调，CaptureWorkflow 通过阶段状态机续接交互。
@@ -321,7 +321,7 @@ CaptureWorkflow 预先记录 owner_window
 
 PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 
-当前需要优先补齐的不是更多 PIMPL，而是线程和资源的显式拥有关系：LongShotController、ExportExecutor、UIA 查询 worker、PipeServer 和 PipeAutomationClient 都应在关闭协议中有统一的 stop/cancel/join 语义；结果图像则应把 retained 与 in-flight 峰值纳入同一预算。
+当前需要优先补齐的不是更多 PIMPL，而是线程和资源的显式拥有关系：`ApplicationShutdownCoordinator` 已统一 stop/cancel/join 的调用顺序、共享 deadline 和诊断；LongShotController、ExportExecutor、UIA 查询 worker、PipeServer 已能在截止时间内返回或保留上下文，旧插件可通过可选 cancel 协作退出；阻塞式旧 ABI 插件、导出回调和 UIA 查询故障注入已覆盖，PipeAutomationClient 的 reader 所有权和 WM_ENDSESSION 验收仍需收口，结果图像则应把 retained 与 in-flight 峰值纳入同一预算。
 
 ---
 
@@ -361,9 +361,9 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 
 ## 14. 质量基线
 
-- 2026-09-14：仓库静态检索约有 842 个 TEST / TEST_F 宏，覆盖 Action、CaptureWorkflow、ResultStore、导出、F1/F2、SmartRegion、UIA/MSAA 夹具、F3、Pin、长截图、IPC/MCP 和进程级流程；
-- 2026-09-14 已通过 CMake 重新生成 CTest discovery，当前发现 842 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，842/842 个用例通过；
-- 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、插件篡改拒绝、关闭阶段阻塞和端到端内存峰值。
+- 2026-09-14：仓库静态检索约有 851 个 TEST / TEST_F 宏，覆盖 Action、CaptureWorkflow、ResultStore、导出、F1/F2、SmartRegion、UIA/MSAA 夹具、F3、Pin、长截图、IPC/MCP、进程级流程和关闭协调器；
+- 2026-09-14 已通过 CMake 重新生成 CTest discovery，当前发现 851 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，851/851 个用例通过；
+- 关闭协调器的阶段顺序、重复关闭、异常诊断、阻塞式旧 ABI 插件、导出回调、UIA 查询、截止等待和插件取消已有自动测试；仍未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、插件篡改拒绝、WM_ENDSESSION、真实桌面关闭和端到端内存峰值。
 
 ---
 

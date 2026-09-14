@@ -143,6 +143,13 @@ typedef void(QINGYING_LONGSHOT_PLUGIN_CALL* QingYingLongShotCloseFnV1)(
 typedef void(QINGYING_LONGSHOT_PLUGIN_CALL* QingYingLongShotShutdownFnV1)(
     void* plugin_context);
 
+// Optional in the tail of the v1 descriptor. The host may call this from the
+// cancellation thread while one plugin callback is running. Implementations
+// must only signal cancellation and return promptly; they must not free the
+// plugin context or unload their module from this callback.
+typedef void(QINGYING_LONGSHOT_PLUGIN_CALL* QingYingLongShotCancelFnV1)(
+    void* plugin_context);
+
 #define QINGYING_LONGSHOT_CAP_NATIVE_SCROLL_STATE (1u << 0)
 
 // One DLL exposes one profile descriptor. Strings are UTF-8, owned by the
@@ -165,6 +172,9 @@ typedef struct QingYingLongShotPluginV1 {
   QingYingLongShotQuerySessionScrollStateFnV1 query_scroll_state;
   QingYingLongShotCloseFnV1 close_session;
   QingYingLongShotShutdownFnV1 shutdown;
+  // Optional tail field. Older v1 plugins remain valid when struct_size ends
+  // at shutdown and therefore expose this as NULL to the host.
+  QingYingLongShotCancelFnV1 cancel;
 } QingYingLongShotPluginV1;
 
 // The host obtains this symbol with GetProcAddress. The entry point fills the

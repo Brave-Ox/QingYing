@@ -1,8 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <memory>
+#include <string>
 
 #include <Windows.h>
 
@@ -78,6 +80,11 @@ class UiaRegionQueryWorker
   bool tryTakeLatest(UiaRegionQueryResult& out) noexcept;
   bool hasPendingWork() const noexcept;
   void clear() noexcept;
+  // Split stop for the application shutdown coordinator. beginStop() only
+  // wakes the query; joinUntil() keeps the worker context alive on timeout.
+  void beginStop() noexcept;
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  std::string diagnosticSnapshot() const;
   void stop() noexcept;
 
  private:

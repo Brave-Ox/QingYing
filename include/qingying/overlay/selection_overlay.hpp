@@ -4,6 +4,8 @@
 #include "qingying/overlay/selection_types.h"
 
 #include <atomic>
+#include <chrono>
+#include <string>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -48,6 +50,15 @@ class SelectionOverlay {
   // Silently abort and destroy the current window. Selection callbacks are
   // suppressed, which is used by workflow cancellation and application exit.
   void hide();
+
+  // Permanently stops the accessibility query worker, then closes the window
+  // and drains worker messages. Call this during application shutdown before
+  // the overlay's dependent services are reclaimed.
+  void beginShutdown() noexcept;
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  std::string diagnosticSnapshot() const;
+  void finishShutdown() noexcept;
+  void shutdown();
 
   // Drops queued worker events after the producer has stopped. The window
   // procedure also drains during destruction as a final safety net.

@@ -556,15 +556,38 @@ void showSelectionOverlay() {
     interaction.reset();
   }
 
-  void shutdown() {
-    if (shutting_down.exchange(true)) {
-      return;
-    }
-    // Stop and join the worker before draining events or destroying windows.
-    longshot_controller.shutdown();
-    selection_overlay.drainMessages();
+  void beginShutdown() {
+    shutting_down.store(true);
+    longshot_controller.beginShutdown();
+    selection_overlay.beginShutdown();
+  }
+
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) {
+    const bool longshot_stopped = joinLongShotUntil(deadline);
+    const bool overlay_stopped = joinUiaUntil(deadline);
+    return longshot_stopped && overlay_stopped;
+  }
+
+  bool joinLongShotUntil(std::chrono::steady_clock::time_point deadline) {
+    return longshot_controller.joinUntil(deadline);
+  }
+
+  bool joinUiaUntil(std::chrono::steady_clock::time_point deadline) {
+    return selection_overlay.joinUntil(deadline);
+  }
+
+  std::string longShotDiagnosticSnapshot() const {
+    return longshot_controller.diagnosticSnapshot();
+  }
+
+  std::string uiaDiagnosticSnapshot() const {
+    return selection_overlay.diagnosticSnapshot();
+  }
+
+  void finishShutdown() {
+    longshot_controller.finishShutdown();
+    selection_overlay.finishShutdown();
     annotation_overlay.closeSilently();
-    selection_overlay.hide();
     results.clearScope(kGuiResultScopeId);
     active = false;
     stage = WorkflowStage::Idle;
@@ -583,6 +606,13 @@ void showSelectionOverlay() {
     pending_overlay_error.clear();
     owner_window = nullptr;
     interaction.reset();
+  }
+
+  void shutdown() {
+    beginShutdown();
+    if (joinUntil((std::chrono::steady_clock::time_point::max)())) {
+      finishShutdown();
+    }
   }
 
   const InteractionGate::Guard* gate_owner() const {
@@ -652,6 +682,37 @@ void CaptureWorkflow::handleLongShotCompletion(UiMessageToken token) {
 
 void CaptureWorkflow::cancel() {
   impl_->cancel();
+}
+
+void CaptureWorkflow::beginShutdown() noexcept {
+  impl_->beginShutdown();
+}
+
+bool CaptureWorkflow::joinLongShotUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+  return impl_->joinLongShotUntil(deadline);
+}
+
+bool CaptureWorkflow::joinUiaUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+  return impl_->joinUiaUntil(deadline);
+}
+
+bool CaptureWorkflow::joinUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+  return impl_->joinUntil(deadline);
+}
+
+std::string CaptureWorkflow::longShotDiagnosticSnapshot() const {
+  return impl_->longShotDiagnosticSnapshot();
+}
+
+std::string CaptureWorkflow::uiaDiagnosticSnapshot() const {
+  return impl_->uiaDiagnosticSnapshot();
+}
+
+void CaptureWorkflow::finishShutdown() noexcept {
+  impl_->finishShutdown();
 }
 
 void CaptureWorkflow::shutdown() {

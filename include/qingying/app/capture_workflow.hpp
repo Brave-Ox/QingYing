@@ -6,6 +6,8 @@
 #include "qingying/overlay/selection_overlay.hpp"
 
 #include <memory>
+#include <chrono>
+#include <string>
 
 namespace qingying {
 
@@ -68,6 +70,16 @@ class CaptureWorkflow {
   // Both close the interaction and join its worker before releasing occupancy.
   // shutdown() additionally permanently rejects new workflows.
   void cancel();
+  // Split shutdown for the application coordinator. The worker-owning
+  // services remain alive when joinUntil() reaches the shared deadline.
+  void beginShutdown() noexcept;
+  bool joinLongShotUntil(
+      std::chrono::steady_clock::time_point deadline) noexcept;
+  bool joinUiaUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  std::string longShotDiagnosticSnapshot() const;
+  std::string uiaDiagnosticSnapshot() const;
+  void finishShutdown() noexcept;
   void shutdown();
 
   bool active() const noexcept;

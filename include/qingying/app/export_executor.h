@@ -1,10 +1,13 @@
 ﻿#pragma once
 
 #include <condition_variable>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <thread>
 
 namespace qingying {
@@ -21,16 +24,26 @@ class ExportExecutor final {
   ExportExecutor(const ExportExecutor&) = delete;
   ExportExecutor& operator=(const ExportExecutor&) = delete;
 
-  bool submit(Task execute, Task reject = {});
+  bool submit(Task execute, Task reject = {}, std::uint64_t request_id = 0,
+              std::string operation = {});
+  // Signals cancellation and rejects queued work without waiting for the
+  // currently running export callback.
+  void requestStop() noexcept;
+  // Waits for the worker to finish until the supplied monotonic deadline.
+  // A false result leaves the worker and its context owned by this object.
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
   void shutdown() noexcept;
   bool stopping() const noexcept;
   std::size_t queued() const noexcept;
   std::size_t running() const noexcept;
+  std::string diagnosticSnapshot() const;
 
  private:
   struct Job {
     Task execute;
     Task reject;
+    std::uint64_t request_id{0};
+    std::string operation;
   };
   void run() noexcept;
 
@@ -38,10 +51,15 @@ class ExportExecutor final {
   std::mutex shutdown_mutex_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
+  std::condition_variable done_;
   std::queue<Job> jobs_;
   std::thread worker_;
   bool stopping_{false};
   bool running_{false};
+  bool done_state_{false};
+  std::uint64_t active_request_id_{0};
+  std::string active_operation_;
+  std::string last_progress_{"worker_started"};
 };
 
 }  // namespace qingying

@@ -34,6 +34,11 @@ class AutomationEndpoint final {
   StatusInfo status() const;
   void setTransportEnabled(bool enabled);
   void tick();
+  // Application shutdown phases call these separately so admission, business
+  // producers and final callback reclamation have one owner and one order.
+  void beginShutdown();
+  void stopBusinessProducers();
+  void finishShutdown();
   void shutdown();
 
  private:
@@ -62,5 +67,7 @@ class AutomationEndpoint final {
   ResultScopeId next_scope_{kGuiResultScopeId + 1};
   std::map<ConnectionGeneration, TrustedAutomationContext> connections_;
   std::map<UiMessageToken, std::shared_ptr<Execution>> executions_;
+  bool producers_stopped_{false};
+  bool shutdown_finished_{false};
 };
 }  // namespace qingying

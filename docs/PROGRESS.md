@@ -41,6 +41,7 @@
 - `qingying_action_compatibility` 已从 `qingying_action` 核心拆出，仅保留 deprecated 的旧请求适配器；生产 EXE、workflow、automation、MCP 和插件 target 不依赖它；
 - `qingying_app_handlers` 还注册 `CaptureWindow / CropCenter`，由 `CaptureService` 负责 WindowResolver、物理矩形计算、复核和 ResultStore 发布；
 - `qingying_automation_contract`、`qingying_automation`、`qingying_ipc`、`qingying_mcp` 和 `qingying_app_runtime` 已形成本地自动化接入链；当前 automation 对具体 CaptureWorkflow 仍有一处反向依赖，见整改文档；
+- `ApplicationShutdownCoordinator` 已接入组合根，按四阶段编排自动化接入、业务生产者、Workflow 和回调清理；ExportExecutor、LongShotController、UIA query worker 和 PipeServer 已支持共享 deadline 的 `joinUntil`，超时会停止后续销毁并保留应用对象图到进程结束；插件 v1 ABI 还支持可选 cooperative cancel，旧 DLL 仍可加载；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
 - `SelectionToolbar` 独立管理选区操作条 HWND、命令与阶段映射，`OverlayPhase` 集中校验选区 / 长截图 / 关闭阶段；
 - `SelectionOverlay` 与 `AnnotationOverlay` 创建后立即返回，窗口消息统一由 Application 顶层消息泵处理；Workflow 通过阶段消息续接选区和标注；
@@ -173,8 +174,8 @@
 build.bat Release test
 ```
 
-2026-09-14 当前工作区静态检索约有 842 个 TEST / TEST_F 宏，包含 Action、Workflow、ResultStore、SmartRegion、UIA/MSAA 夹具、Overlay、Pin、长截图、IPC/MCP 和进程级测试。
-本次通过 CMake 重新生成后，CTest 已发现 842 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，842/842 个用例通过。
+2026-09-14 当前工作区静态检索约有 851 个 TEST / TEST_F 宏，包含 Action、Workflow、ResultStore、SmartRegion、UIA/MSAA 夹具、Overlay、Pin、长截图、IPC/MCP、进程级测试和关闭协调器测试。
+本次通过 CMake 重新生成后，CTest 已发现 851 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，851/851 个用例通过。
 `build.bat Release test` 是当前验证入口。测试源和生产 Handler 已通过同一 CMake target 接入。
 
 自动测试不能替代：
@@ -232,7 +233,7 @@ build.bat Release test
 - `McpBridge`、Named Pipe、UI 调度、WindowResolver 和外部操作注册表已接线；`CaptureWindow` / `CropCenter` 由 `CaptureService` 实现，底层 `CaptureEngine` 兼容方法仍保留 Stub；
 - SmartRegion 的 UIA/MSAA、视觉定位和异步查询已形成较完整链路，但重路径仍有 UI 线程同步执行，且实现源码暂编入 overlay target；
 - LongShotPluginHost 当前会扫描并加载插件目录 DLL，发布版的 manifest、签名/哈希和目录 ACL 信任校验尚未在宿主代码中强制；
-- LongShotController、ExportExecutor、UIA query worker、PipeServer 和 PipeAutomationClient 的关闭语义尚未由统一的有界 shutdown coordinator 管理。
+- `Application` 已由 `ApplicationShutdownCoordinator` 按四阶段统一编排关闭，并为参与者记录耗时、预算超时和本地快照；LongShotController、ExportExecutor、UIA query worker 和 PipeServer 已改为可截止等待并保留超时上下文，LongShot 插件已有可选取消信号；阻塞式旧 ABI 插件、导出回调和 UIA 查询故障注入已覆盖，PipeAutomationClient 的 detached reader、WM_ENDSESSION 和真实桌面关机验收仍待收口。
 - 长截图的 Notepad / Explorer / Chromium 插件代码已落地，真实 Chrome / Edge / Brave 窗口验收仍缺。
 
 整改方案见 [架构如何调整.md](架构如何调整.md)。
@@ -241,7 +242,7 @@ build.bat Release test
 
 ## 7. 下一步建议
 
-1. 先完成插件信任校验、统一 shutdown 和 UI 重路径隔离；
+1. 完成插件信任校验、PipeAutomationClient reader 所有权、WM_ENDSESSION 与真实桌面关闭验收，再收口 UI 重路径隔离；
 2. 完成 SmartRegion target 边界、真实浏览器/编辑器和混合 DPI 验收；
 3. 修复干净构建目录的 CTest discovery，再接入四层异步/进程/桌面测试；
 4. 完成 Notepad / Explorer / Chrome / Edge / Brave 真实长截图闭环记录；

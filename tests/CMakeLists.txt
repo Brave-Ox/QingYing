@@ -3,6 +3,7 @@
 add_executable(qingying_tests
   mcp_process_integration_test.cpp
   mcp_result_lifecycle_integration_test.cpp
+  application_shutdown_coordinator_test.cpp
   automation_shutdown_test.cpp
   export_executor_test.cpp
   async_save_handler_test.cpp
@@ -95,6 +96,27 @@ add_custom_command(TARGET qingying_test_longshot_plugin POST_BUILD
     $<TARGET_FILE:qingying_test_longshot_plugin>
     $<TARGET_FILE_DIR:qingying_tests>
   COMMENT "Copy test long-shot plugin next to qingying_tests"
+)
+
+add_library(qingying_blocking_legacy_longshot_plugin MODULE
+  longshot_blocking_legacy_plugin.cpp
+)
+target_include_directories(qingying_blocking_legacy_longshot_plugin
+  PRIVATE ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_definitions(qingying_blocking_legacy_longshot_plugin
+  PRIVATE QINGYING_LONGSHOT_PLUGIN_EXPORTS
+)
+set_target_properties(qingying_blocking_legacy_longshot_plugin PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "qingying_blocking_legacy_longshot_plugin"
+)
+add_dependencies(qingying_tests qingying_blocking_legacy_longshot_plugin)
+add_custom_command(TARGET qingying_blocking_legacy_longshot_plugin POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:qingying_blocking_legacy_longshot_plugin>
+    $<TARGET_FILE_DIR:qingying_tests>
+  COMMENT "Copy blocking legacy long-shot plugin next to qingying_tests"
 )
 
 if(WIN32)

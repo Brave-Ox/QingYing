@@ -6,7 +6,9 @@
 #include "qingying/longshot/longshot_engine.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
 
+#include <chrono>
 #include <memory>
+#include <string>
 
 namespace qingying {
 
@@ -45,6 +47,13 @@ class LongShotController {
   void cancel() noexcept;
   void join() noexcept;
 
+  // Split shutdown for the application coordinator. beginShutdown() only
+  // requests cancellation; joinUntil() waits up to the shared deadline;
+  // finishShutdown() releases messages after the worker has joined.
+  void beginShutdown() noexcept;
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  void finishShutdown() noexcept;
+
   // Rejects new work, requests cancellation and joins the worker. Idempotent.
   void shutdown() noexcept;
 
@@ -53,6 +62,7 @@ class LongShotController {
   void drainMessages() noexcept;
 
   bool active() const noexcept;
+  std::string diagnosticSnapshot() const;
 
  private:
   struct Impl;

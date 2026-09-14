@@ -89,6 +89,10 @@ class LongShotProfile {
   // 基于图像的兜底判断。
   virtual bool queryScrollState(const LongShotProfileResult& profile,
                                 LongShotScrollState& out) const = 0;
+
+  // Optional cooperative cancellation for plugin-backed callbacks. The
+  // default keeps existing in-process profiles and old plugin ABI working.
+  virtual void cancel() const noexcept {}
 };
 
 }  // qingying 命名空间

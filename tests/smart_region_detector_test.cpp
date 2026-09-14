@@ -1143,6 +1143,40 @@ TEST(UiaRegionQueryWorkerTest, SubmitDoesNotBlockAndBurstKeepsLatestRequest)
   EXPECT_EQ(context.call_count, 2);
 }
 
+TEST(UiaRegionQueryWorkerTest,
+     JoinUntilReportsBlockedProviderAndRetainsWorkerOwnership)
+{
+  BlockingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runBlockingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    ASSERT_TRUE(context.condition.wait_for(
+        lock, std::chrono::seconds(1),
+        [&context]() { return context.first_query_entered; }));
+  }
+
+  worker.beginStop();
+  EXPECT_FALSE(worker.joinUntil(
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(20)));
+  const std::string snapshot = worker.diagnosticSnapshot();
+  EXPECT_NE(snapshot.find("thread=uia_query_worker"), std::string::npos);
+  EXPECT_NE(snapshot.find("request_id=1"), std::string::npos);
+  EXPECT_NE(snapshot.find("last_progress=provider_callback"),
+            std::string::npos);
+
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.release_first_query = true;
+  }
+  context.condition.notify_all();
+  EXPECT_TRUE(worker.joinUntil(
+      std::chrono::steady_clock::now() + std::chrono::seconds(1)));
+}
+
 TEST(UiaRegionQueryWorkerTest, ClearDiscardsAnInFlightResult)
 {
   BlockingUiaQueryContext context;

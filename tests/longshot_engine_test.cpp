@@ -3,8 +3,13 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace qingying {
@@ -78,6 +83,39 @@ class ScriptedLongShotProfile final : public LongShotProfile {
   mutable int wheel_count_{0};
 };
 
+class CancelAwareLongShotProfile final : public LongShotProfile {
+ public:
+  const char* name() const noexcept override { return "test.cancel-aware"; }
+
+  bool resolve(const LongShotRequest& request,
+               LongShotProfileResult& out) const override {
+    out = LongShotProfileResult{
+        1, ScreenPhysicalRect{request.x, request.y, request.width,
+                              request.height}};
+    return out.valid();
+  }
+
+  bool scrollDown(const LongShotRequest& /*request*/,
+                  const LongShotProfileResult& /*profile*/) const override {
+    return !cancelled_.load();
+  }
+
+  bool queryScrollState(const LongShotProfileResult& /*profile*/,
+                        LongShotScrollState& out) const override {
+    out.position = 1;
+    out.last_position = 1;
+    out.valid = true;
+    return true;
+  }
+
+  void cancel() const noexcept override { cancelled_.store(true); }
+
+  bool cancelled() const noexcept { return cancelled_.load(); }
+
+ private:
+  mutable std::atomic_bool cancelled_{false};
+};
+
 }  // namespace
 
 TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
@@ -143,6 +181,58 @@ TEST(LongShotEngineTest, InvalidPairRequestClearsBothFrames) {
   EXPECT_EQ(result.error_code, ErrorCode::kInvalidArgument);
   EXPECT_TRUE(frames.first_frame.empty());
   EXPECT_TRUE(frames.second_frame.empty());
+}
+
+TEST(LongShotEngineTest, CancelSignalsTheActiveProfile) {
+  auto profile = std::make_unique<CancelAwareLongShotProfile>();
+  CancelAwareLongShotProfile* profile_ptr = profile.get();
+  LongShotProfileRegistry registry;
+  registry.add(std::move(profile));
+
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool capture_entered = false;
+  bool release_capture = false;
+  LongShotEngine engine(
+      [&](const ScreenPhysicalRect& region, Image& out) {
+        {
+          std::unique_lock<std::mutex> lock(mutex);
+          capture_entered = true;
+          condition.notify_all();
+          condition.wait(lock, [&] { return release_capture; });
+        }
+        out = makeStrip(region.width, region.height, 0);
+        ActionResult result;
+        result.ok = true;
+        result.error_code = ErrorCode::kOk;
+        return result;
+      },
+      std::move(registry));
+
+  const LongShotRequest request{1, 0, 0, 8, 8};
+  ActionResult worker_result;
+  Image output;
+  std::thread worker([&] {
+    worker_result = engine.captureSelection(request, output);
+  });
+
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    ASSERT_TRUE(condition.wait_for(
+        lock, std::chrono::seconds(1), [&] { return capture_entered; }));
+  }
+
+  engine.cancel();
+  EXPECT_TRUE(profile_ptr->cancelled());
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    release_capture = true;
+  }
+  condition.notify_all();
+  worker.join();
+
+  EXPECT_TRUE(worker_result.ok);
+  EXPECT_FALSE(output.empty());
 }
 
 TEST(LongShotEngineTest, RetriesStaleFrameWithoutSendingAnotherWheel) {

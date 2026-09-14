@@ -1,5 +1,11 @@
 ﻿#include "qingying/longshot/longshot_plugin_api.h"
 
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+
 struct QingYingLongShotSessionV1 {
   int marker{0};
 };
@@ -7,10 +13,13 @@ struct QingYingLongShotSessionV1 {
 namespace {
 
 QingYingLongShotSessionV1 g_session;
-bool g_cancelled = false;
+std::condition_variable g_condition;
+std::mutex g_mutex;
+bool g_entered = false;
+bool g_release = false;
 
 int32_t QINGYING_LONGSHOT_PLUGIN_CALL probe(
-    void* /*plugin_context*/, const QingYingLongShotRequestV1* request,
+    void*, const QingYingLongShotRequestV1* request,
     QingYingLongShotProbeResultV1* result) {
   if (request == nullptr || result == nullptr ||
       request->struct_size < sizeof(*request) ||
@@ -18,18 +27,22 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL probe(
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
   result->flags = QINGYING_LONGSHOT_PROBE_ACCEPTED;
-  result->score = 10;
+  result->score = 100;
   return QINGYING_LONGSHOT_STATUS_OK;
 }
 
 int32_t QINGYING_LONGSHOT_PLUGIN_CALL open(
-    void* /*plugin_context*/, const QingYingLongShotRequestV1* request,
+    void*, const QingYingLongShotRequestV1* request,
     QingYingLongShotSessionV1** session) {
   if (request == nullptr || session == nullptr ||
       request->struct_size < sizeof(*request)) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
-  g_cancelled = false;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_entered = false;
+    g_release = false;
+  }
   *session = &g_session;
   return QINGYING_LONGSHOT_STATUS_OK;
 }
@@ -49,7 +62,7 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL resolve(
   target->content_y = request->y;
   target->content_width = request->width;
   target->content_height = request->height;
-  target->opaque_cookie = 0x1234u;
+  target->opaque_cookie = 0xBADC0FFEu;
   return QINGYING_LONGSHOT_STATUS_OK;
 }
 
@@ -60,26 +73,26 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL scrollDown(
   if (session == nullptr || request == nullptr || target == nullptr) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
-  if (g_cancelled) {
-    return QINGYING_LONGSHOT_STATUS_FAILED;
-  }
+  std::unique_lock<std::mutex> lock(g_mutex);
+  g_entered = true;
+  g_condition.notify_all();
+  g_condition.wait(lock, [] { return g_release; });
   return QINGYING_LONGSHOT_STATUS_OK;
 }
 
 int32_t QINGYING_LONGSHOT_PLUGIN_CALL queryScrollState(
-    QingYingLongShotSessionV1* /*session*/,
-    const QingYingLongShotTargetV1* /*target*/,
-    QingYingLongShotScrollStateV1* /*state*/) {
+    QingYingLongShotSessionV1*, const QingYingLongShotTargetV1*,
+    QingYingLongShotScrollStateV1*) {
   return QINGYING_LONGSHOT_STATUS_NOT_SUPPORTED;
 }
 
 void QINGYING_LONGSHOT_PLUGIN_CALL closeSession(
-    QingYingLongShotSessionV1* /*session*/) {}
+    QingYingLongShotSessionV1*) {}
 
-void QINGYING_LONGSHOT_PLUGIN_CALL shutdown(void* /*plugin_context*/) {}
-
-void QINGYING_LONGSHOT_PLUGIN_CALL cancel(void* /*plugin_context*/) {
-  g_cancelled = true;
+void QINGYING_LONGSHOT_PLUGIN_CALL shutdown(void*) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_release = true;
+  g_condition.notify_all();
 }
 
 }  // namespace
@@ -88,18 +101,22 @@ extern "C" QINGYING_LONGSHOT_PLUGIN_EXPORT int32_t
 QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
     const QingYingLongShotHostV1* host,
     QingYingLongShotPluginV1* plugin) {
+  constexpr std::uint32_t kLegacyStructSize = static_cast<std::uint32_t>(
+      offsetof(QingYingLongShotPluginV1, shutdown) +
+      sizeof(QingYingLongShotShutdownFnV1));
   if (host == nullptr || plugin == nullptr ||
       host->struct_size < sizeof(*host) ||
       host->abi_version != QINGYING_LONGSHOT_HOST_ABI_VERSION_V1 ||
-      plugin->struct_size < sizeof(*plugin)) {
+      plugin->struct_size < kLegacyStructSize) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
 
+  plugin->struct_size = kLegacyStructSize;
   plugin->abi_version = QINGYING_LONGSHOT_PLUGIN_ABI_VERSION_V1;
-  plugin->priority = 1;
+  plugin->priority = 100;
   plugin->capabilities = 0;
-  plugin->id_utf8 = "test.longshot";
-  plugin->display_name_utf8 = "QingYing Test LongShot";
+  plugin->id_utf8 = "test.blocking.legacy";
+  plugin->display_name_utf8 = "QingYing Blocking Legacy Test";
   plugin->plugin_context = nullptr;
   plugin->probe = &probe;
   plugin->open = &open;
@@ -108,6 +125,23 @@ QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
   plugin->query_scroll_state = &queryScrollState;
   plugin->close_session = &closeSession;
   plugin->shutdown = &shutdown;
-  plugin->cancel = &cancel;
+  plugin->cancel = nullptr;
   return QINGYING_LONGSHOT_STATUS_OK;
+}
+
+extern "C" QINGYING_LONGSHOT_PLUGIN_EXPORT int32_t
+QINGYING_LONGSHOT_PLUGIN_CALL qingying_test_blocking_longshot_wait_entered(
+    std::uint32_t timeout_ms) {
+  std::unique_lock<std::mutex> lock(g_mutex);
+  return g_condition.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                              [] { return g_entered; })
+             ? 1
+             : 0;
+}
+
+extern "C" QINGYING_LONGSHOT_PLUGIN_EXPORT void
+QINGYING_LONGSHOT_PLUGIN_CALL qingying_test_blocking_longshot_release() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_release = true;
+  g_condition.notify_all();
 }

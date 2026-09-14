@@ -2,6 +2,7 @@
 
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/action_handlers.hpp"
+#include "qingying/app/application_shutdown_coordinator.h"
 #include "qingying/app/automation_runtime.h"
 #include "qingying/app/automation_settings.h"
 #include "qingying/app/app_messages.hpp"
@@ -27,6 +28,7 @@
 #include "resource.h"
 
 #include <memory>
+#include <chrono>
 #include <string>
 #include <cstring>
 #include <stdexcept>
@@ -75,6 +77,30 @@ qingying::LongShotProfileRegistry makeApplicationLongShotProfiles(
   return profiles;
 }
 
+void reportShutdownDiagnostic(
+    const qingying::ApplicationShutdownDiagnostic& diagnostic) noexcept {
+  if (diagnostic.completed && !diagnostic.deadline_exceeded) {
+    return;
+  }
+  std::string message = "[QingYing shutdown] phase=";
+  message += qingying::applicationShutdownPhaseName(diagnostic.phase);
+  message += " participant=";
+  message += diagnostic.participant;
+  message += " elapsed_ms=";
+  message += std::to_string(diagnostic.elapsed.count());
+  message += " budget_ms=";
+  message += std::to_string(diagnostic.budget.count());
+  message += " remaining_before_ms=";
+  message += std::to_string(diagnostic.remaining_before.count());
+  if (diagnostic.deadline_exceeded) message += " deadline_exceeded";
+  if (!diagnostic.detail.empty()) {
+    message += " detail=";
+    message += diagnostic.detail;
+  }
+  message += "\n";
+  OutputDebugStringA(message.c_str());
+}
+
 }  // namespace
 
 namespace qingying {
@@ -113,7 +139,7 @@ struct Application::Impl {
             AutomationEndpoint::ExecutionPolicy{
                 {ActionType::CaptureWindow, ActionType::CropCenter,
                  ActionType::Copy, ActionType::Save, ActionType::Pin},
-                [this] { export_executor_.shutdown(); }, false,
+                [this] { export_executor_.requestStop(); }, false,
                 [this] {
                   const auto usage = pin_manager_.agentUsage();
                   return std::make_pair(usage.count, usage.bytes);
@@ -122,7 +148,116 @@ struct Application::Impl {
           ipc::PipeOptions options;
           options.test_suffix = test_namespace_;
           return options;
-        }()) {}
+        }()),
+        shutdown_coordinator_(
+            {
+                {ApplicationShutdownPhase::StopAdmission,
+                 "automation_transport",
+                 [this](ApplicationShutdownDeadline) {
+                   automation_runtime_.stopAccepting();
+                   return true;
+                 },
+                 [this] {
+                   return automation_runtime_.enabled()
+                              ? std::string("pipe=accepting_stopped")
+                              : std::string("pipe=not_running");
+                 }},
+                {ApplicationShutdownPhase::StopAdmission,
+                 "tray_input",
+                 [this](ApplicationShutdownDeadline) {
+                   if (tray_.hwnd()) {
+                     KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
+                   }
+                   hotkey_.unregisterAll(tray_.hwnd());
+                   return true;
+                 },
+                 [] { return std::string("hotkey_and_timer=stopped"); }},
+                {ApplicationShutdownPhase::RejectNewWork,
+                 "automation_endpoint",
+                 [this](ApplicationShutdownDeadline) {
+                   automation_endpoint_.beginShutdown();
+                   return true;
+                 },
+                 [] { return std::string("endpoint=rejecting_new_work"); }},
+                {ApplicationShutdownPhase::RejectNewWork,
+                 "capture_workflow",
+                 [this](ApplicationShutdownDeadline) {
+                   capture_workflow_.beginShutdown();
+                   return true;
+                 },
+                 [this] {
+                   return capture_workflow_.active()
+                              ? std::string("workflow=stopping")
+                              : std::string("workflow=idle");
+                 }},
+                {ApplicationShutdownPhase::CancelAndWait,
+                 "business_producers",
+                 [this](ApplicationShutdownDeadline) {
+                   automation_endpoint_.stopBusinessProducers();
+                   return true;
+                 },
+                 [this] {
+                   return "export_queued=" +
+                          std::to_string(export_executor_.queued()) +
+                          " export_running=" +
+                          std::to_string(export_executor_.running());
+                 }},
+                {ApplicationShutdownPhase::CancelAndWait,
+                 "longshot_worker",
+                 [this](ApplicationShutdownDeadline deadline) {
+                   return capture_workflow_.joinLongShotUntil(deadline);
+                 },
+                 [this] {
+                   return capture_workflow_.longShotDiagnosticSnapshot();
+                 },
+                 std::chrono::milliseconds(1500)},
+                {ApplicationShutdownPhase::CancelAndWait,
+                 "uia_query_worker",
+                 [this](ApplicationShutdownDeadline deadline) {
+                   return capture_workflow_.joinUiaUntil(deadline);
+                 },
+                 [this] {
+                   return capture_workflow_.uiaDiagnosticSnapshot();
+                 },
+                 std::chrono::milliseconds(1000)},
+                {ApplicationShutdownPhase::CancelAndWait,
+                 "export_worker",
+                 [this](ApplicationShutdownDeadline deadline) {
+                   return export_executor_.joinUntil(deadline);
+                 },
+                 [this] {
+                   return export_executor_.diagnosticSnapshot();
+                 },
+                 std::chrono::milliseconds(1500)},
+                {ApplicationShutdownPhase::CancelAndWait,
+                 "pipe_workers",
+                 [this](ApplicationShutdownDeadline deadline) {
+                   return automation_runtime_.shutdownTransportUntil(deadline);
+                 },
+                 [this] {
+                   return automation_runtime_.transportDiagnosticSnapshot();
+                 },
+                 std::chrono::milliseconds(1000)},
+                {ApplicationShutdownPhase::DrainAndDestroy,
+                 "capture_callbacks",
+                 [this](ApplicationShutdownDeadline) {
+                   capture_workflow_.finishShutdown();
+                   return true;
+                 },
+                 [] { return std::string("capture_callbacks=drained"); }},
+                {ApplicationShutdownPhase::DrainAndDestroy,
+                 "automation_endpoint_callbacks",
+                 [this](ApplicationShutdownDeadline) {
+                   automation_endpoint_.finishShutdown();
+                   return true;
+                 },
+                 [this] {
+                   return "scheduler_pending=" +
+                          std::to_string(scheduler_.pending());
+                 }},
+            },
+            ApplicationShutdownCoordinator::Options{
+                std::chrono::milliseconds(5000), reportShutdownDiagnostic}) {}
 
   ~Impl() {
     shutdown();
@@ -134,9 +269,12 @@ struct Application::Impl {
   void shutdown() {
     if (stopping_) return;
     stopping_ = true;
-    automation_runtime_.shutdown();
-    if (tray_.hwnd()) KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
-    hotkey_.unregisterAll(tray_.hwnd());
+    const auto report = shutdown_coordinator_.shutdown();
+    shutdown_requires_process_reclaim_ = !report.completed;
+  }
+
+  bool requiresProcessReclaim() const noexcept {
+    return shutdown_requires_process_reclaim_;
   }
 
   void registerHandlers() {
@@ -294,13 +432,26 @@ struct Application::Impl {
   UiActionScheduler scheduler_;
   AutomationEndpoint automation_endpoint_;
   AutomationRuntime automation_runtime_;
+  ApplicationShutdownCoordinator shutdown_coordinator_;
   bool stopping_{false};
+  bool shutdown_requires_process_reclaim_{false};
 };
 
 Application::Application(HINSTANCE instance, std::wstring test_namespace)
     : impl_(std::make_unique<Impl>(instance, std::move(test_namespace))) {}
 
-Application::~Application() = default;
+Application::~Application() {
+  if (!impl_) return;
+  impl_->shutdown();
+  if (impl_->requiresProcessReclaim()) {
+    // A timed-out worker still owns callbacks and context. Keep the complete
+    // application graph alive until process teardown instead of destroying a
+    // live joinable thread's owner.
+    (void)impl_.release();
+    return;
+  }
+  impl_.reset();
+}
 
 int Application::run() { return impl_->run(); }
 

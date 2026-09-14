@@ -1,7 +1,9 @@
 ﻿#pragma once
 
 #include "qingying/automation/automation_contract.h"
+#include <chrono>
 #include <memory>
+#include <string>
 
 namespace qingying::ipc {
 struct PipeOptions {
@@ -38,6 +40,10 @@ class PipeServer final {
   void drain();
   // Owner thread: revoke admission and signal cancellation without joining.
   void stopAccepting() noexcept;
+  // Waits for all I/O workers until deadline. On timeout the workers and
+  // their shared session state remain owned by this server.
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  std::string diagnosticSnapshot() const;
   void stop() noexcept;
   std::wstring name() const;
   std::uint32_t lastError() const noexcept;

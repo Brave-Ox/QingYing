@@ -1,4 +1,4 @@
-#include "uia_region_query_worker.hpp"
+﻿#include "uia_region_query_worker.hpp"
 
 #include <algorithm>
 #include <condition_variable>
@@ -132,6 +132,11 @@ struct UiaRegionQueryWorker::Impl
 
   void run() noexcept
   {
+    struct WorkerDone final
+    {
+      Impl* owner;
+      ~WorkerDone() { owner->markDone(); }
+    } done{this};
     ScopedMtaApartment apartment;
     UiaRegionLocatorSession session;
     for (;;)
@@ -149,6 +154,7 @@ struct UiaRegionQueryWorker::Impl
         request = pending_request;
         has_request = false;
         query_active = true;
+        active_request_id = request.value.request_id;
         const bool cache_is_fresh =
             has_cached_result &&
             request.value.root_window == cached_result.root_window &&
@@ -206,6 +212,8 @@ struct UiaRegionQueryWorker::Impl
       {
         std::lock_guard<std::mutex> lock(mutex);
         query_active = false;
+        last_completed_request_id = request.value.request_id;
+        active_request_id = 0;
         const bool newer_request_waiting =
             has_request && pending_request.value.request_id >
                                request.value.request_id;
@@ -243,10 +251,20 @@ struct UiaRegionQueryWorker::Impl
     }
   }
 
+  void markDone() noexcept
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      done_state = true;
+    }
+    done_condition.notify_all();
+  }
+
   UiaRegionQueryFunction query_function{nullptr};
   void* query_context{nullptr};
   mutable std::mutex mutex;
   std::condition_variable condition;
+  std::condition_variable done_condition;
   std::thread worker_thread;
   StoredRequest pending_request;
   UiaRegionQueryResult latest_result;
@@ -254,9 +272,12 @@ struct UiaRegionQueryWorker::Impl
   std::uint64_t generation{0};
   std::uint64_t cached_at_ms{0};
   std::uint64_t failure_at_ms{0};
+  std::uint64_t active_request_id{0};
+  std::uint64_t last_completed_request_id{0};
   HWND failure_window{nullptr};
   POINT failure_point{};
   bool started{false};
+  bool done_state{true};
   bool stop_requested{false};
   bool has_request{false};
   bool query_active{false};
@@ -343,6 +364,7 @@ bool UiaRegionQueryWorker::start() noexcept
   }
   try
   {
+    m_impl->done_state = false;
     m_impl->worker_thread = std::thread([impl = m_impl.get()]() {
       impl->run();
     });
@@ -350,6 +372,7 @@ bool UiaRegionQueryWorker::start() noexcept
   }
   catch (...)
   {
+    m_impl->done_state = true;
     return false;
   }
   return true;
@@ -412,9 +435,8 @@ void UiaRegionQueryWorker::clear() noexcept
   m_impl->has_failure = false;
 }
 
-void UiaRegionQueryWorker::stop() noexcept
+void UiaRegionQueryWorker::beginStop() noexcept
 {
-  std::thread worker_thread;
   {
     std::lock_guard<std::mutex> lock(m_impl->mutex);
     if (!m_impl->started)
@@ -425,16 +447,60 @@ void UiaRegionQueryWorker::stop() noexcept
     ++m_impl->generation;
     m_impl->has_request = false;
     m_impl->has_result = false;
-    worker_thread = std::move(m_impl->worker_thread);
   }
   m_impl->condition.notify_one();
-  if (worker_thread.joinable())
+}
+
+bool UiaRegionQueryWorker::joinUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept
+{
   {
-    worker_thread.join();
+    std::unique_lock<std::mutex> lock(m_impl->mutex);
+    if (!m_impl->started) return true;
+    if (!m_impl->done_state &&
+        m_impl->done_condition.wait_until(lock, deadline) ==
+            std::cv_status::timeout &&
+        !m_impl->done_state)
+    {
+      return false;
+    }
+  }
+  if (m_impl->worker_thread.joinable())
+  {
+    if (m_impl->worker_thread.get_id() == std::this_thread::get_id())
+    {
+      return false;
+    }
+    m_impl->worker_thread.join();
   }
   std::lock_guard<std::mutex> lock(m_impl->mutex);
   m_impl->started = false;
   m_impl->query_active = false;
+  return true;
+}
+
+std::string UiaRegionQueryWorker::diagnosticSnapshot() const
+{
+  std::lock_guard<std::mutex> lock(m_impl->mutex);
+  const std::uint64_t request_id =
+      m_impl->query_active
+          ? m_impl->active_request_id
+          : (m_impl->has_request ? m_impl->pending_request.value.request_id
+                                 : m_impl->last_completed_request_id);
+  const char* progress = m_impl->query_active
+                             ? "provider_callback"
+                             : (m_impl->has_request ? "request_queued"
+                                                    : "worker_idle");
+  return "thread=uia_query_worker request_id=" +
+         std::to_string(request_id) + " plugin_id=windows_uia queue_length=" +
+         std::to_string(m_impl->has_request ? 1u : 0u) +
+         " last_progress=" + progress;
+}
+
+void UiaRegionQueryWorker::stop() noexcept
+{
+  beginStop();
+  (void)joinUntil((std::chrono::steady_clock::time_point::max)());
 }
 
 }  // namespace qingying::window_detail

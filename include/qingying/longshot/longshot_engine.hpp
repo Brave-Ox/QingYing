@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace qingying {
 
@@ -79,6 +80,12 @@ class LongShotEngine {
   ActionResult captureSelection(const LongShotRequest& request, Image& out,
                                 LongShotProgressCallback on_progress,
                                 LongShotContinueCallback should_continue);
+
+  // Requests cooperative cancellation of the active profile callback. Old
+  // profiles may ignore it; LongShotController still enforces its join
+  // deadline and keeps the owner context alive if the callback is stuck.
+  void cancel() noexcept;
+  std::string activeProfileName() const;
 
   // 围绕一次滚轮输入准确捕获两帧原始图像。保留这个分阶段接口，便于独立
   // 验证第一次滚动，而不依赖最终循环。

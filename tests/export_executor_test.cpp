@@ -3,7 +3,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <future>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include <gtest/gtest.h>
@@ -59,6 +62,42 @@ TEST(ExportExecutorTest, ThrowingJobUsesItsSingleRejectionPath) {
   lock.unlock();
   executor.shutdown();
   EXPECT_EQ(rejected, 1);
+}
+
+TEST(ExportExecutorTest,
+     JoinUntilReportsBlockedCallbackWithoutReleasingWorkerOwnership) {
+  ExportExecutor executor(1);
+  std::promise<void> entered;
+  std::future<void> entered_future = entered.get_future();
+  auto release = std::make_shared<std::promise<void>>();
+  std::shared_future<void> release_future = release->get_future().share();
+
+  ASSERT_TRUE(executor.submit([&entered, release_future] {
+    entered.set_value();
+    release_future.wait();
+  }));
+  const bool entered_ready =
+      entered_future.wait_for(2s) == std::future_status::ready;
+  if (!entered_ready) {
+    // Keep an assertion failure from turning into an unbounded destructor
+    // join when the worker has not reached the callback yet.
+    release->set_value();
+  }
+  ASSERT_TRUE(entered_ready);
+
+  executor.requestStop();
+  const auto deadline = std::chrono::steady_clock::now() + 50ms;
+  EXPECT_FALSE(executor.joinUntil(deadline));
+  EXPECT_EQ(executor.running(), 1u);
+  const std::string snapshot = executor.diagnosticSnapshot();
+  EXPECT_NE(snapshot.find("thread=export_worker"), std::string::npos);
+  EXPECT_NE(snapshot.find("queue_length=0"), std::string::npos);
+  EXPECT_NE(snapshot.find("last_progress=stop_requested_during_callback"),
+            std::string::npos);
+
+  release->set_value();
+  EXPECT_TRUE(executor.joinUntil(std::chrono::steady_clock::now() + 2s));
+  EXPECT_EQ(executor.running(), 0u);
 }
 
 }  // namespace qingying

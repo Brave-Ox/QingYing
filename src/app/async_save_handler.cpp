@@ -136,7 +136,8 @@ class AsyncSaveHandler final : public IAsyncActionHandler {
         [state] {
           state->complete(failure(ErrorCode::kShuttingDown,
               "queued save rejected during shutdown", "export_queue"));
-        });
+        },
+        request.request_id, "save");
     if (!accepted) {
       state->complete(failure(executor_.stopping() ? ErrorCode::kShuttingDown
                                                    : ErrorCode::kResourceLimit,

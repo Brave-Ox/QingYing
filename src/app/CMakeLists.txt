@@ -50,6 +50,7 @@ target_link_libraries(qingying_app_handlers
 )
 
 add_library(qingying_app_runtime STATIC
+  application_shutdown_coordinator.cpp
   automation_runtime.cpp
   automation_settings.cpp
   mcp_stdio_runner.cpp

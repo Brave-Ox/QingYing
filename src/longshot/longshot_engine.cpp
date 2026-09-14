@@ -4,6 +4,7 @@
 #include "qingying/longshot/image_stitcher.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -397,6 +398,7 @@ struct LongShotEngine::Impl {
   LongShotCaptureCallback capture;
   LongShotProfileRegistry profiles;
   LongShotLimits limits;
+  std::atomic<const LongShotProfile*> active_profile{nullptr};
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
@@ -469,6 +471,14 @@ ActionResult LongShotEngine::captureSelection(
   if (!result.ok) {
     return result;
   }
+
+  impl_->active_profile.store(profile, std::memory_order_release);
+  struct ActiveProfileGuard final {
+    LongShotEngine::Impl& owner;
+    ~ActiveProfileGuard() {
+      owner.active_profile.store(nullptr, std::memory_order_release);
+    }
+  } active_profile_guard{*impl_};
 
   Image stitched;
   result = captureFrame(impl_->capture, request, 1,
@@ -657,6 +667,14 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
     return result;
   }
 
+  impl_->active_profile.store(profile, std::memory_order_release);
+  struct ActiveProfileGuard final {
+    LongShotEngine::Impl& owner;
+    ~ActiveProfileGuard() {
+      owner.active_profile.store(nullptr, std::memory_order_release);
+    }
+  } active_profile_guard{*impl_};
+
   Image first_frame;
   result = captureFrame(impl_->capture, request, 1,
                         LongShotFailureStage::InitialCapture, first_frame);
@@ -675,6 +693,23 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   out.first_frame = std::move(first_frame);
   out.second_frame = std::move(second_frame);
   return makeSuccess();
+}
+
+void LongShotEngine::cancel() noexcept {
+  const LongShotProfile* profile =
+      impl_->active_profile.load(std::memory_order_acquire);
+  if (profile != nullptr) {
+    profile->cancel();
+  }
+}
+
+std::string LongShotEngine::activeProfileName() const {
+  const LongShotProfile* profile =
+      impl_->active_profile.load(std::memory_order_acquire);
+  if (profile == nullptr || profile->name() == nullptr) {
+    return "none";
+  }
+  return profile->name();
 }
 
 }  // qingying 命名空间

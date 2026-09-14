@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <map>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 
 namespace qingying::ipc {
 namespace {
@@ -66,6 +69,13 @@ struct PipeServer::Impl {
   }
   void checkThread() const {
     if (owner != std::this_thread::get_id()) throw std::logic_error("pipe owner thread");
+  }
+  void workerExited() noexcept {
+    {
+      std::lock_guard<std::mutex> lock(worker_mutex);
+      if (active_workers > 0) --active_workers;
+    }
+    workers_done.notify_all();
   }
   void run(HANDLE pipe) noexcept {
     try {
@@ -165,6 +175,9 @@ struct PipeServer::Impl {
   detail::Handle stop_event;
   std::vector<std::unique_ptr<detail::Handle>> pipes;
   std::vector<std::thread> workers;
+  std::mutex worker_mutex;
+  std::condition_variable workers_done;
+  std::size_t active_workers{0};
   std::thread::id owner{std::this_thread::get_id()};
   DWORD error{ERROR_SUCCESS};
   bool started{false};
@@ -194,8 +207,21 @@ bool PipeServer::start() {
     }
     // Keep all original handles, especially the first, until every worker has
     // stopped: no close/recreate gap in which another process can seize name.
-    for (const auto& pipe : impl.pipes)
-      impl.workers.emplace_back([&impl, handle = pipe->get()] { impl.run(handle); });
+    for (const auto& pipe : impl.pipes) {
+      {
+        std::lock_guard<std::mutex> lock(impl.worker_mutex);
+        ++impl.active_workers;
+      }
+      try {
+        impl.workers.emplace_back([&impl, handle = pipe->get()] {
+          impl.run(handle);
+          impl.workerExited();
+        });
+      } catch (...) {
+        impl.workerExited();
+        throw;
+      }
+    }
     return true;
   } catch (...) { impl.error = ERROR_NOT_ENOUGH_MEMORY; stop(); return false; }
 }
@@ -287,14 +313,58 @@ void PipeServer::stopAccepting() noexcept {
     SetEvent(impl.stop_event.get());
   }
 }
-void PipeServer::stop() noexcept {
-  stopAccepting();
+bool PipeServer::joinUntil(
+    std::chrono::steady_clock::time_point deadline) noexcept {
   auto& impl = *impl_;
+  impl.checkThread();
+  {
+    std::unique_lock<std::mutex> lock(impl.worker_mutex);
+    if (impl.active_workers != 0 &&
+        impl.workers_done.wait_until(lock, deadline) ==
+            std::cv_status::timeout &&
+        impl.active_workers != 0) {
+      return false;
+    }
+  }
   for (auto& worker : impl.workers) if (worker.joinable()) worker.join();
   impl.workers.clear();
   drain();
   impl.shared->sessions.clear();
   impl.pipes.clear();
+  return true;
+}
+std::string PipeServer::diagnosticSnapshot() const {
+  auto& impl = *impl_;
+  std::size_t active_workers = 0;
+  {
+    std::lock_guard<std::mutex> lock(impl.worker_mutex);
+    active_workers = impl.active_workers;
+  }
+  std::size_t queue_length = 0;
+  std::size_t pending_requests = 0;
+  RequestId request_id = 0;
+  {
+    std::lock_guard<std::mutex> lock(impl.shared->mutex);
+    for (const auto& session : impl.shared->sessions) {
+      queue_length += session->requests[0].size();
+      queue_length += session->requests[1].size();
+      pending_requests += session->pending.size();
+      if (request_id == 0 && !session->pending.empty()) {
+        request_id = session->pending.begin()->first;
+      }
+    }
+  }
+  return "thread=pipe_worker request_id=" + std::to_string(request_id) +
+         " plugin_id=n/a queue_length=" + std::to_string(queue_length) +
+         " pending_requests=" + std::to_string(pending_requests) +
+         " active_workers=" + std::to_string(active_workers) +
+         " last_progress=" +
+         (active_workers == 0 ? std::string("workers_stopped")
+                              : std::string("waiting_for_io"));
+}
+void PipeServer::stop() noexcept {
+  stopAccepting();
+  (void)joinUntil((std::chrono::steady_clock::time_point::max)());
 }
 std::wstring PipeServer::name() const { return impl_->name; }
 std::uint32_t PipeServer::lastError() const noexcept { return impl_->error; }
