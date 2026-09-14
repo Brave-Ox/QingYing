@@ -363,36 +363,6 @@ ActionRequest makeActionRequest(Payload payload) {
   return ActionRequest{ActionPayload{std::move(payload)}};
 }
 
-// Compatibility boundary for callers that still build the old all-fields
-// request. New code must construct ActionRequest from one typed payload.
-struct LegacyActionRequest {
-  ActionType type{ActionType::Status};
-
-  // CaptureRegion / LongShotRegion, in physical screen pixels.
-  int x{0};
-  int y{0};
-  int width{0};
-  int height{0};
-
-  // LongShotRegion: target window recorded before SelectionOverlay takes
-  // foreground focus. Kept as an integer so this shared header stays free of
-  // Win32 headers.
-  std::uintptr_t window_handle{0};
-
-  // CaptureWindow
-  std::wstring window_query;
-
-  // CropCenter
-  int crop_w{0};
-  int crop_h{0};
-
-  // Save
-  std::wstring save_path;
-};
-
-std::optional<ActionRequest> adaptLegacyActionRequest(
-    const LegacyActionRequest& legacy);
-
 struct ActionValidationResult {
   bool valid{false};
   std::string message;

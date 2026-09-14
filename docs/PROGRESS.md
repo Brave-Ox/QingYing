@@ -4,7 +4,7 @@
 > 更新日期：2026-09-14
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
-功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
+功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，交接摘要见 [项目理解.md](项目理解.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
 
 ---
 
@@ -38,6 +38,7 @@
 - `WM_QINGYING_BEGIN_CAPTURE` 将热键处理延后到 UI 消息流；
 - `qingying_workflow` 统一编排 Selection / Annotation / LongShot 与结果动作，Application 只负责组合根和消息转发；
 - `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和结果选择；
+- `qingying_action_compatibility` 已从 `qingying_action` 核心拆出，仅保留 deprecated 的旧请求适配器；生产 EXE、workflow、automation、MCP 和插件 target 不依赖它；
 - `qingying_app_handlers` 还注册 `CaptureWindow / CropCenter`，由 `CaptureService` 负责 WindowResolver、物理矩形计算、复核和 ResultStore 发布；
 - `qingying_automation_contract`、`qingying_automation`、`qingying_ipc`、`qingying_mcp` 和 `qingying_app_runtime` 已形成本地自动化接入链；当前 automation 对具体 CaptureWorkflow 仍有一处反向依赖，见整改文档；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
@@ -150,6 +151,8 @@
 
 兼容路径说明：
 
+- `LegacyActionRequest` 与 `adaptLegacyActionRequest()` 已移入 `qingying_action_compatibility`，头文件位于 `include/qingying/action/compatibility/`，实现位于 `src/action/compatibility/`；两者只用于迁移/兼容回归测试，均标记为 deprecated；
+- 新代码使用 `ActionRequest` + typed payload；删除条件是支持调用方不再 include 兼容头并删除兼容回归测试，owner 为 action/automation 维护者；
 - `CaptureEngine::captureWindow` 与 `cropCenter` 仍返回 `kNotImplemented`，这是旧底层接口；
 - 现行 `CaptureWindow` / `CropCenter` 已由 `CaptureService` 完成窗口解析、重验证、物理矩形计算和结果发布，并由 Action Handler 注册。
 
@@ -171,8 +174,8 @@ build.bat Release test
 ```
 
 2026-09-14 当前工作区静态检索约有 842 个 TEST / TEST_F 宏，包含 Action、Workflow、ResultStore、SmartRegion、UIA/MSAA 夹具、Overlay、Pin、长截图、IPC/MCP 和进程级测试。
-当前已有 `build` 目录的 CTest discovery 元数据不完整：执行 `ctest --test-dir build -N` 会因缺少 `build/tests/qingying_tests[1]_include-.cmake` 而无法发现用例；因此不报告旧的 pass/fail 数字，也不能把旧构建产物当作当前源码回归。
-`build.bat Release test` 仍是预期验证入口，但应先在干净构建目录修复 MSBuild/CTest 生成链路后再执行。测试源和生产 Handler 已通过同一 CMake target 接入。
+本次通过 CMake 重新生成后，CTest 已发现 842 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，842/842 个用例通过。
+`build.bat Release test` 是当前验证入口。测试源和生产 Handler 已通过同一 CMake target 接入。
 
 自动测试不能替代：
 
@@ -224,6 +227,7 @@ build.bat Release test
 - `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 CaptureWorkflow 在 SelectionOverlay 返回后产生；
 - `CaptureEngine`、`LongShotEngine`、`LongShotController`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；`LongShotController` 已集中跨线程预览 / 完成消息生命周期，两个 Overlay 的窗口状态也已由顶层消息泵收口；
 - `ActionRequest` 的类型化 payload、请求 / 操作 ID、取消、超时和结果选择已完成；`ActionResult` 已有类型化 output，F9 通过作用域、ResultId 和 opaque handle 管理外部结果；
+- legacy action 已隔离到 `qingying_action_compatibility`；新业务 target 不包含兼容头，旧 API 的替代 API、删除条件和 owner 已写入架构文档；
 - `ResultStore` 仍是每个 scope 一个 current 槽位，`CaptureSession` 是兼容门面；后续需要把 retained、in-flight、preview、编码和 wire copy 的内存峰值纳入统一预算；
 - `McpBridge`、Named Pipe、UI 调度、WindowResolver 和外部操作注册表已接线；`CaptureWindow` / `CropCenter` 由 `CaptureService` 实现，底层 `CaptureEngine` 兼容方法仍保留 Stub；
 - SmartRegion 的 UIA/MSAA、视觉定位和异步查询已形成较完整链路，但重路径仍有 UI 线程同步执行，且实现源码暂编入 overlay target；
@@ -243,7 +247,7 @@ build.bat Release test
 4. 完成 Notepad / Explorer / Chrome / Edge / Brave 真实长截图闭环记录；
 5. 为 ResultStore、LongShot、Export 和 get/release 统一核算图像内存峰值；
 6. 为标注编辑器补重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
-7. 在上述基础上隔离 legacy action、收敛 ActionDescriptor 和 AutomationSession。
+7. 在上述基础上收敛 ActionDescriptor 和 AutomationSession，并在兼容调用方迁移完成后删除 legacy action target。
 
 ---
 

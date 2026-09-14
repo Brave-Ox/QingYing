@@ -132,6 +132,7 @@ target_include_directories(qingying_tests
 target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
+    qingying_action_compatibility
     qingying_automation_contract
     qingying_automation
     qingying_ipc

@@ -1,5 +1,6 @@
 ﻿#include "qingying/action/action_dispatcher.hpp"
 #include "qingying/action/i_action_handler.hpp"
+#include "qingying/action/compatibility/legacy_action_dispatcher.h"
 #include "qingying/action/i_async_action_handler.h"
 #include "qingying/action/types.hpp"
 

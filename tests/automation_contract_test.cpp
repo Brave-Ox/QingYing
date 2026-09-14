@@ -1,5 +1,7 @@
 ﻿#include "qingying/automation/automation_contract.h"
 
+#include "qingying/action/compatibility/legacy_action_dispatcher.h"
+
 #ifdef _WINDOWS_
 #error "The automation contract must not include Windows headers."
 #endif

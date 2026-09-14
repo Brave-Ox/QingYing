@@ -9,6 +9,7 @@
 
 - [开发清单](../轻映-QingYing-开发清单.md)
 - [开发进度](PROGRESS.md)
+- [项目理解](项目理解.md)
 - [架构如何调整](架构如何调整.md)
 - [系统架构与耦合度分析](系统架构与耦合度分析.md)
 
@@ -69,6 +70,7 @@
 | 目标 | 类型 | 当前职责 | 当前状态 |
 |---|---|---|---|
 | `qingying_action` | static | Action 契约、Dispatcher、Handler 接口 | 已实现 |
+| `qingying_action_compatibility` | static | 旧 all-fields 请求到类型化 ActionRequest 的迁移适配器 | 兼容层；仅测试/迁移使用，生产 target 禁止依赖 |
 | `qingying_window` | static | 顶层窗口目录、检测、解析与候选基础过滤 | 已实现；SmartRegion 实现暂编入 overlay |
 | `qingying_capture` | static | GDI 区域截图；CaptureWindow / CropCenter 的底层兼容接口 | 区域截图已实现；底层兼容方法仍为桩，现行入口由 CaptureService 实现 |
 | `qingying_automation_contract` | interface | 中立 Action / operation / automation wire 契约 | 已实现 |
@@ -93,6 +95,7 @@
 include/qingying/          对外契约
 src/app/                   EXE 与组合根
 src/action/                命令分发
+src/action/compatibility/  旧 Action 请求迁移适配器（非现行主路径）
 src/capture/               屏幕捕获
 src/export/                剪贴板 / PNG
 src/overlay/               选区 UI
@@ -116,6 +119,7 @@ action    ← pin
 action    ← annotate
 action    ← command
 action    ← mcp
+qingying_action_compatibility → qingying_action（仅测试/迁移 target）
 automation_contract ← automation
 workflow  ← automation（当前具体依赖，待倒置）
 automation_contract ← ipc
@@ -133,6 +137,7 @@ app → workflow + 上述服务 + app_runtime（Composition Root）
 约束：
 
 - `command` / `mcp` 只能依赖稳定契约，不得 include DXGI、GDI 或 `*Impl`；
+- `qingying_action` 不包含 `LegacyActionRequest`；兼容 target 只能被显式的迁移调用方或兼容回归测试链接；
 - 引擎模块不得反向依赖 `app`；
 - 跨模块不 include 对方 `.cpp` 旁的私有头；
 - `window_detector.cpp`、`window_catalog.cpp` 和 `window_resolver.cpp` 已在 `qingying_window`；SmartRegion 的定位器和查询 worker 当前仍编入 `qingying_overlay`，应后续建立独立 target；
@@ -168,6 +173,21 @@ app → workflow + 上述服务 + app_runtime（Composition Root）
 - 新截图开始时释放上一张结果；失败后不恢复旧结果，避免常驻进程长期持有大块像素缓冲。
 
 `ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和 `ResultSelection`。F9 的本地 Pipe/MCP 主链已接入，仍需继续验证异步操作上下文、类型化输出、外部结果租约和安装包边界。
+
+---
+
+### 5.3 兼容层边界与迁移规则
+
+`LegacyActionRequest` 和 `adaptLegacyActionRequest()` 位于
+`include/qingying/action/compatibility/`，实现位于
+`src/action/compatibility/`，由 `qingying_action_compatibility` 单独编译。它们只保留旧调用方的字段到类型化 payload 的映射，不是新的业务分派路径。
+
+| legacy API | 保留原因 | 替代 API | 删除条件 | owner |
+|---|---|---|---|---|
+| `LegacyActionRequest` | 迁移旧的 all-fields 调用方 | `ActionRequest` + `makeActionRequest()` | 支持调用方不再 include 兼容头，兼容回归测试删除 | action/automation 维护者 |
+| `adaptLegacyActionRequest()` | 保留旧字段映射的单一转换点 | 直接构造对应 typed payload | 无调用方依赖，且不再需要旧字段兼容 | action/automation 维护者 |
+
+两个 API 都标记为编译期 deprecated。新的 GUI、workflow、automation、MCP 和插件代码不得 include 兼容头；需要新增动作时必须直接使用类型化 payload。
 
 ---
 
@@ -277,6 +297,9 @@ CaptureWorkflow 预先记录 owner_window
 | 长截图 | `LongShotController` 创建单个 worker；暂停 / 停止使用 atomic 标志 |
 | 跨线程预览 | worker 复制预览图后写入 `UiMessageChannel`，Windows 消息只携带 token |
 | 完成回收 | `LongShotController` 将拥有 token 的完成消息交给 `UiMessageChannel`，UI 线程取出后接管并 join |
+| Action 异步提交 | `ActionDispatcher::submit()` 负责准入与 at-most-once completion；`IAsyncActionHandler` 使用注入的 `ActionExecutor`，不把 worker 生命周期交给调用方 |
+| SmartRegion 查询 | UI 线程提交 latest-wins 请求；UIA/MSAA worker 返回带 root/generation/age 的结果，Overlay 在 UI 线程丢弃迟到结果 |
+| 自动化 / IPC | Pipe worker 负责传输，Application 消息泵 drain 后进入 AutomationEndpoint；MCP stdio 只做协议边界，不直接调用捕获引擎 |
 | 应用退出 | `CaptureWorkflow::shutdown()` 同步中止并销毁两个 Overlay，再由顶层循环处理 `WM_QUIT` |
 | 单实例 | Named Mutex |
 
@@ -339,8 +362,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 ## 14. 质量基线
 
 - 2026-09-14：仓库静态检索约有 842 个 TEST / TEST_F 宏，覆盖 Action、CaptureWorkflow、ResultStore、导出、F1/F2、SmartRegion、UIA/MSAA 夹具、F3、Pin、长截图、IPC/MCP 和进程级流程；
-- 当前已有 `build` 目录的 CTest discovery 元数据不完整：`ctest --test-dir build -N` 会因缺少 `build/tests/qingying_tests[1]_include-.cmake` 而无法发现用例；因此本基线不报告旧的 pass/fail 数字，也不能把旧构建产物当作当前源码回归；
-- `build.bat Release test` 仍是预期验证入口，但需要先在干净构建目录修复 MSBuild/CTest 环境后再执行；
+- 2026-09-14 已通过 CMake 重新生成 CTest discovery，当前发现 842 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，842/842 个用例通过；
 - 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、插件篡改拒绝、关闭阶段阻塞和端到端内存峰值。
 
 ---
