@@ -59,6 +59,13 @@ bool pointsAreNear(POINT left, POINT right) noexcept
          delta_y <= kPositionCacheRadiusPx;
 }
 
+bool rectanglesAreEqual(const WindowRect& left,
+                        const WindowRect& right) noexcept
+{
+  return left.left == right.left && left.top == right.top &&
+         left.right == right.right && left.bottom == right.bottom;
+}
+
 void runProductionQuery(const UiaRegionQueryRequest& request,
                         UiaRegionQueryResult& result,
                         UiaRegionLocatorSession& session) noexcept
@@ -104,6 +111,7 @@ bool isUiaQueryResultApplicable(
 {
   if (result.root_window == nullptr ||
       result.root_window != current_request.root_window ||
+      !rectanglesAreEqual(result.owner_rect, current_request.owner_rect) ||
       current_request.owner_rect.empty() ||
       now_ms < result.requested_at_ms ||
       now_ms - result.requested_at_ms > kReusableResultMaximumAgeMs)
@@ -157,12 +165,11 @@ struct UiaRegionQueryWorker::Impl
         active_request_id = request.value.request_id;
         const bool cache_is_fresh =
             has_cached_result &&
-            request.value.root_window == cached_result.root_window &&
             request.value.requested_at_ms >= cached_at_ms &&
             request.value.requested_at_ms - cached_at_ms <=
                 kPositionCacheLifetimeMs &&
-            pointsAreNear(request.value.screen_point,
-                          cached_result.screen_point);
+            isUiaQueryResultApplicable(cached_result, request.value,
+                                       request.value.requested_at_ms);
         if (cache_is_fresh)
         {
           use_cached_result = true;

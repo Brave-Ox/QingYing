@@ -1437,6 +1437,43 @@ TEST(UiaRegionQueryWorkerTest, CoolsDownRepeatedFailureForTheSameWindow)
 }
 
 TEST(UiaRegionQueryWorkerTest,
+     ReusesRecentResultWhenPointerMovesWithinTheSameCandidate)
+{
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {160, 160},
+                              {0, 0, 1000, 800}, 140}));
+  window_detail::UiaRegionQueryResult cached_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, cached_result));
+  EXPECT_TRUE(cached_result.cache_hit);
+  EXPECT_EQ(context.call_count, 1);
+}
+
+TEST(UiaRegionQueryWorkerTest, DoesNotReuseResultAfterOwnerBoundsChange)
+{
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  ASSERT_TRUE(worker.request({1, reinterpret_cast<HWND>(1), {100, 100},
+                              {0, 0, 1000, 800}, 100}));
+  window_detail::UiaRegionQueryResult first_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, first_result));
+
+  ASSERT_TRUE(worker.request({2, reinterpret_cast<HWND>(1), {102, 102},
+                              {0, 0, 960, 760}, 140}));
+  window_detail::UiaRegionQueryResult refreshed_result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, refreshed_result));
+  EXPECT_FALSE(refreshed_result.cache_hit);
+  EXPECT_EQ(context.call_count, 2);
+}
+
+TEST(UiaRegionQueryWorkerTest,
      DoesNotCooldownFailureForAnotherControlInTheSameWindow)
 {
   CountingUiaQueryContext context;
@@ -1627,6 +1664,27 @@ TEST(UiaRegionQueryWorkerTest,
                                                           1050));
   EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result,
                                                           other_control,
+                                                          1050));
+}
+
+TEST(UiaRegionQueryWorkerTest, RejectsLateResultAfterOwnerBoundsChange)
+{
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 7;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.screen_point = {120, 118};
+  result.owner_rect = {0, 0, 800, 600};
+  result.requested_at_ms = 1000;
+  result.candidate_count = 1;
+  result.candidates[0] = {1, 2, {100, 100, 160, 140},
+                          SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  const window_detail::UiaRegionQueryRequest resized_owner{
+      8, reinterpret_cast<HWND>(1), {132, 122}, {0, 0, 760, 560}, 1040};
+
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result,
+                                                          resized_owner,
                                                           1050));
 }
 
