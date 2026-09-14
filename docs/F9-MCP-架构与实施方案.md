@@ -1,5 +1,7 @@
 # F9 Agent / MCP：架构与实施方案
 
+> 文档性质：本文件保留 2026-09-07 的历史实施方案和任务记录，不作为当前实现状态的唯一依据。当前代码状态以 [architecture.md](architecture.md)、[PROGRESS.md](PROGRESS.md) 和 [系统架构与耦合度分析](系统架构与耦合度分析.md) 为准；F9 的协议、Named Pipe、AutomationEndpoint、工具目录及主要截图动作已在后续提交中接线。
+>
 > 方案状态：F9-01～F9-08 契约、应用入口、交互占用、有界调度、固定 JSON 依赖与私有 wire codec 及自动验收完成；F9-09～F9-24 未开始，尚无新增可调用 Tool。
 >
 > 核验日期：2026-09-07；源码基线：`40d22e21`。
@@ -59,7 +61,7 @@ qingying.exe                   已运行的托盘主进程
 
 开发清单及架构文档现已同步到 `40d22e21 / 2026-09-07`；其中已落地的类型化 Action、ResultStore、中立坐标和 Chromium 插件状态按当前代码记录，本文只把 F9 尚未实现的外部契约列为待办。
 
-当前验证基线：已有 Release 构建目录的 CTest 共 382 个用例，378 个通过、4 个 `BitBlt` 环境失败；重新执行 `build.bat Release test` 时在 MSBuild FileTracker 阶段遇到 `E_ACCESSDENIED`，F9 本身仍未接入生产代码。
+历史验证基线（截至 2026-09-07）：已有 Release 构建目录的 CTest 共 382 个用例，378 个通过、4 个 `BitBlt` 环境失败；重新执行 `build.bat Release test` 时在 MSBuild FileTracker 阶段遇到 `E_ACCESSDENIED`。这些数字和“F9 尚未接入”的判断只适用于当时的 `40d22e21` 基线，不代表当前 HEAD。
 
 阅读范围包括开发清单、README、architecture、PROGRESS、架构调整、耦合分析和 F6 新计划，以及上述源码和相关测试。IDE 提及的 `docs/lifecycle-design-principles-review.html` 在本次工作区未找到；开发清单引用的两篇金山文档未能取得正文，未据此推断额外要求。
 

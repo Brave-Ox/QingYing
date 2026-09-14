@@ -1,9 +1,9 @@
 # 轻映 QingYing — 当前架构说明（方案 B）
 
 > 状态：以当前代码为准
-> 提交基线：`master` / `40d22e21`（104 条提交）
-> 同步日期：2026-09-07
-> 形态：**一个 EXE + 12 个 static lib + 3 个受控 longshot plugin DLL**
+> 提交基线：`a21f2ac4b4e04f8f777daccb4d355146fee9b069`
+> 同步日期：2026-09-14
+> 形态：**一个 EXE + 分层 static lib / interface target + 3 个受控 longshot plugin DLL**
 
 关联文档：
 
@@ -53,6 +53,8 @@
    capture   export    pin      longshot           annotate
 ```
 
+当前 HEAD 的实际接入还包括：qingying_window 提供基础窗口目录、检测和解析；qingying_automation_contract 提供中立自动化契约；qingying_automation 负责操作注册、UI 调度和 endpoint；qingying_ipc 提供 Named Pipe；qingying_mcp 提供 MCP 会话、stdio transport 和工具目录；qingying_app_runtime 在 app 组合根中连接这些接入层。qingying_overlay 当前仍直接编译 SmartRegion 的多份 window 实现源文件，这是已确认的结构性技术债。
+
 当前架构不是“所有 GUI 细节都必须变成 Action”。正确边界是：
 
 1. `ActionDispatcher` 负责可复用的单步业务命令；
@@ -67,7 +69,11 @@
 | 目标 | 类型 | 当前职责 | 当前状态 |
 |---|---|---|---|
 | `qingying_action` | static | Action 契约、Dispatcher、Handler 接口 | 已实现 |
-| `qingying_capture` | static | GDI 区域截图；DXGI / 截窗 / 中央裁切接口位置 | 区域截图已实现，其余为桩 |
+| `qingying_window` | static | 顶层窗口目录、检测、解析与候选基础过滤 | 已实现；SmartRegion 实现暂编入 overlay |
+| `qingying_capture` | static | GDI 区域截图；CaptureWindow / CropCenter 的底层兼容接口 | 区域截图已实现；底层兼容方法仍为桩，现行入口由 CaptureService 实现 |
+| `qingying_automation_contract` | interface | 中立 Action / operation / automation wire 契约 | 已实现 |
+| `qingying_automation` | static | Operation registry、UIActionScheduler、AutomationEndpoint | 已实现；当前私有依赖 qingying_workflow，待进一步倒置 |
+| `qingying_ipc` | static | Named Pipe、帧编解码、身份校验、客户端/服务端 | 已实现 |
 | `qingying_export` | static | CF_DIB 剪贴板与 WIC PNG | 已实现 |
 | `qingying_ui` | static | 选区条 / 标注底栏共用的 ModernToolbar、GDI+ 与 SVG 路径图标 | 已实现 |
 | `qingying_overlay` | static | 桌面快照遮罩、框选、调区、窗口吸附、SelectionToolbar、OverlayPhase、OverlayRenderer、长截图预览 | SelectionOverlay 已非模态化；Renderer 已拆出 |
@@ -77,8 +83,9 @@
 | `qingying_workflow` | static | 选区、标注、结果动作与交互式长截图编排 | CaptureWorkflow 状态机与 LongShotController 已接入 |
 | `qingying_app_handlers` | static | 生产 Action Handler 与应用层结果动作适配 | 已从 EXE / 测试中独立出来 |
 | `qingying_command` | static | 本地口令 → Action | Stub |
-| `qingying_mcp` | static | MCP Bridge / 后续 Named Pipe | Stub |
-| `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 组合根已使用 PIMPL；行为仍待 F9 接入 |
+| `qingying_mcp` | static | MCP Bridge、协议 session、stdio transport、工具目录 | 代码已实现；真实安装包/客户端验收仍需补 |
+| `qingying_app_runtime` | static | AutomationRuntime、MCP stdio runner、运行时设置 | 已接线 |
+| `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 组合根已使用 PIMPL；F9 已接入本地 Pipe/MCP 主链 |
 
 目录：
 
@@ -89,12 +96,12 @@ src/action/                命令分发
 src/capture/               屏幕捕获
 src/export/                剪贴板 / PNG
 src/overlay/               选区 UI
-src/window/                窗口检测源码（当前编入 overlay target）
+src/window/                基础窗口检测；SmartRegion 实现当前暂编入 overlay target
 src/annotate/              标注
 src/pin/                   钉图
 src/longshot/              长截图
 src/command/               本地口令
-src/mcp/                   MCP
+src/mcp/                   MCP 协议、工具目录和 stdio bridge
 plugins/longshot/          Notepad / Explorer / Chromium profile DLL
 ```
 
@@ -109,13 +116,18 @@ action    ← pin
 action    ← annotate
 action    ← command
 action    ← mcp
+automation_contract ← automation
+workflow  ← automation（当前具体依赖，待倒置）
+automation_contract ← ipc
+automation_contract + ipc ← mcp
+automation + ipc + mcp ← app_runtime
 action + capture ← longshot
 action + ui ← overlay   （CMake：overlay 已不链接 capture / annotate）
 ui        （ModernToolbar 独立于 action，由 app/targets 组合）
 action + overlay + capture + annotate + export + pin + longshot ← workflow
 longshot runtime ← controlled profile plugin DLLs
 
-app → workflow + 上述服务（Composition Root）
+app → workflow + 上述服务 + app_runtime（Composition Root）
 ```
 
 约束：
@@ -123,9 +135,10 @@ app → workflow + 上述服务（Composition Root）
 - `command` / `mcp` 只能依赖稳定契约，不得 include DXGI、GDI 或 `*Impl`；
 - 引擎模块不得反向依赖 `app`；
 - 跨模块不 include 对方 `.cpp` 旁的私有头；
-- `window_detector.cpp` 目前编入 `qingying_overlay`，需要被 F6/F8 复用时再拆 `qingying_window`；
+- `window_detector.cpp`、`window_catalog.cpp` 和 `window_resolver.cpp` 已在 `qingying_window`；SmartRegion 的定位器和查询 worker 当前仍编入 `qingying_overlay`，应后续建立独立 target；
 - 编辑源图已由 `CaptureWorkflow` 在 `SelectionOverlay` 返回 Edit 意图后抓取；`qingying_overlay` 不再 include 或链接 capture / annotate。
 - 长截图 profile 只能通过 `LongShotPluginHost` 的受控 ABI 接入，插件不得反向依赖 `app` 或 GUI 实现。
+- 当前没有发现 CMake target 环，但 `qingying_automation` 私有依赖 `qingying_workflow`，属于层次反向依赖；后续应通过 `ActionExecutor`/应用适配器解除。
 
 ---
 
@@ -140,8 +153,8 @@ app → workflow + 上述服务（Composition Root）
 | `Copy` | 当前结果写剪贴板 | 已注册 | 通过 `ResultActionService` 从 `ResultStore` 取图 |
 | `Save` | 当前结果保存 PNG | 已注册 | 要求 `save_path`，通过 `ResultActionService` 取图 |
 | `Pin` | 当前结果钉图 | 已注册 | 通过 `ResultActionService` 取图交给 `PinManager` |
-| `CaptureWindow` | 按名称 / 句柄截窗 | 未注册；Capture 方法为桩 | F8/F9 待实现 |
-| `CropCenter` | 中央裁切 | 未注册；Capture 方法为桩 | F8/F9 待实现 |
+| `CaptureWindow` | 按名称 / 进程 ID 截窗 | 已注册；由 CaptureService 解析并复核窗口 | 成功后发布到作用域 ResultStore |
+| `CropCenter` | 主显示器中央裁切 | 已注册；由 CaptureService 计算物理像素矩形 | 成功后发布到作用域 ResultStore |
 | `LongShotRegion` | 长截图动作占位 | 未注册 | 当前 GUI 由 CaptureWorkflow 编排 |
 | `SuggestName` | 可选命名能力 | 未实现 | P4 |
 
@@ -154,7 +167,7 @@ app → workflow + 上述服务（Composition Root）
 - `ResultStore` 当前承载“最近一张有效结果”的 UI 语义；`CaptureSession` 仅作为兼容门面保留；
 - 新截图开始时释放上一张结果；失败后不恢复旧结果，避免常驻进程长期持有大块像素缓冲。
 
-`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和 `ResultSelection`。F9 仍需补齐异步操作上下文、类型化 `ActionResult` 输出和外部结果租约。
+`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和 `ResultSelection`。F9 的本地 Pipe/MCP 主链已接入，仍需继续验证异步操作上下文、类型化输出、外部结果租约和安装包边界。
 
 ---
 
@@ -202,6 +215,14 @@ Ctrl+Shift+Q
 ```
 
 过滤范围包括 QingYing 自身、最小化窗口、工具窗口、DWM cloaked 窗口、桌面外壳和屏外 / 空矩形窗口。
+
+浏览器所属且具有 WS_POPUP 的顶层临时弹窗只有在 owner root 为受支持的 Chrome / Edge / Brave 主窗口时才放行；其他应用工具窗口仍保持过滤。
+
+### 7.1 SmartRegion 当前实现
+
+SmartRegionDetector 采用“窗口级快速回退 + 已知内容定位 + 视觉候选 + UIA/MSAA 详细候选”的组合。UIA/MSAA 通过单个 latest-wins 查询 worker 异步返回，SelectionOverlay 在 UI 线程校验 root HWND、矩形、generation 和结果年龄后再合并候选；手动框选优先于迟到的智能结果。VisualLocator 对 Electron 工作台、Chromium 外壳、小控件和弱边界有专用策略及有限缓存。
+
+当前边界仍有两点需要记录：一是 selection_overlay.cpp 直接编译 SmartRegion 的多份 window 实现源文件，目录和 target 尚未完全对齐；二是 Window/known/visual 的部分路径仍在悬停消息处理期间同步执行，局部预算不能替代端到端 UI 线程预算。后续调整见架构整改文档中的 P0-3 和 P1-1。
 
 ---
 
@@ -269,13 +290,15 @@ CaptureWorkflow 预先记录 owner_window
 |---|---|---|
 | `CaptureEngine` | `std::unique_ptr<Impl>` | 已完成；析构在 `.cpp` 定义 |
 | `LongShotEngine` | `std::unique_ptr<Impl>` | 已完成；析构在 `.cpp` 定义 |
-| `McpBridge` | `std::unique_ptr<Impl>`，且为 Stub | 已完成；F9 实现仍待做 |
+| `McpBridge` | `std::unique_ptr<Impl>`，外覆 MCP protocol session | 已完成；通过本地 Pipe 接入 automation，仍需补安装包和真实客户端验收 |
 | `LongShotController` | `std::unique_ptr<Impl>` | 已完成；持有 worker 与消息生命周期 |
 | `ActionDispatcher` / Request / Result | 透明契约 | 不使用 PIMPL |
 | GDI 资源 | 多数为 unique_ptr + 自定义 deleter | 保持 |
 | Pin 隐藏恢复 | RAII `CaptureGuard` | 保持 |
 
 PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
+
+当前需要优先补齐的不是更多 PIMPL，而是线程和资源的显式拥有关系：LongShotController、ExportExecutor、UIA 查询 worker、PipeServer 和 PipeAutomationClient 都应在关闭协议中有统一的 stop/cancel/join 语义；结果图像则应把 retained 与 in-flight 峰值纳入同一预算。
 
 ---
 
@@ -308,18 +331,17 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | F5 钉图 | pin + action | 代码基本完成，人工验收待做 |
 | F6 长截图 | workflow + overlay + longshot + capture | profile registry、Notepad / Explorer / Chromium 插件与 LongShotController 已接入；真实浏览器窗口待验收 |
 | F7 托盘热键 | app | 已实现 |
-| F8 口令 | command → action / workflow | Stub |
-| F9 MCP | mcp → action / workflow | Stub |
+| F8 口令 | command → action / workflow | Parser 仍为 Stub |
+| F9 MCP | mcp → ipc → automation → action / workflow | 协议、Named Pipe、工具目录和 CaptureWindow / CropCenter / Copy / Save / Pin 主链已实现；真实安装包与桌面验收待补 |
 
 ---
 
 ## 14. 质量基线
 
-- 2026-09-07：当前 `build` 目录可发现 382 个 CTest 用例，实际执行 378 个通过、4 个 `BitBlt` 环境失败；没有显式 Disabled 用例；
-- 本次 `build.bat Release test` 在 MSBuild `FileTracker` 阶段遇到 `E_ACCESSDENIED`，未进入编译，不能把该次结果当作源码回归；
-- Release EXE：313,856 字节；另有 `plugins/longshot` 下 3 个 profile DLL，共 54,784 字节；
-- 自动测试覆盖 Action、CaptureWorkflow 路由、区域捕获、ResultStore、导出、F1、F2 基础过滤、F3 文档 / 引擎 / 渲染 / 编辑器布局、ModernToolbar、SelectionToolbar、OverlayPhase、标注结果预览合成、Pin、拼接、记事本 profile 和长截图停止条件；
-- 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、内存与唤起时延。
+- 2026-09-14：仓库静态检索约有 842 个 TEST / TEST_F 宏，覆盖 Action、CaptureWorkflow、ResultStore、导出、F1/F2、SmartRegion、UIA/MSAA 夹具、F3、Pin、长截图、IPC/MCP 和进程级流程；
+- 当前已有 `build` 目录的 CTest discovery 元数据不完整：`ctest --test-dir build -N` 会因缺少 `build/tests/qingying_tests[1]_include-.cmake` 而无法发现用例；因此本基线不报告旧的 pass/fail 数字，也不能把旧构建产物当作当前源码回归；
+- `build.bat Release test` 仍是预期验证入口，但需要先在干净构建目录修复 MSBuild/CTest 环境后再执行；
+- 未被自动测试替代的项目：真实混合 DPI、窗口视觉交互、多 Pin 体验、Notepad / Explorer / Chrome / Edge / Brave 真实长截、插件篡改拒绝、关闭阶段阻塞和端到端内存峰值。
 
 ---
 
@@ -346,3 +368,4 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | 2026-09-04 | 类型化 Action、结果选择、中立坐标与编译边界收口 | `ddc00c23`、`7e61cc07`、`6892a0bf` |
 | 2026-09-04 | Notepad / Explorer / Chromium 长截图插件与拼接稳定性 | `ce8fad57`、`4a1ed058` |
 | 2026-09-04 | 截图结果生命周期收口，空闲时释放像素 | `40d22e21` |
+| 2026-09-09～14 | SmartRegion UIA/MSAA/视觉候选、异步 latest-wins、浏览器外壳/Tab/临时弹窗与诊断回归 | `6446d60a`～`a21f2ac4` |

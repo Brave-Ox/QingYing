@@ -1,7 +1,7 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前提交基线：`master` / `40d22e21`（104 条提交）
-> 更新日期：2026-09-07
+> 当前提交基线：`a21f2ac4b4e04f8f777daccb4d355146fee9b069`
+> 更新日期：2026-09-14
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
 功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
@@ -12,7 +12,7 @@
 
 | 范围 | 状态 | 当前结论 |
 |---|---|---|
-| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + 12 个 static lib，并部署 3 个受控 longshot profile DLL |
+| 工程骨架 | **完成** | CMake / MSVC / C++17；1 个 EXE + 分层 static lib / interface target，并部署 3 个受控 longshot profile DLL |
 | 普通截图主链路 | **基本闭环** | 热键 → 桌面快照遮罩 → 框选 / 吸附 / 调区 → 复制 / 保存 / Pin |
 | F1 自定义区域 | **代码完成** | 自由框选、八点调整、移动、取消、虚拟桌面、物理像素转换 |
 | F2 窗口吸附 | **代码完成，待人工验收** | 候选过滤、悬停高亮、点击吸附、DWM 边框修正 |
@@ -21,9 +21,10 @@
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
 | F6 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区拼接、应用 profile 定位滚动控件、滚动状态 / 到底 / 无新增停止、预览、暂停 / 继续 / 停止、失败清理；内置 profile 已改为受控 DLL 插件 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
-| F8 / F9 | **Stub** | `CommandParser` / `McpBridge` 仅骨架；截窗与中央裁切也是桩 |
+| F8 本地口令 | **Stub** | `CommandParser` 仍未实现 |
+| F9 MCP | **代码已接线，待完整验收** | MCP protocol session、stdio、Named Pipe、AutomationEndpoint、CaptureWindow / CropCenter / Copy / Save / Pin 主链已实现；安装包和真实桌面验收仍需补 |
 
-一句话：普通截图、窗口吸附、Pin、Notepad / Explorer / Chromium 长截图与标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三类应用真实验收与 F9 外部接口。
+一句话：普通截图、窗口吸附、Pin、Notepad / Explorer / Chromium 长截图、SmartRegion 候选链和标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三类应用真实验收、F9 安装包验收和 P0 架构风险收敛。
 
 ---
 
@@ -37,6 +38,8 @@
 - `WM_QINGYING_BEGIN_CAPTURE` 将热键处理延后到 UI 消息流；
 - `qingying_workflow` 统一编排 Selection / Annotation / LongShot 与结果动作，Application 只负责组合根和消息转发；
 - `ActionDispatcher` 已注册 `Status / CaptureRegion / Copy / Save / Pin`；`ActionRequest` 已使用 `std::variant` 类型化 payload，并带 request / operation id、取消、超时和结果选择；
+- `qingying_app_handlers` 还注册 `CaptureWindow / CropCenter`，由 `CaptureService` 负责 WindowResolver、物理矩形计算、复核和 ResultStore 发布；
+- `qingying_automation_contract`、`qingying_automation`、`qingying_ipc`、`qingying_mcp` 和 `qingying_app_runtime` 已形成本地自动化接入链；当前 automation 对具体 CaptureWorkflow 仍有一处反向依赖，见整改文档；
 - `qingying_ui` 提供选区条 / 标注底栏共用的白色圆角 `ModernToolbar`、GDI+ 绘制和 SVG 路径图标；
 - `SelectionToolbar` 独立管理选区操作条 HWND、命令与阶段映射，`OverlayPhase` 集中校验选区 / 长截图 / 关闭阶段；
 - `SelectionOverlay` 与 `AnnotationOverlay` 创建后立即返回，窗口消息统一由 Application 顶层消息泵处理；Workflow 通过阶段消息续接选区和标注；
@@ -66,6 +69,14 @@
 - Overlay 绘制候选高亮，点击后调用 `SelectionController::setSelection`；
 - 吸附后仍可八点调整或重新自由框选；
 - 自动测试覆盖矩形基础、屏外点、自身窗口和空窗口过滤。
+
+#### SmartRegion 当前实现与验证边界
+
+- SmartRegionDetector 已形成窗口级快速回退、已知内容定位、视觉候选和 UIA/MSAA 详细候选的组合路径；
+- UIA/MSAA 查询由 latest-wins worker 异步执行，SelectionOverlay 在 UI 线程按 root HWND、矩形、generation 和结果年龄校验后合并；手动框选优先于迟到结果；
+- VisualLocator 已覆盖 Electron 工作台、Chromium 外壳、小控件、弱边界和有限候选缓存；Chromium Tab、按钮、书签/扩展入口以及受支持浏览器所属 WS_POPUP 临时弹窗已有代码和回归测试；
+- 当前仍需真实 Chrome / Edge / Brave、VS Code/Cursor 和混合 DPI 桌面复测；普通 Window/known/visual 路径的同步耗时、UIA/MSAA provider 阻塞和 SmartRegion target 边界列入架构整改；
+- SmartRegion 的专项自动测试已有多批回归，但当前工作区的旧 CTest discovery 元数据损坏，不能直接据此报告全量通过数。
 
 ### 2.4 F3 标注
 
@@ -135,13 +146,19 @@
 ### F8 本地口令
 
 - `CommandParser::tryParse` 固定返回 `false`；
-- `CaptureEngine::captureWindow` 与 `cropCenter` 返回 `kNotImplemented`；
 - 没有口令表、歧义处理或 GUI 降级入口。
+
+兼容路径说明：
+
+- `CaptureEngine::captureWindow` 与 `cropCenter` 仍返回 `kNotImplemented`，这是旧底层接口；
+- 现行 `CaptureWindow` / `CropCenter` 已由 `CaptureService` 完成窗口解析、重验证、物理矩形计算和结果发布，并由 Action Handler 注册。
 
 ### F9 MCP
 
-- `McpBridge::start` 固定返回 `false`；
-- 没有 Named Pipe、JSON / schema、Tool 映射和主线程投递。
+- `McpBridge` 已转发 MCP protocol session；
+- `stdio_transport`、Named Pipe server/client、wire codec、peer identity、operation 查询 / 取消 / release_result 和 tool catalog 已实现；
+- `capture_window`、`crop_center`、`copy`、`save`、`pin` 已进入 AutomationEndpoint / Action 主链；
+- 仍需补发布包插件信任校验、真实客户端/安装包验收、阻塞 provider 和关闭竞态验收。
 
 ---
 
@@ -153,8 +170,9 @@
 build.bat Release test
 ```
 
-2026-09-07 当前 `build` 目录结果：CTest 发现 **382** 个用例，实际执行 **382** 个，其中 **378** 个通过、4 个为当前环境下既有 `BitBlt` 失败；当前没有显式 Disabled 用例。
-本次 `build.bat Release test` 在 MSBuild `FileTracker` 阶段遇到 `E_ACCESSDENIED`，未进入编译；因此该次命令不能作为源码回归结论。测试源和生产 Handler 已通过同一 CMake target 接入。
+2026-09-14 当前工作区静态检索约有 842 个 TEST / TEST_F 宏，包含 Action、Workflow、ResultStore、SmartRegion、UIA/MSAA 夹具、Overlay、Pin、长截图、IPC/MCP 和进程级测试。
+当前已有 `build` 目录的 CTest discovery 元数据不完整：执行 `ctest --test-dir build -N` 会因缺少 `build/tests/qingying_tests[1]_include-.cmake` 而无法发现用例；因此不报告旧的 pass/fail 数字，也不能把旧构建产物当作当前源码回归。
+`build.bat Release test` 仍是预期验证入口，但应先在干净构建目录修复 MSBuild/CTest 生成链路后再执行。测试源和生产 Handler 已通过同一 CMake target 接入。
 
 自动测试不能替代：
 
@@ -163,6 +181,7 @@ build.bat Release test
 - 多 Pin 的交互和隐藏 / 恢复闪烁；
 - 真实长文滚动拼接；
 - 就地标注与选区 Overlay 的组合验收（当前非模态状态机已接线，仍需真实窗口验证）。
+- 插件目录篡改拒绝、线程阻塞关闭、UIA/MSAA provider 阻塞和端到端图像内存峰值。
 
 ---
 
@@ -190,22 +209,26 @@ build.bat Release test
 | 2026-09-04 | 类型化 Action、结果选择、中立坐标与编译边界收口 | `ddc00c23`、`7e61cc07`、`6892a0bf` |
 | 2026-09-04 | Notepad / Explorer / Chromium 长截图插件与拼接稳定性 | `ce8fad57`、`4a1ed058` |
 | 2026-09-04 | 截图结果生命周期收口，空闲时释放像素 | `40d22e21` |
+| 2026-09-09～14 | SmartRegion UIA/MSAA/视觉候选、异步 latest-wins、浏览器外壳/Tab/临时弹窗与诊断回归 | `6446d60a`～`a21f2ac4` |
 
 ---
 
 ## 6. 技术债与架构偏差
 
-- `selection_overlay.cpp` 已降至约 780 行；选区工具栏、阶段状态、遮罩 / 预览渲染和标注捕获 / 编辑职责已移出，但窗口与消息路由仍在同一 Win32 壳中；
+- `selection_overlay.cpp` 当前约 1,500 行；选区工具栏、阶段状态、遮罩 / 预览渲染和标注捕获 / 编辑职责已有拆分，但窗口消息、交互状态和 SmartRegion 结果合并仍集中在同一 Win32 壳中；
 - `SelectionToolbar` 已以 PIMPL + `unique_ptr` 独立管理 HWND，`OverlayPhase` 已替代选区 / 长截图 / 关闭阶段的互斥布尔组合；
-- `annotation_overlay.cpp` 已形成完整标注窗口和样式交互，窗口消息现由主循环驱动（约 3,300 行）；
+- 标注窗口、AnnotationEditorHost、工具栏和渲染职责已有拆分，窗口消息现由主循环驱动；后续重点是收紧 UI 状态 owner，而不是继续堆叠回调；
 - `SelectionOverlay::show` 与 `AnnotationOverlay::showInPlace` 均创建后立即返回，Workflow 以 `WM_QINGYING_WORKFLOW_CONTINUE` 续接状态；
-- `Application` 已降至约 110 行，只保留依赖组装、托盘 / 热键与消息转发；`CaptureWorkflow` 约 560 行，已接管选区 → 标注 → 结果操作条的异步阶段；`LongShotController` 约 190 行独立管理长截图运行态；
+- `Application` 负责依赖组装、托盘 / 热键、消息转发和运行时关闭；`CaptureWorkflow` 已接管选区 → 标注 → 结果操作条的阶段状态；`LongShotController` 独立管理长截图运行态；
 - `LongShotRegion` 枚举存在但没有 Handler；
 - `qingying_overlay` 已移除对 `qingying_capture` / `qingying_annotate` 的链接；编辑源图由 CaptureWorkflow 在 SelectionOverlay 返回后产生；
 - `CaptureEngine`、`LongShotEngine`、`LongShotController`、`McpBridge` 已改为 `std::unique_ptr<Impl>`；`OverlayRenderer` 已接收不可变渲染状态并提供离屏像素合成；`LongShotController` 已集中跨线程预览 / 完成消息生命周期，两个 Overlay 的窗口状态也已由顶层消息泵收口；
-- `ActionRequest` 的类型化 payload、请求 / 操作 ID、取消、超时和结果选择已完成；`ActionResult` 仍缺少可供 F9 直接消费的类型化输出元数据；
-- `ResultStore` 目前仍只有一个 current 槽位，`CaptureSession` 是兼容门面；F9 需要按作用域、ResultId 和租约管理结果，不能依赖工作流结束前的隐式 current；
-- `McpBridge` 仍是同步 Stub，尚未接入 Named Pipe、UI 调度、WindowResolver 或外部操作注册表；`CaptureWindow` / `CropCenter` 也仍是桩；
+- `ActionRequest` 的类型化 payload、请求 / 操作 ID、取消、超时和结果选择已完成；`ActionResult` 已有类型化 output，F9 通过作用域、ResultId 和 opaque handle 管理外部结果；
+- `ResultStore` 仍是每个 scope 一个 current 槽位，`CaptureSession` 是兼容门面；后续需要把 retained、in-flight、preview、编码和 wire copy 的内存峰值纳入统一预算；
+- `McpBridge`、Named Pipe、UI 调度、WindowResolver 和外部操作注册表已接线；`CaptureWindow` / `CropCenter` 由 `CaptureService` 实现，底层 `CaptureEngine` 兼容方法仍保留 Stub；
+- SmartRegion 的 UIA/MSAA、视觉定位和异步查询已形成较完整链路，但重路径仍有 UI 线程同步执行，且实现源码暂编入 overlay target；
+- LongShotPluginHost 当前会扫描并加载插件目录 DLL，发布版的 manifest、签名/哈希和目录 ACL 信任校验尚未在宿主代码中强制；
+- LongShotController、ExportExecutor、UIA query worker、PipeServer 和 PipeAutomationClient 的关闭语义尚未由统一的有界 shutdown coordinator 管理。
 - 长截图的 Notepad / Explorer / Chromium 插件代码已落地，真实 Chrome / Edge / Brave 窗口验收仍缺。
 
 整改方案见 [架构如何调整.md](架构如何调整.md)。
@@ -214,12 +237,13 @@ build.bat Release test
 
 ## 7. 下一步建议
 
-1. 对最新合并版本人工走一遍截图 / 标注 / 钉图 / 长截图；
-2. 为标注编辑器增加重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
-3. 为非模态 Selection / Annotation Overlay 补真实窗口、退出和组合测试；
-4. 完成 F1/F2/F5 的双屏、混合 DPI 和多 Pin 人工验收；
-5. 完成 Notepad / Explorer / Chrome / Edge / Brave 真实长截图闭环记录；
-6. 在现有 `ResultStore`、`ResultActionService`、`UiMessageChannel` 和类型化 Action 之上实现 F9 的作用域、租约、Pipe 与 UI 调度。
+1. 先完成插件信任校验、统一 shutdown 和 UI 重路径隔离；
+2. 完成 SmartRegion target 边界、真实浏览器/编辑器和混合 DPI 验收；
+3. 修复干净构建目录的 CTest discovery，再接入四层异步/进程/桌面测试；
+4. 完成 Notepad / Explorer / Chrome / Edge / Brave 真实长截图闭环记录；
+5. 为 ResultStore、LongShot、Export 和 get/release 统一核算图像内存峰值；
+6. 为标注编辑器补重做按钮，并记录 Copy / Save / Pin / 再编辑的完整 GUI 验收；
+7. 在上述基础上隔离 legacy action、收敛 ActionDescriptor 和 AutomationSession。
 
 ---
 
