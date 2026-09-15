@@ -141,6 +141,7 @@ class Child {
     return read();
   }
   void eof() { closeHandle(input); }
+  void closeOutputReader() { closeHandle(output); }
   DWORD outputBytes() const {
     DWORD bytes{}; PeekNamedPipe(output, nullptr, 0, nullptr, &bytes, nullptr); return bytes;
   }
@@ -183,6 +184,14 @@ TEST_F(McpProcessIntegrationTest, MissingGuiStillInitializesAndListsTools) {
   EXPECT_NE(status.dump().find("pipe_not_found"), std::string::npos) << status;
   EXPECT_EQ(bridge.hwnd(), nullptr);
   bridge.eof(); ASSERT_TRUE(bridge.exited()); EXPECT_EQ(bridge.exitCode(), 0u);
+}
+TEST_F(McpProcessIntegrationTest, BrokenHostOutputReclaimsBridgeWithLeakedStdinWriter) {
+  Child bridge; ASSERT_TRUE(bridge.start(args(true))); bridge.initialize();
+  bridge.closeOutputReader();
+  EXPECT_TRUE(bridge.exited(1000));
+  if (!bridge.exited(0)) bridge.eof();
+  ASSERT_TRUE(bridge.exited());
+  EXPECT_EQ(bridge.exitCode(), 4u);
 }
 TEST_F(McpProcessIntegrationTest, TwoBridgesEofDisableEnableAndRestartAreIndependent) {
   Child gui; ASSERT_TRUE(gui.start(args())); ASSERT_TRUE(until([&] { return gui.hwnd() != nullptr; }));

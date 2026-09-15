@@ -14,6 +14,11 @@ bool duplicate(void* supplied, DWORD standard, ipc::detail::Handle& result) {
                        0, FALSE, DUPLICATE_SAME_ACCESS)) return false;
   result.reset(raw); return true;
 }
+bool outputPeerAlive(HANDLE output) noexcept {
+  char unused = 0;
+  DWORD written = 0;
+  return WriteFile(output, &unused, 0, &written, nullptr) != FALSE;
+}
 void diagnostic(HANDLE handle, std::chrono::milliseconds timeout) {
   // Diagnostics never share stdout and a blocked stderr cannot prevent exit.
   std::atomic<bool> done{false};
@@ -33,7 +38,9 @@ void diagnostic(HANDLE handle, std::chrono::milliseconds timeout) {
 }
 StdioTransport::StdioTransport(StdioOptions options) : options_(options) {
   if (!options.max_line_bytes || options.max_line_bytes > 65536 ||
-      options.write_timeout.count() <= 0 || options.write_timeout > std::chrono::minutes{1})
+      options.write_timeout.count() <= 0 || options.write_timeout > std::chrono::minutes{1} ||
+      options.peer_probe_interval.count() <= 0 ||
+      options.peer_probe_interval > std::chrono::minutes{1})
     throw std::invalid_argument("stdio options");
 }
 bool StdioTransport::run(McpBridge& bridge) {
@@ -74,10 +81,20 @@ bool StdioTransport::run(McpBridge& bridge) {
     });
     writer = std::thread([&] {
       try {
+        auto next_peer_probe = std::chrono::steady_clock::now();
         while (!stop) {
           auto line = bridge.takeOutput();
           if (!line) {
             if (read_done) break;
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_peer_probe) {
+              if (!outputPeerAlive(output.get())) {
+                if (!stop) failed = true;
+                stop = true;
+                break;
+              }
+              next_peer_probe = now + options_.peer_probe_interval;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds{1}); continue;
           }
           write_started = GetTickCount64();
@@ -92,6 +109,8 @@ bool StdioTransport::run(McpBridge& bridge) {
             offset += count;
           }
           write_started = 0;
+          next_peer_probe =
+              std::chrono::steady_clock::now() + options_.peer_probe_interval;
         }
       } catch (...) { failed = true; stop = true; }
       write_done = true;

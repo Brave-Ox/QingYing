@@ -21,7 +21,7 @@ struct Pipes {
   StdioOptions options() {
     StdioOptions result;
     result.input = input.get(); result.output = output.get(); result.error = error.get();
-    result.write_timeout = 100ms; return result;
+    result.write_timeout = 100ms; result.peer_probe_interval = 10ms; return result;
   }
   void write(const std::string& text) {
     DWORD count = 0;
@@ -97,6 +97,20 @@ TEST(StdioTransportTest, BrokenStdoutCancelsIdleRead) {
   pipes.receive.reset();
   pipes.write("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n");
   EXPECT_EQ(run.wait_for(2s), std::future_status::ready);
+  EXPECT_FALSE(run.get());
+}
+TEST(StdioTransportTest, BrokenIdleStdoutReclaimsBridgeWithLeakedStdinWriter) {
+  Pipes pipes; auto options = pipes.options();
+  McpBridge bridge(nullptr); StdioTransport transport(options);
+  auto run = std::async(std::launch::async, [&] { return transport.run(bridge); });
+  // A host may close its stdout reader while an accidentally inherited copy of
+  // the stdin writer still prevents EOF. An idle bridge must detect the broken
+  // output half without waiting for another protocol response.
+  pipes.receive.reset();
+  const auto promptly = run.wait_for(500ms);
+  EXPECT_EQ(promptly, std::future_status::ready);
+  if (promptly != std::future_status::ready) pipes.send.reset();
+  ASSERT_EQ(run.wait_for(2s), std::future_status::ready);
   EXPECT_FALSE(run.get());
 }
 TEST(StdioTransportTest, InitializeListAndOfflineStatusShareInheritedStream) {

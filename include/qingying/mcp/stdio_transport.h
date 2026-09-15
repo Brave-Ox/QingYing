@@ -10,6 +10,10 @@ struct StdioOptions {
   void* error{nullptr};
   std::size_t max_line_bytes{65536};
   std::chrono::milliseconds write_timeout{3000};
+  // Detect a host that closed its stdout reader while an inherited stdin
+  // writer still prevents EOF. The probe is a zero-byte write and never adds
+  // bytes to the MCP protocol stream.
+  std::chrono::milliseconds peer_probe_interval{100};
 };
 class StdioTransport final {
  public:
