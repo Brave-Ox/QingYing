@@ -40,6 +40,10 @@ inline constexpr ModernToolbarColors DefaultModernToolbarColors{};
 // 工具栏窗口圆角外的色键，避免 SetWindowRgn 与 GDI RoundRect 错位产生毛刺。
 inline constexpr COLORREF kToolbarColorKey{RGB(255, 0, 255)};
 
+// 在进入交互路径前初始化 GDI+。托盘应用启动时预热，避免首次框选完成后
+// 才支付图标后端初始化成本。
+bool prepareModernToolbarRendering() noexcept;
+
 void fillRoundRect(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border,
                    int radius);
 

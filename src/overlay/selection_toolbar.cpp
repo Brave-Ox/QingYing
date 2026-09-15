@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 
 #include "qingying/ui/modern_toolbar.hpp"
@@ -202,23 +203,41 @@ struct SelectionToolbar::Impl {
     }
   }
 
-  void paint() {
+  bool present() {
     if (hwnd == nullptr) {
-      return;
-    }
-    PAINTSTRUCT ps{};
-    const HDC hdc = BeginPaint(hwnd, &ps);
-    if (hdc == nullptr) {
-      return;
+      return false;
     }
     RECT client{};
     GetClientRect(hwnd, &client);
-    fillToolbarColorKey(hdc, client);
-    drawToolbarBar(hdc, client);
+    const int width = client.right - client.left;
+    const int height = client.bottom - client.top;
+    void* bits = nullptr;
+    const HBITMAP dib = createTopDownArgbDib(width, height, &bits);
+    const HDC mem_dc = dib != nullptr ? CreateCompatibleDC(nullptr) : nullptr;
+    if (dib == nullptr || bits == nullptr || mem_dc == nullptr) {
+      if (mem_dc != nullptr) {
+        DeleteDC(mem_dc);
+      }
+      if (dib != nullptr) {
+        DeleteObject(dib);
+      }
+      return false;
+    }
+
+    const HGDIOBJ old_bitmap = SelectObject(mem_dc, dib);
+    std::memset(bits, 0, static_cast<std::size_t>(width) *
+                             static_cast<std::size_t>(height) * 4u);
+    if (!drawToolbarBarOnArgbBits(bits, width, height, client)) {
+      // GDI+ 不可用时仍保留色键绘制作为离屏降级；提交窗口前再把色键
+      // 转为透明 alpha，避免窗口 DC 暴露“先清空、后重画”的中间帧。
+      fillToolbarColorKey(mem_dc, client);
+      drawToolbarBar(mem_dc, client);
+      applyColorKeyAlpha(bits, width, height, kToolbarColorKey);
+    }
 
     const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
     const int divider_pad = metrics.bar_padding + kToolbarDividerPadExtraPx;
-    drawToolbarDivider(hdc, divider_x, client.top + divider_pad,
+    drawToolbarDivider(mem_dc, divider_x, client.top + divider_pad,
                        client.bottom - divider_pad);
     for (std::size_t i = 0; i < items.size(); ++i) {
       const ToolbarItemModel toolbar_item{
@@ -228,8 +247,31 @@ struct SelectionToolbar::Impl {
           items[i].model.enabled,
           false,
           false};
-      drawToolbarItem(hdc, items[i].rect, toolbar_item);
+      drawToolbarItem(mem_dc, items[i].rect, toolbar_item);
     }
+
+    // hover 帧在内存中完整生成后一次性交给 DWM；不会再把透明清屏帧展示
+    // 给用户，因此跨按钮和离开工具栏时都不会整条闪烁。
+    promoteRgbToOpaqueAlpha(bits, width, height);
+    const bool presented =
+        presentLayeredArgbWindow(hwnd, mem_dc, width, height);
+
+    SelectObject(mem_dc, old_bitmap);
+    DeleteDC(mem_dc);
+    DeleteObject(dib);
+    return presented;
+  }
+
+  void paint() {
+    if (hwnd == nullptr) {
+      return;
+    }
+    PAINTSTRUCT ps{};
+    const HDC hdc = BeginPaint(hwnd, &ps);
+    if (hdc == nullptr) {
+      return;
+    }
+    static_cast<void>(present());
     EndPaint(hwnd, &ps);
   }
 
@@ -256,7 +298,6 @@ struct SelectionToolbar::Impl {
         RECT client{};
         GetClientRect(window, &client);
         self->layout(client.bottom - client.top);
-        applyToolbarColorKey(window);
         const HRGN region = CreateRoundRectRgn(
             0, 0, client.right + 1, client.bottom + 1,
             DefaultModernToolbarMetrics.corner_radius * 2,
@@ -365,16 +406,27 @@ bool SelectionToolbar::show(HWND owner_window,
                  (std::min)(y, placement.screen_bottom - toolbar_height));
 
   const HWND window = CreateWindowExW(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kToolbarClassName,
-      L"", WS_POPUP | WS_VISIBLE, x, y, toolbar_width, toolbar_height,
+      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+      kToolbarClassName, L"", WS_POPUP, x, y, toolbar_width, toolbar_height,
       owner_window,
       nullptr, GetModuleHandleW(nullptr), impl_.get());
   if (window == nullptr) {
     impl_->callback = {};
     return false;
   }
-  SetWindowPos(window, HWND_TOPMOST, x, y, toolbar_width, toolbar_height,
-               SWP_SHOWWINDOW | SWP_NOACTIVATE);
+
+  // 分层窗口在首个 UpdateLayeredWindow 前完全透明。先同步提交首帧再显示，
+  // 防止首个 WM_PAINT 被随后发生的整屏 Overlay 重绘或鼠标消息推迟。
+  if (!impl_->present()) {
+    DestroyWindow(window);
+    return false;
+  }
+  static_cast<void>(ValidateRect(window, nullptr));
+  if (SetWindowPos(window, HWND_TOPMOST, x, y, toolbar_width, toolbar_height,
+                   SWP_SHOWWINDOW | SWP_NOACTIVATE) == FALSE) {
+    DestroyWindow(window);
+    return false;
+  }
   return true;
 }
 

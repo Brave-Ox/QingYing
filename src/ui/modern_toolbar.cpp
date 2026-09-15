@@ -1117,6 +1117,11 @@ void copyWide(wchar_t* dest, std::size_t dest_chars, const wchar_t* source)
 
 }  // namespace
 
+bool prepareModernToolbarRendering() noexcept
+{
+  return ensureGdiplus();
+}
+
 void fillRoundRect(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border,
                    int radius)
 {

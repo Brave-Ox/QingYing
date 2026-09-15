@@ -24,6 +24,7 @@
 #include "qingying/longshot/longshot_plugin_host.h"
 #include "qingying/overlay/selection_overlay.hpp"
 #include "qingying/pin/pin_manager.hpp"
+#include "qingying/ui/modern_toolbar.hpp"
 
 #include "resource.h"
 
@@ -351,6 +352,10 @@ struct Application::Impl {
                   L"QingYing", MB_OK | MB_ICONINFORMATION);
       return 1;
     }
+
+    // 工具栏图标首次使用会触发 GDI+ 初始化。在托盘应用尚未进入交互
+    // 消息循环时预热，避免把这笔一次性成本落在框选松手的关键路径上。
+    static_cast<void>(prepareModernToolbarRendering());
 
     registerHandlers();
 

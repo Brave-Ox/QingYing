@@ -6,6 +6,11 @@
 
 namespace qingying {
 
+TEST(ModernToolbarTest, RenderingBackendCanBePreparedBeforeInteractiveUse)
+{
+  EXPECT_TRUE(prepareModernToolbarRendering());
+}
+
 TEST(ModernToolbarTest, CompactMetricsMatchReferenceBar)
 {
   EXPECT_EQ(DefaultModernToolbarMetrics.item_size, 28);
