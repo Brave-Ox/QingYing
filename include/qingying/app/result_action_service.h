@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/types.hpp"
+#include "qingying/action/i_async_action_handler.h"
 #include "qingying/app/result_store.h"
 #include "qingying/app/interaction_gate.h"
 
@@ -13,6 +14,7 @@
 namespace qingying {
 
 class ExportService;
+class ExportExecutor;
 class PinManager;
 class SavePolicy;
 
@@ -45,6 +47,8 @@ class ResultActionService final {
                       CopyTransaction copy_transaction = {});
 
   void setOwnerWindow(HWND owner_window) noexcept;
+  // Composition must join exports before destroying this service or UI executor.
+  void setExportExecutor(ExportExecutor& executor, ActionExecutor post_to_ui);
   void bindPinWindowActions();
 
   ActionResult copy(ResultId result_id);
@@ -87,7 +91,7 @@ class ResultActionService final {
                          const std::wstring& path, bool overwrite,
                          CommitAuthorization authorize_commit = {});
   ActionResult saveImageWithDialog(const Image& image,
-                                   bool show_error_message);
+                                   bool show_error_message, ResultLease lease = {});
   ActionResult pinImage(const Image& image, ResultId result_id,
                         PinSource source,
                         CommitAuthorization authorize_commit = {});
@@ -106,6 +110,8 @@ class ResultActionService final {
   SavePolicy* save_policy_{nullptr};
   SaveTransaction save_transaction_;
   CopyTransaction copy_transaction_;
+  ExportExecutor* export_executor_{nullptr};
+  ActionExecutor post_to_ui_;
 };
 
 }  // namespace qingying

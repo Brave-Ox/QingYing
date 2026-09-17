@@ -20,6 +20,9 @@ struct WindowRect {
 // 负责窗口发现与候选过滤，不散落到选区状态机中。
 class WindowDetector {
  public:
+  // UI fallback: bounded Z-order walk using window-manager metadata only.
+  bool snapshotAt(int screen_x, int screen_y, HWND& out_window,
+                  WindowRect& out_rect) const noexcept;
   // 判断窗口是否可吸附（供测试与复用）。
   static bool isSnappable(HWND hwnd);
 

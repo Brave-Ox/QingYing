@@ -139,10 +139,8 @@ struct LongShotController::Impl {
     }
     {
       std::unique_lock<std::mutex> lock(worker_mutex);
-      if (!worker_done &&
-          worker_done_condition.wait_until(lock, deadline) ==
-              std::cv_status::timeout &&
-          !worker_done) {
+      if (!worker_done_condition.wait_until(lock, deadline,
+                                            [this] { return worker_done; })) {
         return false;
       }
     }

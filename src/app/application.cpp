@@ -6,6 +6,7 @@
 #include "qingying/app/automation_runtime.h"
 #include "qingying/app/automation_settings.h"
 #include "qingying/app/app_messages.hpp"
+#include "qingying/app/ui_message_channel.h"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/capture_service.h"
 #include "qingying/app/export_executor.h"
@@ -140,7 +141,10 @@ struct Application::Impl {
             AutomationEndpoint::ExecutionPolicy{
                 {ActionType::CaptureWindow, ActionType::CropCenter,
                  ActionType::Copy, ActionType::Save, ActionType::Pin},
-                [this] { export_executor_.requestStop(); }, false,
+                [this] {
+                  export_executor_.requestStop();
+                  capture_service_.beginStop();
+                }, false,
                 [this] {
                   const auto usage = pin_manager_.agentUsage();
                   return std::make_pair(usage.count, usage.bytes);
@@ -222,6 +226,14 @@ struct Application::Impl {
                  },
                  std::chrono::milliseconds(1000)},
                 {ApplicationShutdownPhase::CancelAndWait,
+                 "capture_worker",
+                 [this](ApplicationShutdownDeadline deadline) {
+                   capture_service_.beginStop();
+                   return capture_service_.joinUntil(deadline);
+                 },
+                 [this] { return capture_service_.diagnosticSnapshot(); },
+                 std::chrono::milliseconds(1000)},
+                {ApplicationShutdownPhase::CancelAndWait,
                  "export_worker",
                  [this](ApplicationShutdownDeadline deadline) {
                    return export_executor_.joinUntil(deadline);
@@ -281,12 +293,26 @@ struct Application::Impl {
   void registerHandlers() {
     registerAppHandlers(dispatcher_, capture_service_, result_store_,
                         result_actions_, &export_executor_);
+    result_actions_.setExportExecutor(export_executor_, [this](ActionTask task) {
+      const auto token = result_action_messages_.push(std::move(task));
+      if (token && !PostMessageW(tray_.hwnd(), WM_QINGYING_RESULT_ACTION_COMPLETE, 0,
+                                static_cast<LPARAM>(*token))) {
+        result_action_messages_.discard(*token);
+        OutputDebugStringW(L"QingYing could not post save completion\n");
+      }
+    });
     result_actions_.bindPinWindowActions();
   }
 
   void installMessageRouter() {
     tray_.setMessageFilter([this](UINT msg, WPARAM wparam, LPARAM lparam,
                                   LRESULT* result) -> bool {
+      if (msg == WM_QINGYING_RESULT_ACTION_COMPLETE) {
+        auto task = result_action_messages_.take<ActionTask>(static_cast<UiMessageToken>(lparam));
+        if (task && *task) { try { (*task)(); } catch (...) {} }
+        *result = 0;
+        return true;
+      }
       if (msg == WM_QINGYING_AUTOMATION_REQUEST || msg == WM_QINGYING_AUTOMATION_COMPLETE) {
         scheduler_.dispatch(msg, static_cast<UiMessageToken>(lparam));
         *result = 0;
@@ -428,6 +454,7 @@ struct Application::Impl {
   PinManager pin_manager_;
   InteractionGate interaction_gate_;
   ResultActionService result_actions_;
+  UiMessageChannel result_action_messages_;
   ExportExecutor export_executor_;
   CaptureService capture_service_;
   SelectionOverlay overlay_;

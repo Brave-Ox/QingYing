@@ -4,6 +4,31 @@
 
 namespace qingying {
 
+bool WindowDetector::snapshotAt(int x, int y, HWND& out_window,
+                                WindowRect& out_rect) const noexcept {
+  out_window = nullptr;
+  out_rect = {};
+  HWND window = GetTopWindow(nullptr);
+  for (unsigned count = 0; window && count < 128;
+       ++count, window = GetWindow(window, GW_HWNDNEXT)) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    if (!pid || pid == GetCurrentProcessId() || window == GetShellWindow() ||
+        window == GetDesktopWindow() || !IsWindowVisible(window) ||
+        IsIconic(window)) continue;
+    const auto style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if (style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) continue;
+    RECT rect{};
+    if (GetWindowRect(window, &rect) && x >= rect.left && x < rect.right &&
+        y >= rect.top && y < rect.bottom) {
+      out_window = window;
+      out_rect = {rect.left, rect.top, rect.right, rect.bottom};
+      return true;
+    }
+  }
+  return false;
+}
+
 bool WindowDetector::isSnappable(HWND hwnd) {
   if (!window_detail::commonCandidate(hwnd)) return false;
   RECT rect{};

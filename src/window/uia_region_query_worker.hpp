@@ -20,6 +20,12 @@ struct UiaRegionQueryRequest
   WindowRect owner_rect;
   std::uint64_t requested_at_ms{0};
   bool diagnostics_enabled{false};
+  std::uint64_t generation{0};
+  DWORD process_id{0};
+  std::uint64_t deadline_ms{0};
+  std::shared_ptr<const Image> background;
+  WindowRect image_screen_rect;
+  HWND notify_window{nullptr};
 };
 
 struct UiaRegionQueryResult
@@ -39,14 +45,21 @@ struct UiaRegionQueryResult
   bool cache_hit{false};
   bool suppressed_by_cooldown{false};
   SmartRegionMsaaTraversalDiagnostic msaa_diagnostic;
+  std::uint64_t generation{0};
+  DWORD process_id{0};
+  std::uint64_t deadline_ms{0};
+  bool timed_out{false};
+  bool is_chromium_browser_chrome{false};
+  std::uint8_t minimum_visual_confidence{70};
 };
+
+enum class RegionQueryLane { Combined, Discovery, Accessibility };
 
 using UiaRegionQueryFunction = void (*)(
     const UiaRegionQueryRequest& request, UiaRegionQueryResult& result,
     void* context) noexcept;
 
-// 允许同一窗口内仍覆盖当前鼠标的近期结果合并，避免 UIA 查询慢于鼠标
-// 更新节流时因请求号变化而被全部丢弃。跨窗口、超时或跨控件结果必须拒绝。
+// Submission is strictly scoped to the current request and session generation.
 bool isUiaQueryResultApplicable(
     const UiaRegionQueryResult& result,
     const UiaRegionQueryRequest& current_request,
@@ -57,21 +70,30 @@ std::size_t retainAccessibilityCandidates(
     const SmartRegionCandidate* candidates, std::size_t candidate_count,
     SmartRegionCandidate* out_candidates, std::size_t capacity) noexcept;
 
+std::size_t retainRegionCandidates(const SmartRegionCandidate* candidates,
+    std::size_t count, SmartRegionCandidate* output, std::size_t capacity) noexcept;
+
+// Rebind only a fresh local hit inside the same window/session context.
+// UI still accepts only the resulting current request ID.
+bool rebindUiaQueryResult(UiaRegionQueryResult& result,
+                         const UiaRegionQueryRequest& current_request,
+                         std::uint64_t now_ms) noexcept;
+
 bool selectUiaQueryCandidate(const UiaRegionQueryResult& result,
                              const SmartRegionCandidate& fast_candidate,
                              POINT screen_point,
                              const WindowRect& owner_rect,
                              SmartRegionCandidate& out) noexcept;
 
-// 在专用后台线程中串行执行跨进程 UIA 查询。请求采用 latest-wins 合并，
-// 查询函数和 context 仅供内部测试替换；context 是不拥有的观察指针，必须
-// 比工作器存活更久。
+// Each instance owns one serial background lane with latest-wins submission.
+// Query function/context are test hooks; the observer context must outlive the worker.
 class UiaRegionQueryWorker
 {
  public:
   explicit UiaRegionQueryWorker(
       UiaRegionQueryFunction query_function = nullptr,
-      void* query_context = nullptr);
+      void* query_context = nullptr,
+      RegionQueryLane lane = RegionQueryLane::Combined);
   ~UiaRegionQueryWorker();
 
   UiaRegionQueryWorker(const UiaRegionQueryWorker&) = delete;

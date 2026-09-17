@@ -19,7 +19,8 @@ class ExportExecutor final {
  public:
   using Task = std::function<void()>;
 
-  explicit ExportExecutor(std::size_t max_queued);
+  explicit ExportExecutor(std::size_t max_queued,
+                          std::string thread_name = "export_worker");
   ~ExportExecutor();
   ExportExecutor(const ExportExecutor&) = delete;
   ExportExecutor& operator=(const ExportExecutor&) = delete;
@@ -48,6 +49,7 @@ class ExportExecutor final {
   void run() noexcept;
 
   const std::size_t max_queued_;
+  const std::string thread_name_;
   std::mutex shutdown_mutex_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;

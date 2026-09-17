@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/action_handlers.hpp"
 
 #include "qingying/action/i_action_handler.hpp"
+#include "qingying/action/i_async_action_handler.h"
 #include "qingying/action/image.hpp"
 #include "qingying/action/types.hpp"
 #include "qingying/app/capture_service.h"
@@ -88,6 +89,20 @@ class CaptureWindowHandler final : public IActionHandler {
 
  private:
   CaptureService& capture_service_;
+};
+
+class AsyncCaptureHandler final : public IAsyncActionHandler {
+ public:
+  AsyncCaptureHandler(CaptureService& service, ActionType action)
+      : service_(service), action_(action) {}
+  ActionType type() const override { return action_; }
+  void handleAsync(const ActionRequest& request, ActionCompletion completion,
+                   const ActionExecutor&) override {
+    service_.captureActionAsync(request, std::move(completion));
+  }
+ private:
+  CaptureService& service_;
+  ActionType action_;
 };
 
 class CopyHandler final : public IActionHandler {
@@ -186,6 +201,9 @@ void registerAppHandlers(ActionDispatcher& dispatcher,
       std::make_unique<CropCenterHandler>(capture_service));
   dispatcher.registerHandler(
       std::make_unique<CaptureWindowHandler>(capture_service));
+  for (const auto action : {ActionType::CaptureRegion, ActionType::CropCenter,
+                            ActionType::CaptureWindow})
+    dispatcher.registerAsyncHandler(std::make_unique<AsyncCaptureHandler>(capture_service, action));
   dispatcher.registerHandler(
       std::make_unique<CopyHandler>(results, result_actions));
   dispatcher.registerHandler(

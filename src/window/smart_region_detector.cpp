@@ -780,7 +780,8 @@ bool SmartRegionCandidate::contains(int screen_x, int screen_y) const noexcept
 void SmartRegionCandidateCollection::replace(
     const SmartRegionCandidate* candidates, std::size_t candidate_count,
     int screen_x, int screen_y, const WindowRect& owner_rect,
-    const SmartRegionCandidate& selected) noexcept
+    const SmartRegionCandidate& selected,
+    std::uint8_t minimum_visual_confidence) noexcept
 {
   clear();
   if (candidates == nullptr || owner_rect.empty())
@@ -793,7 +794,8 @@ void SmartRegionCandidateCollection::replace(
   for (std::size_t input_index = 0; input_index < input_count; ++input_index)
   {
     const SmartRegionCandidate& candidate = candidates[input_index];
-    if (candidateRejection(candidate, screen_x, screen_y, owner_rect) !=
+    if (candidateRejection(candidate, screen_x, screen_y, owner_rect,
+                           minimum_visual_confidence) !=
         SmartRegionCandidateRejection::None)
     {
       continue;
@@ -1455,6 +1457,20 @@ bool SmartRegionHoverStabilizer::update(
     return true;
   }
 
+  // A lightweight window snapshot must not restart a local candidate's dwell.
+  if (!isDetailedCandidate(candidate)) {
+    if (isDetailedCandidate(m_pending) &&
+        m_pending.contains(screen_point.x, screen_point.y))
+      return update(m_pending, now_ms, screen_point,
+                    preserve_browser_wide_visual_fallback);
+    if (isDetailedCandidate(m_stable) &&
+        m_stable.contains(screen_point.x, screen_point.y)) {
+      m_pending = SmartRegionCandidate{};
+      m_pending_since_ms = 0;
+      return false;
+    }
+  }
+
   if (candidatesEqual(candidate, m_stable)) {
     m_pending = SmartRegionCandidate{};
     m_pending_since_ms = 0;
@@ -1692,7 +1708,9 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   WindowRect window_rect;
   const std::uint64_t window_detection_begin_ms =
       diagnostic_enabled ? GetTickCount64() : 0;
-  if (!window_detector.detectAt(screen_x, screen_y, root_window, window_rect)) {
+  if (!(policy == SmartRegionDetectionPolicy::UiSnapshot
+            ? window_detector.snapshotAt(screen_x, screen_y, root_window, window_rect)
+            : window_detector.detectAt(screen_x, screen_y, root_window, window_rect))) {
     if (diagnostic_enabled) {
       diagnostic_event.window_detection_attempted = true;
       diagnostic_event.window_detection_ms =
@@ -1705,7 +1723,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     diagnostic_event.window_detection_attempted = true;
     diagnostic_event.window_detection_ms =
         GetTickCount64() - window_detection_begin_ms;
-    recordWindowContext(diagnostic_event, root_window, screen_x, screen_y);
+    if (policy != SmartRegionDetectionPolicy::UiSnapshot)
+      recordWindowContext(diagnostic_event, root_window, screen_x, screen_y);
   }
 
   const POINT screen_point{screen_x, screen_y};
@@ -1768,7 +1787,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
   WindowRect chromium_browser_chrome;
   bool use_workbench_visual_policy = false;
-  if (policy != SmartRegionDetectionPolicy::WindowOnly)
+  if (policy != SmartRegionDetectionPolicy::WindowOnly &&
+      policy != SmartRegionDetectionPolicy::UiSnapshot)
   {
     SmartRegionCandidate known_content;
     const std::uint64_t known_content_lookup_begin_ms =
@@ -1805,6 +1825,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
 
   if (policy != SmartRegionDetectionPolicy::WindowOnly &&
+      policy != SmartRegionDetectionPolicy::UiSnapshot &&
       visual_context != nullptr && visual_context->valid() &&
       has_client_rect) {
     window_detail::VisualRegionDiagnostic visual_diagnostic;
@@ -1890,6 +1911,8 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   const std::uint8_t minimum_visual_confidence =
       use_workbench_visual_policy ? kMinimumWorkbenchVisualConfidence
                                   : kMinimumVisualConfidence;
+  if (window_snapshot != nullptr)
+    window_snapshot->minimum_visual_confidence = minimum_visual_confidence;
   const bool detected =
       diagnostic_enabled
           ? SmartRegionCandidateSelector::selectBest(
@@ -1904,7 +1927,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   if (collection != nullptr)
   {
     collection->replace(candidates, candidate_count, screen_x, screen_y,
-                        window_rect, out);
+                        window_rect, out, minimum_visual_confidence);
   }
   recordDetection(diagnostics, out, diagnostic_event, begin_ms);
   return detected;

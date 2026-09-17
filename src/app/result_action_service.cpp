@@ -2,6 +2,7 @@
 
 #include "qingying/export/export_service.hpp"
 #include "qingying/app/save_policy.h"
+#include "qingying/app/export_executor.h"
 #include "qingying/pin/pin_manager.hpp"
 
 #include <Windows.h>
@@ -12,6 +13,13 @@
 
 namespace qingying {
 namespace {
+
+ActionResult unavailableForExport() {
+  ActionResult result;
+  result.error_code = ErrorCode::kShuttingDown;
+  result.message = "export executor is stopping";
+  return result;
+}
 
 ActionResult savePrepared() {
   ActionResult result;
@@ -62,6 +70,11 @@ ResultActionService::ResultActionService(ResultStore& results,
 
 void ResultActionService::setOwnerWindow(HWND owner_window) noexcept {
   owner_window_ = owner_window;
+}
+
+void ResultActionService::setExportExecutor(ExportExecutor& executor, ActionExecutor post_to_ui) {
+  export_executor_ = &executor;
+  post_to_ui_ = std::move(post_to_ui);
 }
 
 void ResultActionService::bindPinWindowActions() {
@@ -180,7 +193,7 @@ ActionResult ResultActionService::save(
     showSaveUnavailableMessage();
     return noResult("save");
   }
-  return saveImageWithDialog(*lease.image(), true);
+  return saveImageWithDialog(*lease.image(), true, lease);
 }
 ActionResult ResultActionService::pin(
     ResultScopeId scope, const ResultSelection& selection,
@@ -253,7 +266,7 @@ ActionResult ResultActionService::saveImage(const Image& image,
 }
 
 ActionResult ResultActionService::saveImageWithDialog(
-    const Image& image, bool show_error_message) {
+    const Image& image, bool show_error_message, ResultLease lease) {
   if (image.empty()) {
     ActionResult result = noResult("save");
     if (show_error_message) {
@@ -285,6 +298,40 @@ ActionResult ResultActionService::saveImageWithDialog(
     return result;
   }
 
+  if (export_executor_ && post_to_ui_) {
+    // Result-backed saves hold a lease; pin images need their own immutable snapshot.
+    auto snapshot = lease ? std::shared_ptr<const Image>{}
+                          : std::make_shared<const Image>(image);
+    auto authorize = [executor = export_executor_] { return !executor->stopping(); };
+    const bool accepted = export_executor_->submit(
+        [this, lease, snapshot, path = *selected_path, authorize, show_error_message] {
+      ActionResult result;
+      try {
+        if (export_executor_->stopping()) result = unavailableForExport();
+        else if (lease) {
+          PreparedSave task{lease, path, true, authorize};
+          result = executeSave(std::move(task));
+        } else {
+          result = saveImage(*snapshot, kInvalidResultId, path, true, authorize);
+        }
+      } catch (...) {
+        result.error_code = ErrorCode::kExportFailed;
+        result.message = "save worker failed";
+      }
+      post_to_ui_([this, result, show_error_message] {
+        if (!result.ok && show_error_message && !gate_.stopping()) showSaveErrorMessage();
+      });
+    }, {}, 0, "gui_save");
+    if (!accepted) {
+      ActionResult result;
+      result.error_code = export_executor_->stopping() ? ErrorCode::kShuttingDown : ErrorCode::kResourceLimit;
+      result.message = "save queue unavailable";
+      return result;
+    }
+    auto result = savePrepared();
+    result.message = "save queued";
+    return result;
+  }
   ActionResult result = saveImage(image, kInvalidResultId, *selected_path, true);
   if (!result.ok && show_error_message) {
     showSaveErrorMessage();

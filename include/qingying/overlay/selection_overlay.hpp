@@ -34,7 +34,7 @@ class SelectionOverlay {
   // `closed_callback` 在窗口销毁后调用，可用于推进外层 Workflow；中止
   // / 应用退出时回调会被清空，不会交付半成品选区。
   // Returns false if overlay could not be shown.
-  bool show(const Image& background, SelectionCallback callback,
+  bool show(Image background, SelectionCallback callback,
             LongShotControlCallback longshot_control_callback = {},
             const SelectionIntent& initial_selection = {},
             SelectionClosedCallback closed_callback = {},

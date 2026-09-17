@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "qingying/window/smart_region_detector.hpp"
+#include "qingying/app/app_messages.hpp"
 #include "known_content_locator.hpp"
 #include "msaa_region_locator.hpp"
 #include "uia_region_query_worker.hpp"
@@ -1567,7 +1568,7 @@ TEST(UiaRegionQueryWorkerTest, ReusesRecentResultForNearbyPointer)
   window_detail::UiaRegionQueryResult cached_result;
   ASSERT_TRUE(waitForUiaQueryResult(worker, cached_result));
   EXPECT_EQ(cached_result.request_id, 2U);
-  EXPECT_EQ(cached_result.requested_at_ms, 140U);
+  EXPECT_EQ(cached_result.requested_at_ms, 100U);
   EXPECT_TRUE(cached_result.cache_hit);
   EXPECT_EQ(context.call_count, 1);
 }
@@ -1811,8 +1812,109 @@ TEST(UiaRegionQueryWorkerTest,
   EXPECT_LT(retained_count, SmartRegionMaxCandidates);
 }
 
+TEST(UiaRegionQueryWorkerTest, PreservesWorkerVisualPolicyInSelectionAndCycling) {
+  window_detail::UiaRegionQueryResult result;
+  result.candidate_count = 2;
+  result.candidates[0] = {1, 2, {100, 100, 300, 200}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Visual;
+  result.candidates[0].semantic = SmartRegionSemantic::ContentSurface;
+  result.candidates[0].visual_confidence = 48;
+  result.candidates[1] = {1, 1, {0, 0, 800, 600}, SmartRegionKind::ClientArea};
+  result.candidates[1].source = SmartRegionDiagnosticSource::ClientArea;
+  result.candidates[1].semantic = SmartRegionSemantic::Fallback;
+  SmartRegionCandidate selected;
+  ASSERT_TRUE(window_detail::selectUiaQueryCandidate(result, {}, {120, 120},
+      {0, 0, 800, 600}, selected));
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::ClientArea);
+  result.minimum_visual_confidence = 45;
+  ASSERT_TRUE(window_detail::selectUiaQueryCandidate(result, {}, {120, 120},
+      {0, 0, 800, 600}, selected));
+  EXPECT_EQ(selected.source, SmartRegionDiagnosticSource::Visual);
+  SmartRegionCandidateCollection collection;
+  collection.replace(result.candidates, 2, 120, 120, {0, 0, 800, 600}, selected,
+                     result.minimum_visual_confidence);
+  EXPECT_EQ(collection.count(), 2u);
+  EXPECT_EQ(collection.current().source, SmartRegionDiagnosticSource::Visual);
+}
+
+TEST(UiaRegionQueryWorkerTest, ValidatesGenerationProcessDeadlineAndBounds) {
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 7;
+  result.generation = 10;
+  result.process_id = 42;
+  result.deadline_ms = 1100;
+  result.requested_at_ms = 1000;
+  result.root_window = reinterpret_cast<HWND>(1);
+  result.owner_rect = {0, 0, 800, 600};
+  result.candidate_count = 1;
+  result.candidates[0] = {1, 2, {100, 100, 200, 160}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  window_detail::UiaRegionQueryRequest request{7, result.root_window,
+      {120, 120}, result.owner_rect, 1000};
+  request.generation = 10;
+  request.process_id = 42;
+  EXPECT_TRUE(window_detail::isUiaQueryResultApplicable(result, request, 1050));
+  request.generation = 11;
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1050));
+  request.generation = 10;
+  request.process_id = 43;
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1050));
+  request.process_id = 42;
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1100));
+  request.owner_rect.right = 700;
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1050));
+}
+
+TEST(UiaRegionQueryWorkerTest, ExpiredQueuedRequestNeverEntersProvider) {
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, GetTickCount64()};
+  request.deadline_ms = GetTickCount64() - 1;
+  ASSERT_TRUE(worker.request(request));
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_TRUE(result.timed_out);
+  EXPECT_EQ(context.call_count, 0);
+}
+
+TEST(UiaRegionQueryWorkerTest, SlowProviderCooldownCoversWholeProcessWindow) {
+  CountingUiaQueryContext context;
+  auto query = [](const window_detail::UiaRegionQueryRequest& request,
+      window_detail::UiaRegionQueryResult& result, void* context) noexcept {
+    Sleep(100);
+    runCountingUiaQuery(request, result, context);
+  };
+  window_detail::UiaRegionQueryWorker worker(query, &context);
+  ASSERT_TRUE(worker.start());
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, GetTickCount64()};
+  request.process_id = 42;
+  request.deadline_ms = request.requested_at_ms + 20;
+  ASSERT_TRUE(worker.request(request));
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_TRUE(result.timed_out);
+  request.request_id = 2;
+  request.screen_point = {400, 400};
+  request.requested_at_ms = GetTickCount64();
+  request.deadline_ms = request.requested_at_ms + 500;
+  ASSERT_TRUE(worker.request(request));
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_TRUE(result.suppressed_by_cooldown);
+  EXPECT_EQ(context.call_count, 1);
+  request.request_id = 3;
+  request.process_id = 43;
+  ASSERT_TRUE(worker.request(request));
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_FALSE(result.suppressed_by_cooldown);
+  EXPECT_EQ(context.call_count, 2);
+}
+
 TEST(UiaRegionQueryWorkerTest,
-     AppliesRecentResultWhenItsLocalCandidateContainsTheNewPointer)
+     RejectsPreviousRequestEvenWhenCandidateContainsTheNewPointer)
 {
   window_detail::UiaRegionQueryResult result;
   result.request_id = 7;
@@ -1828,7 +1930,7 @@ TEST(UiaRegionQueryWorkerTest,
   const window_detail::UiaRegionQueryRequest current_request{
       8, reinterpret_cast<HWND>(1), {132, 122}, {0, 0, 800, 600}, 1040};
 
-  EXPECT_TRUE(window_detail::isUiaQueryResultApplicable(result,
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result,
                                                          current_request,
                                                          1050));
 }
@@ -2497,6 +2599,241 @@ TEST(MsaaRegionLocatorTest, RejectsCandidateFromForeignTopLevelWindow)
   EXPECT_FALSE(window_detail::makeMsaaCandidate(
       root_window.root(), foreign_window.root(), point, properties,
       candidate));
+}
+
+
+struct LatencyQueryContext {
+  std::mutex mutex;
+  std::condition_variable condition;
+  int entered{0};
+  int released{0};
+  void release(int count) {
+    { std::lock_guard<std::mutex> lock(mutex); released = count; }
+    condition.notify_all();
+  }
+  bool waitEntered(int count) {
+    std::unique_lock<std::mutex> lock(mutex);
+    return condition.wait_for(lock, std::chrono::seconds(1),
+                              [&] { return entered >= count; });
+  }
+};
+
+void runLatencyQuery(const window_detail::UiaRegionQueryRequest& request,
+                     window_detail::UiaRegionQueryResult& result,
+                     void* opaque) noexcept {
+  auto& context = *static_cast<LatencyQueryContext*>(opaque);
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    const int call = ++context.entered;
+    context.condition.notify_all();
+    context.condition.wait(lock, [&] { return context.released >= call; });
+  }
+  result.succeeded = true;
+  result.candidate_count = 1;
+  result.candidates[0] = {reinterpret_cast<std::uintptr_t>(request.root_window),
+      request.request_id, {80, 80, 180, 180}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+}
+
+struct ReleaseLatencyQuery {
+  LatencyQueryContext& context;
+  ~ReleaseLatencyQuery() { context.release(10000); }
+};
+
+TEST(UiaRegionQueryWorkerTest, ContinuousMotionReceivesCompletedLocalHitBeforeNextProviderReturns) {
+  LatencyQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runLatencyQuery, &context);
+  ReleaseLatencyQuery release{context};
+  ASSERT_TRUE(worker.start());
+  const auto now = GetTickCount64();
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, now};
+  request.generation = 7;
+  request.process_id = 9;
+  request.deadline_ms = now + 120;
+  ASSERT_TRUE(worker.request(request));
+  ASSERT_TRUE(context.waitEntered(1));
+  // No idle interval: all newer samples arrive while the first query is active.
+  for (int i = 2; i <= 8; ++i) {
+    request.request_id = i;
+    request.screen_point = {100 + i, 100 + i};
+    ASSERT_TRUE(worker.request(request));
+  }
+  context.release(1);
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_EQ(result.request_id, 8U);
+  EXPECT_EQ(result.candidates[0].target_window, 1U);
+  EXPECT_TRUE(window_detail::isUiaQueryResultApplicable(result, request, GetTickCount64()));
+}
+
+TEST(UiaRegionQueryWorkerTest, DiscoveryCompletesWhileAccessibilityProviderIsBlocked) {
+  LatencyQueryContext accessibility;
+  CountingUiaQueryContext discovery;
+  window_detail::UiaRegionQueryWorker access_worker(&runLatencyQuery, &accessibility,
+      window_detail::RegionQueryLane::Accessibility);
+  ReleaseLatencyQuery release{accessibility};
+  window_detail::UiaRegionQueryWorker discovery_worker(&runCountingUiaQuery, &discovery,
+      window_detail::RegionQueryLane::Discovery);
+  ASSERT_TRUE(access_worker.start());
+  ASSERT_TRUE(discovery_worker.start());
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, GetTickCount64()};
+  ASSERT_TRUE(access_worker.request(request));
+  ASSERT_TRUE(accessibility.waitEntered(1));
+  ASSERT_TRUE(discovery_worker.request(request));
+  window_detail::UiaRegionQueryResult result;
+  EXPECT_TRUE(waitForUiaQueryResult(discovery_worker, result));
+  EXPECT_TRUE(result.succeeded);
+  EXPECT_EQ(discovery.call_count, 1);
+  EXPECT_TRUE(access_worker.hasPendingWork());
+  EXPECT_NE(discovery_worker.diagnosticSnapshot().find("region_discovery_worker"),
+            std::string::npos);
+}
+
+TEST(UiaRegionQueryWorkerTest, RebindingRequiresSameContextFreshnessAndLocalGeometry) {
+  window_detail::UiaRegionQueryRequest request{2, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, 1020};
+  request.generation = 3;
+  request.process_id = 4;
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = 1;
+  result.root_window = request.root_window;
+  result.owner_rect = request.owner_rect;
+  result.generation = 3;
+  result.process_id = 4;
+  result.requested_at_ms = 1000;
+  result.deadline_ms = 1120;
+  result.candidate_count = 1;
+  result.candidates[0] = {1, 7, {80, 80, 180, 180}, SmartRegionKind::KnownContent};
+  result.candidates[0].source = SmartRegionDiagnosticSource::Uia;
+  result.candidates[0].semantic = SmartRegionSemantic::ActionableControl;
+  const auto original = result;
+  EXPECT_TRUE(window_detail::rebindUiaQueryResult(result, request, 1050));
+  EXPECT_EQ(result.request_id, 2U);
+  EXPECT_EQ(result.requested_at_ms, 1000U);
+  EXPECT_EQ(result.deadline_ms, 1120U);
+  result = original;
+  request.generation++;
+  EXPECT_FALSE(window_detail::rebindUiaQueryResult(result, request, 1050));
+  request.generation--;
+  request.process_id++;
+  EXPECT_FALSE(window_detail::rebindUiaQueryResult(result, request, 1050));
+  request.process_id--;
+  request.screen_point = {300, 300};
+  EXPECT_FALSE(window_detail::rebindUiaQueryResult(result, request, 1050));
+  request.screen_point = {100, 100};
+  EXPECT_FALSE(window_detail::rebindUiaQueryResult(result, request, 1120));
+  result.candidates[0].kind = SmartRegionKind::Window;
+  result.candidates[0].source = SmartRegionDiagnosticSource::Window;
+  result.candidates[0].semantic = SmartRegionSemantic::Fallback;
+  EXPECT_FALSE(window_detail::rebindUiaQueryResult(result, request, 1050));
+}
+
+TEST(UiaRegionQueryWorkerTest, FrozenSnapshotCacheIsReusedOnlyForSameImage) {
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, GetTickCount64()};
+  request.background = std::make_shared<Image>();
+  request.image_screen_rect = request.owner_rect;
+  ASSERT_TRUE(worker.request(request));
+  window_detail::UiaRegionQueryResult result;
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  request.request_id++;
+  request.requested_at_ms = GetTickCount64();
+  ASSERT_TRUE(worker.request(request));
+  ASSERT_TRUE(waitForUiaQueryResult(worker, result));
+  EXPECT_TRUE(result.cache_hit);
+  worker.beginStop();
+  ASSERT_TRUE(worker.joinUntil(std::chrono::steady_clock::now() + std::chrono::seconds(1)));
+  EXPECT_EQ(context.call_count, 1);
+
+  // A separate worker proves an image change cannot reuse either the cache or latest slot.
+  CountingUiaQueryContext changed_context;
+  window_detail::UiaRegionQueryWorker changed(&runCountingUiaQuery, &changed_context);
+  ASSERT_TRUE(changed.start());
+  request.request_id = 1;
+  ASSERT_TRUE(changed.request(request));
+  ASSERT_TRUE(waitForUiaQueryResult(changed, result));
+  request.request_id = 2;
+  request.background = std::make_shared<Image>();
+  request.requested_at_ms = GetTickCount64();
+  ASSERT_TRUE(changed.request(request));
+  ASSERT_TRUE(waitForUiaQueryResult(changed, result));
+  EXPECT_FALSE(result.cache_hit);
+  EXPECT_EQ(changed_context.call_count, 2);
+}
+
+TEST(UiaRegionQueryWorkerTest, CompletionPostsUiNotificationWithoutPollingTimer) {
+  const HWND target = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0,
+      HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+  ASSERT_NE(target, nullptr);
+  CountingUiaQueryContext context;
+  window_detail::UiaRegionQueryWorker worker(&runCountingUiaQuery, &context);
+  ASSERT_TRUE(worker.start());
+  window_detail::UiaRegionQueryRequest request{1, reinterpret_cast<HWND>(1),
+      {100, 100}, {0, 0, 1000, 800}, GetTickCount64()};
+  request.notify_window = target;
+  EXPECT_TRUE(worker.request(request));
+  bool notified = false;
+  for (int i = 0; i < 50 && !notified; ++i) {
+    MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_POSTMESSAGE);
+    MSG message{};
+    notified = PeekMessageW(&message, target, WM_QINGYING_SMART_REGION_COMPLETE,
+        WM_QINGYING_SMART_REGION_COMPLETE, PM_REMOVE) != FALSE;
+  }
+  EXPECT_TRUE(notified);
+  window_detail::UiaRegionQueryResult result;
+  EXPECT_TRUE(worker.tryTakeLatest(result));
+  worker.stop();
+  DestroyWindow(target);
+}
+
+TEST(SmartRegionHoverStabilizerTest, WindowSnapshotsPreserveLocalCandidateAndSwitchStartTime) {
+  SmartRegionCandidate first{1, 11, {80, 80, 180, 180}, SmartRegionKind::KnownContent};
+  first.source = SmartRegionDiagnosticSource::Visual;
+  first.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate next = first;
+  next.target_window = 12;
+  next.rect = {90, 90, 190, 190};
+  SmartRegionCandidate fallback{1, 1, {0, 0, 1000, 800}, SmartRegionKind::Window};
+  fallback.source = SmartRegionDiagnosticSource::Window;
+  fallback.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionHoverStabilizer stabilizer;
+  ASSERT_TRUE(stabilizer.update(first, 100, {100, 100}));
+  EXPECT_FALSE(stabilizer.update(fallback, 116, {100, 100}));
+  EXPECT_FALSE(stabilizer.hasPendingCandidate());
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 11U);
+  EXPECT_FALSE(stabilizer.update(next, 120, {100, 100}));
+  for (std::uint64_t time : {136U, 152U}) {
+    EXPECT_FALSE(stabilizer.update(fallback, time, {100, 100}));
+    EXPECT_EQ(stabilizer.pendingSinceMs(), 120U);
+  }
+  EXPECT_TRUE(stabilizer.update(fallback, 168, {100, 100}));
+  EXPECT_EQ(stabilizer.stableCandidate().target_window, 12U);
+  EXPECT_FALSE(stabilizer.hasPendingCandidate());
+}
+
+TEST(SmartRegionHoverStabilizerTest, LeavingPendingLocalHitDiscardsItBeforeClickSelection) {
+  SmartRegionCandidate first{1, 11, {80, 80, 180, 180}, SmartRegionKind::KnownContent};
+  first.source = SmartRegionDiagnosticSource::Visual;
+  first.semantic = SmartRegionSemantic::ContentSurface;
+  SmartRegionCandidate next = first;
+  next.target_window = 12;
+  next.rect = {90, 90, 190, 190};
+  SmartRegionCandidate fallback{1, 1, {0, 0, 1000, 800}, SmartRegionKind::Window};
+  fallback.source = SmartRegionDiagnosticSource::Window;
+  fallback.semantic = SmartRegionSemantic::Fallback;
+  SmartRegionHoverStabilizer stabilizer;
+  ASSERT_TRUE(stabilizer.update(first, 100, {100, 100}));
+  ASSERT_FALSE(stabilizer.update(next, 120, {100, 100}));
+  ASSERT_TRUE(stabilizer.hasPendingCandidate());
+  EXPECT_FALSE(stabilizer.update(fallback, 136, {85, 85}));
+  EXPECT_FALSE(stabilizer.hasPendingCandidate());
+  EXPECT_EQ(stabilizer.selectionCandidate().target_window, 11U);
 }
 
 }  // namespace

@@ -27,6 +27,8 @@ namespace {
 
 // 截图期间临时注册热键：遮罩不抢前台激活权（WS_EX_NOACTIVATE），
 // 键盘消息不会发给遮罩，因此通过 WM_HOTKEY 接收截图操作。
+const Image& emptyBackground() { static const Image empty; return empty; }
+
 constexpr int kEscapeHotkeyId = 2;
 constexpr int kCandidateNextHotkeyId = 7;
 constexpr int kCandidatePreviousHotkeyId = 8;
@@ -67,6 +69,7 @@ struct OverlayWindowData {
   SmartRegionUpdateGate hover_update_gate;
   SmartRegionAsyncPresentationGate async_presentation_gate;
   window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
+  window_detail::UiaRegionQueryWorker* discovery_worker{nullptr};
   SmartRegionCandidate hover_candidate;
   SmartRegionCandidate fast_hover_candidate;
   SmartRegionCandidateCollection hover_candidates;
@@ -82,6 +85,9 @@ struct OverlayWindowData {
   bool hover_motion_fast{false};
   bool has_deferred_uia_result{false};
   std::uint64_t uia_request_id{0};
+  std::uint64_t region_generation{0};
+  std::uint64_t hover_timer_pending_since_ms{0};
+  std::uint8_t minimum_visual_confidence{70};
   window_detail::UiaRegionQueryRequest current_uia_request;
   bool has_hover{false};
   bool has_pending_hover_update{false};
@@ -90,7 +96,7 @@ struct OverlayWindowData {
   int pending_hover_y{0};
   std::uint64_t pending_hover_queued_at_ms{0};
   OverlayClientRect hover_rect;
-  Image background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
+  std::shared_ptr<const Image> background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
   SelectionAction longshot_pending_action{SelectionAction::None};
   bool capture_passthrough{false};
@@ -317,7 +323,12 @@ void clearHover(OverlayWindowData* data) noexcept
   {
     data->uia_query_worker->clear();
   }
+  if (data->discovery_worker != nullptr)
+  {
+    data->discovery_worker->clear();
+  }
   data->hover_stabilizer.clear();
+  data->hover_timer_pending_since_ms = 0;
   data->smart_region_visual_cache.clear();
   data->hover_update_gate.reset();
   data->async_presentation_gate.reset();
@@ -349,7 +360,7 @@ void releaseImagePayload(OverlayWindowData* data) noexcept {
   if (data == nullptr) {
     return;
   }
-  data->background = Image{};
+  data->background.reset();
   data->longshot_preview = Image{};
 }
 
@@ -568,6 +579,9 @@ void applyHoverCandidate(OverlayWindowData* data,
       screenRectToOverlayClient(data->hover_candidate.rect, data->screen);
   data->has_hover = !data->hover_rect.empty();
   if (data->hover_stabilizer.hasPendingCandidate()) {
+    if (had_pending_candidate &&
+        pending_since_ms == data->hover_stabilizer.pendingSinceMs() &&
+        data->hover_timer_pending_since_ms == pending_since_ms) return;
     const UINT_PTR timer_id = SetTimer(
         data->overlay, kHoverStabilizeTimerId,
         static_cast<UINT>(SmartRegionHoverStabilizer::CandidateSwitchDelayMs),
@@ -576,9 +590,11 @@ void applyHoverCandidate(OverlayWindowData* data,
       // 定时器创建失败时保留当前稳定候选；下一次鼠标移动会再次尝试切换。
       return;
     }
+    data->hover_timer_pending_since_ms = data->hover_stabilizer.pendingSinceMs();
     return;
   }
   // 候选已稳定，不保留后台定时器，避免空闲覆盖层周期性重绘。
+  data->hover_timer_pending_since_ms = 0;
   static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
 }
 
@@ -616,6 +632,7 @@ bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
 
   static_cast<void>(KillTimer(hwnd, kHoverStabilizeTimerId));
   data->hover_stabilizer.clear();
+  data->hover_timer_pending_since_ms = 0;
   data->smart_region_visual_cache.clear();
   applyHoverCandidate(data, data->hover_candidates.current(),
                       data->hover_screen_point);
@@ -626,8 +643,7 @@ bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
   return true;
 }
 
-// UI 线程只执行本地窗口、已知区域和冻结截图视觉检测。跨进程 UIA/MSAA
-// 由专用工作线程补充，避免无响应提供方阻塞 Overlay 消息循环。
+// UI reads bounded window metadata and cached geometry; both discovery lanes run off-thread.
 void updateHover(OverlayWindowData* data, int client_x, int client_y)
 {
   if (data == nullptr ||
@@ -650,18 +666,14 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   const WindowRect image_screen_rect{data->screen.x, data->screen.y,
                                      data->screen.right(),
                                      data->screen.bottom()};
-  const SmartRegionVisualContext visual_context{&data->background,
-                                                image_screen_rect};
 
   SmartRegionCandidate candidate;
   SmartRegionWindowSnapshot window_snapshot;
-  const SmartRegionDetectionPolicy policy =
-      data->smart_region_mode == SmartRegionMode::WindowOnly
-          ? SmartRegionDetectionPolicy::WindowOnly
-          : SmartRegionDetectionPolicy::FastFallbackOnly;
+  SmartRegionCandidateCollection fallbacks;
+  const SmartRegionDetectionPolicy policy = SmartRegionDetectionPolicy::UiSnapshot;
   if (!data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
-          &visual_context, policy, &data->hover_candidates,
+          nullptr, policy, &fallbacks,
           &window_snapshot, &data->smart_region_visual_cache))
   {
     static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
@@ -677,33 +689,61 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
       data->hover_motion_elapsed_ms, data->hover_motion_fast));
   static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
       data->smart_region_overlay_render_count));
+  const HWND root = reinterpret_cast<HWND>(window_snapshot.root_window);
+  DWORD pid = 0;
+  GetWindowThreadProcessId(root, &pid);
+  const auto& previous = data->current_uia_request;
+  const auto& bounds = window_snapshot.owner_rect;
+  const bool context_changed = previous.root_window != root ||
+      previous.process_id != pid || previous.owner_rect.left != bounds.left ||
+      previous.owner_rect.top != bounds.top || previous.owner_rect.right != bounds.right ||
+      previous.owner_rect.bottom != bounds.bottom;
+  if (context_changed) {
+    ++data->region_generation;
+    data->hover_stabilizer.clear();
+    data->hover_timer_pending_since_ms = 0;
+    data->hover_candidates.clear();
+    data->has_deferred_uia_result = false;
+    data->use_browser_chrome_visual_fallback = false;
+    data->minimum_visual_confidence = 70;
+  }
   data->fast_hover_candidate = candidate;
-  data->use_browser_chrome_visual_fallback =
-      window_snapshot.is_chromium_browser_chrome;
-  applyHoverCandidate(data, candidate, data->hover_screen_point);
+  // Previously discovered geometry is cheap to test against the new pointer.
+  SmartRegionCandidate cached[SmartRegionMaxCandidates];
+  std::size_t cached_count = 0;
+  for (std::size_t i = 0; i < data->hover_candidates.count() &&
+       cached_count < SmartRegionMaxCandidates - fallbacks.count(); ++i)
+    cached[cached_count++] = data->hover_candidates.candidateAt(i);
+  for (std::size_t i = 0; i < fallbacks.count() &&
+       cached_count < SmartRegionMaxCandidates; ++i)
+    cached[cached_count++] = fallbacks.candidateAt(i);
+  SmartRegionCandidate selected = candidate;
+  SmartRegionCandidateSelector::selectBest(cached, cached_count, screen_x, screen_y,
+      bounds, selected, data->minimum_visual_confidence);
+  data->hover_candidates.replace(cached, cached_count, screen_x, screen_y,
+      bounds, selected, data->minimum_visual_confidence);
+  applyHoverCandidate(data, selected, data->hover_screen_point);
 
-  if (data->smart_region_mode != SmartRegionMode::DetectElements)
-  {
-    return;
-  }
-
-  if (data->uia_query_worker == nullptr || !window_snapshot.valid())
-  {
-    return;
-  }
+  if (data->smart_region_mode != SmartRegionMode::DetectElements ||
+      data->uia_query_worker == nullptr || data->discovery_worker == nullptr ||
+      !window_snapshot.valid()) return;
   ++data->uia_request_id;
   data->current_uia_request = {
-      data->uia_request_id,
-      reinterpret_cast<HWND>(window_snapshot.root_window),
-      {screen_x, screen_y},
-      window_snapshot.owner_rect,
-      GetTickCount64(),
-      data->smart_region_diagnostics.enabled()};
-  if (data->uia_query_worker->request(data->current_uia_request))
-  {
+      data->uia_request_id, root, {screen_x, screen_y}, bounds,
+      motion_now_ms, data->smart_region_diagnostics.enabled()};
+  data->current_uia_request.generation = data->region_generation;
+  data->current_uia_request.process_id = pid;
+  data->current_uia_request.deadline_ms = motion_now_ms + 120;
+  data->current_uia_request.background = data->background;
+  data->current_uia_request.image_screen_rect = image_screen_rect;
+  data->current_uia_request.notify_window = data->overlay;
+  auto accessibility_request = data->current_uia_request;
+  accessibility_request.background.reset();
+  const bool discovery_queued = data->discovery_worker->request(data->current_uia_request);
+  const bool accessibility_queued = data->uia_query_worker->request(accessibility_request);
+  if (discovery_queued || accessibility_queued)
     static_cast<void>(SetTimer(data->overlay, kUiaResultPollTimerId,
                                kUiaResultPollIntervalMs, nullptr));
-  }
 }
 
 bool applyUiaQueryCandidate(
@@ -716,26 +756,28 @@ bool applyUiaQueryCandidate(
     return false;
   }
 
-  SmartRegionCandidate candidate;
-  if (!window_detail::selectUiaQueryCandidate(
-          result, data->fast_hover_candidate, screen_point, owner_rect,
-          candidate))
-  {
+  DWORD pid = 0;
+  RECT bounds{};
+  GetWindowThreadProcessId(result.root_window, &pid);
+  if (!IsWindow(result.root_window) || pid != result.process_id ||
+      !GetWindowRect(result.root_window, &bounds) ||
+      bounds.left != owner_rect.left || bounds.top != owner_rect.top ||
+      bounds.right != owner_rect.right || bounds.bottom != owner_rect.bottom)
     return false;
-  }
-
-  SmartRegionCandidate combined[SmartRegionMaxCandidates];
-  std::size_t combined_count = window_detail::retainAccessibilityCandidates(
-      result.candidates, result.candidate_count, combined, std::size(combined));
-  for (std::size_t index = 0;
-       index < data->hover_candidates.count() &&
-       combined_count < SmartRegionMaxCandidates;
-       ++index)
-  {
-    combined[combined_count++] = data->hover_candidates.candidateAt(index);
-  }
-  data->hover_candidates.replace(combined, combined_count, screen_point.x,
-                                 screen_point.y, owner_rect, candidate);
+  auto merged = result;
+  merged.minimum_visual_confidence = data->minimum_visual_confidence;
+  merged.candidate_count = window_detail::retainRegionCandidates(
+      result.candidates, result.candidate_count, merged.candidates, SmartRegionMaxCandidates - 1);
+  for (std::size_t index = 0; index < data->hover_candidates.count() &&
+       merged.candidate_count < SmartRegionMaxCandidates - 1; ++index)
+    merged.candidates[merged.candidate_count++] = data->hover_candidates.candidateAt(index);
+  SmartRegionCandidate candidate;
+  if (!window_detail::selectUiaQueryCandidate(merged, data->fast_hover_candidate,
+          screen_point, owner_rect, candidate)) return false;
+  merged.candidates[merged.candidate_count++] = data->fast_hover_candidate;
+  data->hover_candidates.replace(merged.candidates, merged.candidate_count,
+      screen_point.x, screen_point.y, owner_rect, candidate,
+      data->minimum_visual_confidence);
   applyHoverCandidate(data, candidate, screen_point);
   if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
   {
@@ -781,7 +823,15 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
   }
 
   const HWND current_root = data->current_uia_request.root_window;
-  if (current_root != nullptr && IsWindow(current_root) == FALSE)
+  DWORD current_pid = 0;
+  RECT current_rect{};
+  GetWindowThreadProcessId(current_root, &current_pid);
+  const auto& expected = data->current_uia_request.owner_rect;
+  if (current_root != nullptr &&
+      (!IsWindow(current_root) || current_pid != data->current_uia_request.process_id ||
+       !GetWindowRect(current_root, &current_rect) ||
+       current_rect.left != expected.left || current_rect.top != expected.top ||
+       current_rect.right != expected.right || current_rect.bottom != expected.bottom))
   {
     clearHover(data);
     static_cast<void>(updateOverlay(hwnd, data));
@@ -801,71 +851,83 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     }
   }
 
-  window_detail::UiaRegionQueryResult result;
-  if (data->uia_query_worker->tryTakeLatest(result))
+  window_detail::UiaRegionQueryWorker* lanes[]{data->discovery_worker, data->uia_query_worker};
+  for (auto* lane : lanes)
   {
-    const bool applies_to_current_request =
-        window_detail::isUiaQueryResultApplicable(
-            result, data->current_uia_request, now_ms);
-    const std::uint64_t result_age_ms =
-        now_ms >= result.requested_at_ms
-            ? now_ms - result.requested_at_ms
-            : 0;
-    const std::uint64_t poll_delay_ms =
-        result.completed_at_ms != 0 && now_ms >= result.completed_at_ms
-            ? now_ms - result.completed_at_ms
-            : 0;
-    bool result_applied = false;
-    bool result_deferred = false;
-    const bool should_defer_async_result =
-        data->async_presentation_gate.shouldDeferAsyncResult(
-            data->use_browser_chrome_visual_fallback, now_ms);
-    const SmartRegionAsyncDeferralReason deferral_reason =
-        !data->use_browser_chrome_visual_fallback
-            ? SmartRegionAsyncDeferralReason::NotChromiumBrowser
-            : (should_defer_async_result
-                   ? SmartRegionAsyncDeferralReason::FastMotion
-                   : SmartRegionAsyncDeferralReason::MotionBelowThreshold);
-    if (applies_to_current_request)
+    window_detail::UiaRegionQueryResult result;
+    if (lane != nullptr && lane->tryTakeLatest(result))
     {
-      SmartRegionCandidate candidate;
-      if (window_detail::selectUiaQueryCandidate(
-              result, data->fast_hover_candidate,
-              data->current_uia_request.screen_point,
-              data->current_uia_request.owner_rect, candidate))
+      const bool applies_to_current_request =
+          window_detail::isUiaQueryResultApplicable(
+              result, data->current_uia_request, now_ms);
+      const std::uint64_t result_age_ms =
+          now_ms >= result.requested_at_ms
+              ? now_ms - result.requested_at_ms
+              : 0;
+      const std::uint64_t poll_delay_ms =
+          result.completed_at_ms != 0 && now_ms >= result.completed_at_ms
+              ? now_ms - result.completed_at_ms
+              : 0;
+      bool result_applied = false;
+      bool result_deferred = false;
+      const bool is_discovery = lane == data->discovery_worker;
+      if (applies_to_current_request && is_discovery) {
+        data->use_browser_chrome_visual_fallback = result.is_chromium_browser_chrome;
+        data->minimum_visual_confidence = result.minimum_visual_confidence;
+      }
+      const bool should_defer_async_result = !is_discovery &&
+          data->async_presentation_gate.shouldDeferAsyncResult(
+              data->use_browser_chrome_visual_fallback, now_ms);
+      const SmartRegionAsyncDeferralReason deferral_reason =
+          !data->use_browser_chrome_visual_fallback
+              ? SmartRegionAsyncDeferralReason::NotChromiumBrowser
+              : (should_defer_async_result
+                     ? SmartRegionAsyncDeferralReason::FastMotion
+                     : SmartRegionAsyncDeferralReason::MotionBelowThreshold);
+      if (applies_to_current_request)
       {
-        if (should_defer_async_result)
+        SmartRegionCandidate candidate;
+        if (window_detail::selectUiaQueryCandidate(
+                result, data->fast_hover_candidate,
+                data->current_uia_request.screen_point,
+                data->current_uia_request.owner_rect, candidate))
         {
-          data->deferred_uia_result = result;
-          data->has_deferred_uia_result = true;
-          result_deferred = true;
-        }
-        else
-        {
-          result_applied = applyUiaQueryCandidate(
-              hwnd, data, result, data->current_uia_request.screen_point,
-              data->current_uia_request.owner_rect);
+          if (should_defer_async_result)
+          {
+            data->deferred_uia_result = result;
+            data->has_deferred_uia_result = true;
+            result_deferred = true;
+          }
+          else
+          {
+            result_applied = applyUiaQueryCandidate(
+                hwnd, data, result, data->current_uia_request.screen_point,
+                data->current_uia_request.owner_rect);
+          }
         }
       }
-    }
-    static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
-        data->smart_region_overlay_render_count));
-    const bool recorded_async_result =
-        data->smart_region_diagnostics.recordAsyncUiaResult(
-            result.request_id, result.elapsed_ms, result_age_ms, poll_delay_ms,
-            result.succeeded, result.msaa_attempted,
-            result.browser_semantic_miss, result.cache_hit,
-            result.suppressed_by_cooldown, result.candidate_count,
-            applies_to_current_request, result_applied, result_deferred,
-            deferral_reason,
-            result.msaa_diagnostic,
-            result.candidates, result.candidate_count);
-    if (recorded_async_result)
-    {
-      emitSmartRegionDiagnostic(data->smart_region_diagnostics);
+      static_cast<void>(data->smart_region_diagnostics.recordOverlayRenderCount(
+          data->smart_region_overlay_render_count));
+      const bool recorded_async_result =
+          data->smart_region_diagnostics.recordAsyncUiaResult(
+              result.request_id, result.elapsed_ms, result_age_ms, poll_delay_ms,
+              result.succeeded, result.msaa_attempted,
+              result.browser_semantic_miss, result.cache_hit,
+              result.suppressed_by_cooldown, result.candidate_count,
+              applies_to_current_request, result_applied, result_deferred,
+              deferral_reason,
+              result.msaa_diagnostic,
+              result.candidates, result.candidate_count);
+      if (recorded_async_result)
+      {
+        emitSmartRegionDiagnostic(data->smart_region_diagnostics);
+      }
     }
   }
-  if (!data->uia_query_worker->hasPendingWork() &&
+  if (((!data->uia_query_worker->hasPendingWork() &&
+        (data->discovery_worker == nullptr || !data->discovery_worker->hasPendingWork())) ||
+       (data->current_uia_request.deadline_ms &&
+        now_ms >= data->current_uia_request.deadline_ms)) &&
       !data->has_deferred_uia_result)
   {
     static_cast<void>(KillTimer(hwnd, kUiaResultPollTimerId));
@@ -991,7 +1053,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   }
   const OverlayClientRect& selection = data->controller.selection();
   const OverlayRenderState render_state(
-      selection, data->hover_rect, data->background, data->longshot_preview,
+      selection, data->hover_rect, data->background ? *data->background : emptyBackground(), data->longshot_preview,
       data->phase,
       overlayPhaseHasSelection(data->phase) && !selection.empty() &&
           !data->selection_locked,
@@ -1044,6 +1106,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data->uia_query_worker != nullptr)
       {
         static_cast<void>(data->uia_query_worker->start());
+      }
+      if (data->discovery_worker != nullptr)
+      {
+        static_cast<void>(data->discovery_worker->start());
       }
       if (data->phase == OverlayPhase::Selected) {
         const SelectionIntent selection_screen =
@@ -1243,6 +1309,9 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
+    case WM_QINGYING_SMART_REGION_COMPLETE:
+      processUiaQueryResult(hwnd, data);
+      return 0;
     case WM_TIMER: {
       if (data == nullptr) {
         return 0;
@@ -1256,6 +1325,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           if (data->uia_query_worker != nullptr)
           {
             data->uia_query_worker->clear();
+          }
+          if (data->discovery_worker != nullptr)
+          {
+            data->discovery_worker->clear();
           }
           return 0;
         }
@@ -1485,6 +1558,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         {
           data->uia_query_worker->clear();
         }
+        if (data->discovery_worker != nullptr)
+        {
+          data->discovery_worker->clear();
+        }
         if (data->accepting_messages != nullptr) {
           data->accepting_messages->store(false);
         }
@@ -1505,7 +1582,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 }  // namespace
 
 struct SelectionOverlay::Impl {
-  window_detail::UiaRegionQueryWorker uia_query_worker;
+  window_detail::UiaRegionQueryWorker uia_query_worker{
+      nullptr, nullptr, window_detail::RegionQueryLane::Accessibility};
+  window_detail::UiaRegionQueryWorker discovery_worker{
+      nullptr, nullptr, window_detail::RegionQueryLane::Discovery};
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<bool> accepting_messages{false};
@@ -1517,7 +1597,7 @@ SelectionOverlay::~SelectionOverlay() {
   shutdown();
 }
 
-bool SelectionOverlay::show(const Image& background,
+bool SelectionOverlay::show(Image background,
                              SelectionCallback callback,
                              LongShotControlCallback
                                  longshot_control_callback,
@@ -1551,10 +1631,11 @@ bool SelectionOverlay::show(const Image& background,
 
   auto data = std::make_unique<OverlayWindowData>();
   data->uia_query_worker = &impl_->uia_query_worker;
+  data->discovery_worker = &impl_->discovery_worker;
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
-  data->background = background;  // 桌面截图背景（物理像素）；空则纯遮罩
+  data->background = std::make_shared<const Image>(std::move(background));  // 桌面截图背景（物理像素）；空则纯遮罩
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
   data->longshot_control_callback = std::move(longshot_control_callback);
@@ -1684,15 +1765,19 @@ void SelectionOverlay::hide() {
 void SelectionOverlay::beginShutdown() noexcept {
   impl_->accepting_messages.store(false);
   impl_->uia_query_worker.beginStop();
+  impl_->discovery_worker.beginStop();
 }
 
 bool SelectionOverlay::joinUntil(
     std::chrono::steady_clock::time_point deadline) noexcept {
-  return impl_->uia_query_worker.joinUntil(deadline);
+  const bool accessibility_done = impl_->uia_query_worker.joinUntil(deadline);
+  const bool discovery_done = impl_->discovery_worker.joinUntil(deadline);
+  return accessibility_done && discovery_done;
 }
 
 std::string SelectionOverlay::diagnosticSnapshot() const {
-  return impl_->uia_query_worker.diagnosticSnapshot();
+  return impl_->uia_query_worker.diagnosticSnapshot() + "\n" +
+      impl_->discovery_worker.diagnosticSnapshot();
 }
 
 void SelectionOverlay::finishShutdown() noexcept {

@@ -18,6 +18,10 @@ static_assert(sizeof(UiMessageToken) <= sizeof(LPARAM),
               "UI message tokens must fit in LPARAM");
 
 // All application and overlay messages use one process-wide WM_APP range.
+constexpr UINT WM_QINGYING_SMART_REGION_COMPLETE = WM_APP + 15;
+constexpr UINT WM_QINGYING_CAPTURE_COMPLETE = WM_APP + 13;
+constexpr UINT WM_QINGYING_RESULT_ACTION_COMPLETE = WM_APP + 14;
+
 constexpr UINT WM_QINGYING_TRAY = WM_APP + 1;
 // Posted from WM_HOTKEY handler to run capture on the UI thread.
 constexpr UINT WM_QINGYING_BEGIN_CAPTURE = WM_APP + 2;

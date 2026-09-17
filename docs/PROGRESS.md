@@ -1,10 +1,12 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
 > 当前提交基线：`a21f2ac4b4e04f8f777daccb4d355146fee9b069`
-> 更新日期：2026-09-14
+> 更新日期：2026-09-17
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
 功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，交接摘要见 [项目理解.md](项目理解.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
+
+2026-09-17 P0-3：SmartRegion 内容/视觉与辅助功能分别进入独立 latest-wins worker；UI 保留有界快照与严格提交校验。普通捕获、编辑采集和预览合成改为 CaptureExecutor 异步续接，GUI PNG 保存交给 ExportExecutor。新增阻塞/取消/deadline/窗口移动/lease 与线程边界测试，Capture worker 纳入共享关闭预算，并修复 Region/Export/LongShot join 虚假唤醒处理。吸附延迟回归修复：稳定窗口上下文 generation、近期局部结果重绑当前请求、不可变截图缓存复用、直接完成通知和跨通道候选合并；回退不重置局部稳定计时。`./build.bat Release test`：Release 编译成功，896/896 测试通过。新增 7 项吸附延迟/缓存/完成通知/点击边界回归。真实高 DPI/多显示器交互仍待人工验收，不响应取消的 provider 仍可能占据后台 worker。
 
 ---
 

@@ -108,7 +108,7 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
 }
 
 struct CaptureWorkflow::Impl {
-  enum class WorkflowStage { Idle, Selecting, Annotating };
+  enum class WorkflowStage { Idle, CapturingBackground, Selecting, CapturingAnnotation, Annotating, CapturingRegion };
 
   Impl(CaptureEngine& capture_in, CaptureService& capture_service_in,
        LongShotController& longshot_controller_in,
@@ -139,7 +139,7 @@ void showSelectionOverlay() {
     selection_closed = false;
     selection_result_ready = false;
     const bool shown = selection_overlay.show(
-        selection_background,
+        std::move(selection_background),
         [this](const SelectionIntent& region) {
           const HWND target_window =
               region.action == SelectionAction::LongShot
@@ -176,7 +176,7 @@ void showSelectionOverlay() {
     const int center_y = region.y + region.height / 2;
     HWND detected_window = nullptr;
     WindowRect detected_rect;
-    if (window_detector.detectAt(center_x, center_y, detected_window,
+    if (window_detector.snapshotAt(center_x, center_y, detected_window,
                                  detected_rect) &&
         detected_window != nullptr) {
       return detected_window;
@@ -184,17 +184,14 @@ void showSelectionOverlay() {
     return recorded_owner_window;
   }
 
-  Image captureDesktopBackground() {
-    Image background;
-    auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
-    const coord::VirtualScreenRect screen = coord::getVirtualScreen();
-    (void)capture.captureRegion(
-        ScreenPhysicalRect{screen.x, screen.y, screen.width, screen.height},
-        background);
-    return background;
+  ActionRequest guiCaptureRequest(ScreenPhysicalRect region) {
+    auto request = makeActionRequest(CaptureRegionRequest{region});
+    request.cancellation = capture_cancellation.token();
+    request.timeout = std::chrono::seconds(5);
+    return request;
   }
 
-  bool beginAnnotation(SelectionIntent region) {
+  bool beginAnnotation(SelectionIntent region, Image source = {}) {
     // 编辑意图已经离开长截图结果工具栏；无论编辑确认、取消或启动失败，
     // 下一轮普通截图都不得继续消费上一轮长截图的临时结果状态。
     longshot_result_ready = false;
@@ -202,8 +199,7 @@ void showSelectionOverlay() {
       return false;
     }
 
-    Image source;
-    if (annotated_result_ready && active_result_id != kInvalidResultId) {
+    if (source.empty() && annotated_result_ready && active_result_id != kInvalidResultId) {
       const auto lease = results.acquire(kGuiResultScopeId, active_result_id);
       const Image* existing = lease.image();
       if (existing != nullptr) {
@@ -211,12 +207,15 @@ void showSelectionOverlay() {
       }
     }
     if (source.empty()) {
-      auto pin_capture_guard = pin_manager.temporarilyHideForCapture();
-      const ActionResult captured = capture.captureRegion(region.screenRect(),
-                                                          source);
-      if (!captured.ok || source.empty()) {
-        return false;
-      }
+      stage = WorkflowStage::CapturingAnnotation;
+      const auto generation = capture_generation;
+      capture_service.captureImageAsync(guiCaptureRequest(region.screenRect()),
+          region.screenRect(), [this, weak = std::weak_ptr<void>(capture_lifetime), generation, region](ActionResult result, Image image) {
+        if (weak.expired() || generation != capture_generation || shutting_down.load() || !active) return;
+        if (!result.ok || image.empty() || !beginAnnotation(region, std::move(image)))
+          finishWorkflow();
+      }, gate_owner());
+      return true;
     }
 
     annotated_result_ready = false;
@@ -301,17 +300,17 @@ void showSelectionOverlay() {
     }
 
     const ScreenPhysicalRect screen_region = region.screenRect();
-    ActionRequest capture_request = makeActionRequest(
-        CaptureRegionRequest{screen_region});
-
-    const ActionResult capture_result = capture_service.capture(
-        capture_request, screen_region, gate_owner());
-    if (capture_result.ok) {
-      active_result_id = results.currentId(kGuiResultScopeId);
-      if (active_result_id != kInvalidResultId) {
-        dispatchResultAction(region.action, active_result_id);
+    stage = WorkflowStage::CapturingRegion;
+    const auto generation = capture_generation;
+    capture_service.captureAsync(guiCaptureRequest(screen_region), screen_region,
+        [this, weak = std::weak_ptr<void>(capture_lifetime), generation, action = region.action](ActionResult result) {
+      if (weak.expired() || generation != capture_generation || shutting_down.load() || !active) return;
+      if (result.ok) {
+        active_result_id = results.currentId(kGuiResultScopeId);
+        if (active_result_id != kInvalidResultId) dispatchResultAction(action, active_result_id);
       }
-    }
+      finishWorkflow();
+    }, gate_owner());
   }
 
   void onLongShotControl(LongShotControl control) {
@@ -409,18 +408,25 @@ void showSelectionOverlay() {
     recorded_owner_window = target;
     pending_longshot_request = LongShotRequest{};
     // 截屏失败时 background 为空，遮罩仍会退回纯半透明模式。
-    selection_background = captureDesktopBackground();
+    ++capture_generation;
+    capture_cancellation = CancellationSource{};
     initial_selection = SelectionIntent{};
     pending_selection = SelectionIntent{};
     pending_annotation = AnnotationFinishResult{};
     longshot_result_ready = false;
     annotated_result_ready = false;
-    stage = WorkflowStage::Selecting;
-    showSelectionOverlay();
-    if (!active) {
-      finishWorkflow();
-      return false;
-    }
+    stage = WorkflowStage::CapturingBackground;
+    const auto generation = capture_generation;
+    const auto screen = coord::getVirtualScreen();
+    const ScreenPhysicalRect region{screen.x, screen.y, screen.width, screen.height};
+    capture_service.captureImageAsync(guiCaptureRequest(region), region,
+        [this, weak = std::weak_ptr<void>(capture_lifetime), generation](ActionResult, Image background) {
+      if (weak.expired() || generation != capture_generation || shutting_down.load() || !active) return;
+      selection_background = std::move(background);
+      stage = WorkflowStage::Selecting;
+      showSelectionOverlay();
+      if (!active) finishWorkflow();
+    }, gate_owner());
     return true;
   }
 
@@ -449,7 +455,7 @@ void showSelectionOverlay() {
       }
 
       runCapturePipeline(pending_selection);
-      finishWorkflow();
+      if (stage != WorkflowStage::CapturingRegion) finishWorkflow();
       return;
     }
 
@@ -480,22 +486,31 @@ void showSelectionOverlay() {
 
     // 编辑器关闭后重新捕获桌面，并把合成图贴回原选区，恢复统一的
     // 复制 / 保存 / Pin 结果操作条。Overlay 不再负责抓图或创建编辑器。
-    selection_background = captureDesktopBackground();
-    (void)composeCapturePreview(selection_background,
-                                *annotated_result, pending_selection.screenRect(),
-                                coord::getVirtualScreen());
-    pending_selection.action = SelectionAction::None;
-    pending_selection.cancelled = false;
-    initial_selection = std::move(pending_selection);
-    pending_selection = SelectionIntent{};
-    pending_annotation = AnnotationFinishResult{};
-    annotation_result_ready = false;
-    annotated_result_ready = true;
-    stage = WorkflowStage::Selecting;
-    showSelectionOverlay();
+    const auto generation = capture_generation;
+    const auto screen = coord::getVirtualScreen();
+    const ScreenPhysicalRect desktop{screen.x, screen.y, screen.width, screen.height};
+    stage = WorkflowStage::CapturingBackground;
+    capture_service.captureImageAsync(guiCaptureRequest(desktop), desktop,
+        [this, weak = std::weak_ptr<void>(capture_lifetime), generation](ActionResult, Image background) {
+      if (weak.expired() || generation != capture_generation || shutting_down.load() || !active) return;
+      selection_background = std::move(background);
+      pending_selection.action = SelectionAction::None;
+      pending_selection.cancelled = false;
+      initial_selection = std::move(pending_selection);
+      pending_selection = SelectionIntent{};
+      pending_annotation = AnnotationFinishResult{};
+      annotation_result_ready = false;
+      annotated_result_ready = true;
+      stage = WorkflowStage::Selecting;
+      showSelectionOverlay();
+    }, gate_owner(), [annotated_lease, screen, region = pending_selection.screenRect()](Image& background) {
+      (void)composeCapturePreview(background, *annotated_lease.image(), region, screen);
+    });
   }
 
   void finishWorkflow() {
+    ++capture_generation;
+    capture_cancellation.cancel();
     // The result is only needed while this workflow is presenting its action
     // surface. Once the operation ends, release the pixel buffer so an idle
     // resident process does not retain the last screenshot.
@@ -534,6 +549,8 @@ void showSelectionOverlay() {
   }
 
   void cancel() {
+    ++capture_generation;
+    capture_cancellation.cancel();
     stopLongShotWorker();
     annotation_overlay.closeSilently();
     selection_overlay.hide();
@@ -557,7 +574,10 @@ void showSelectionOverlay() {
   }
 
   void beginShutdown() {
+    capture_lifetime.reset();
     shutting_down.store(true);
+    ++capture_generation;
+    capture_cancellation.cancel();
     longshot_controller.beginShutdown();
     selection_overlay.beginShutdown();
   }
@@ -639,6 +659,9 @@ void showSelectionOverlay() {
   AnnotationFinishResult pending_annotation;
   std::atomic<bool> shutting_down{false};
   bool active{false};
+  std::uint64_t capture_generation{0};
+  CancellationSource capture_cancellation;
+  std::shared_ptr<void> capture_lifetime{std::make_shared<int>(0)};
   bool longshot_result_ready{false};
   bool annotated_result_ready{false};
   ResultId active_result_id{kInvalidResultId};

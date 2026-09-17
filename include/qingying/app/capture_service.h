@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
+#include "qingying/action/i_action_handler.hpp"
 #include "qingying/action/types.hpp"
 #include "qingying/app/interaction_gate.h"
 #include "qingying/window/window_resolver.h"
@@ -8,6 +9,8 @@
 #include <functional>
 #include <optional>
 #include <thread>
+#include <memory>
+#include <chrono>
 
 namespace qingying {
 
@@ -15,9 +18,8 @@ class CaptureEngine;
 class PinManager;
 class ResultStore;
 
-// UI-thread owner for ordinary visible-screen capture. It performs all
-// admission checks before replacing a scope's current result and keeps Pin
-// exclusion active for exactly one CaptureEngine call.
+// UI owner for capture admission/publication. Its dedicated bounded executor
+// performs acquisition and image transforms; UI retains all window guards.
 class CaptureService final {
  public:
   using CaptureInvoker =
@@ -29,12 +31,31 @@ class CaptureService final {
                  CaptureInvoker capture_invoker = {},
                  PrimaryMonitorProvider primary_monitor = {},
                  WindowResolver::Catalog window_catalog = {});
+  ~CaptureService();
+
+  using ImageTransform = std::function<void(Image&)>;
+  using ImageCompletion = std::function<void(ActionResult, Image)>;
+  // All callbacks and window/ResultStore mutations run on the owning UI thread.
+  void captureImageAsync(const ActionRequest& request,
+                        const ScreenPhysicalRect& region,
+                        ImageCompletion completion,
+                        const InteractionGate::Guard* owner = nullptr,
+                        ImageTransform transform = {});
+  void captureAsync(const ActionRequest& request,
+                    const ScreenPhysicalRect& region,
+                    ActionCompletion completion,
+                    const InteractionGate::Guard* owner = nullptr);
+  void captureActionAsync(const ActionRequest& request, ActionCompletion completion);
+  void beginStop() noexcept;
+  bool joinUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+  std::string diagnosticSnapshot() const;
 
   CaptureService(const CaptureService&) = delete;
   CaptureService& operator=(const CaptureService&) = delete;
   CaptureService(CaptureService&&) = delete;
   CaptureService& operator=(CaptureService&&) = delete;
 
+  // Synchronous compatibility entry points; production uses the async APIs.
   ActionResult capture(const ActionRequest& request,
                        const ScreenPhysicalRect& region,
                        const InteractionGate::Guard* interaction_owner = nullptr);
@@ -60,6 +81,8 @@ class CaptureService final {
   PrimaryMonitorProvider primary_monitor_;
   WindowResolver window_resolver_;
   std::thread::id ui_thread_{std::this_thread::get_id()};
+  struct AsyncImpl;
+  std::unique_ptr<AsyncImpl> async_;
 };
 
 }  // namespace qingying

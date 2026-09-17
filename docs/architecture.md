@@ -163,6 +163,8 @@ app → workflow + 上述服务 + app_runtime（Composition Root）
 | `LongShotRegion` | 长截图动作占位 | 未注册 | 当前 GUI 由 CaptureWorkflow 编排 |
 | `SuggestName` | 可选命名能力 | 未实现 | P4 |
 
+普通 CaptureRegion/CaptureWindow/CropCenter 的 Dispatcher submit 和 CaptureWorkflow 使用专用 CaptureExecutor。UI 保留准入、pin 排除、窗口状态与 ResultStore 发布；窗口目录查询、GDI 和预览合成在后台，取消/deadline 丢弃结果，关闭采用共享截止时间。GUI 对话框后由 ExportExecutor 持有结果 lease 并编码 PNG，完成通过 token 消息回到 UI；同步捕获方法仅作为兼容入口保留。
+
 ### 5.2 契约约定
 
 - 捕获矩形一律为物理屏幕像素；
@@ -240,9 +242,9 @@ Ctrl+Shift+Q
 
 ### 7.1 SmartRegion 当前实现
 
-SmartRegionDetector 采用“窗口级快速回退 + 已知内容定位 + 视觉候选 + UIA/MSAA 详细候选”的组合。UIA/MSAA 通过单个 latest-wins 查询 worker 异步返回，SelectionOverlay 在 UI 线程校验 root HWND、矩形、generation 和结果年龄后再合并候选；手动框选优先于迟到的智能结果。VisualLocator 对 Electron 工作台、Chromium 外壳、小控件和弱边界有专用策略及有限缓存。
+SmartRegionDetector 采用“窗口级快速回退 + 已知内容定位 + 视觉候选 + UIA/MSAA 详细候选”的组合。内容/视觉与 UIA/MSAA 分别通过独立 latest-wins Discovery、Accessibility 通道（复用 UiaRegionQueryWorker）异步返回，SelectionOverlay 在 UI 线程校验 root HWND、矩形、generation 和结果年龄后再合并候选；手动框选优先于迟到的智能结果。VisualLocator 对 Electron 工作台、Chromium 外壳、小控件和弱边界有专用策略及有限缓存。
 
-当前边界仍有两点需要记录：一是 selection_overlay.cpp 直接编译 SmartRegion 的多份 window 实现源文件，目录和 target 尚未完全对齐；二是 Window/known/visual 的部分路径仍在悬停消息处理期间同步执行，局部预算不能替代端到端 UI 线程预算。后续调整见架构整改文档中的 P0-3 和 P1-1。
+当前 target 边界仍需收敛：overlay 直接编译 SmartRegion 的 window 实现，见 P1-1。普通 hover 仅在 UI 读取有界轻量窗口快照，其他候选发现由后台执行，generation 随窗口上下文/会话变化；worker 仅将仍命中的近期局部结果重绑当前 request ID，保留原始 deadline。完成消息立即唤醒 UI，提交严格校验 request/generation、HWND/PID、矩形和 deadline；UI 合并两条通道结果，窗口回退不会重置局部候选稳定计时。无法中断 provider 的 deadline 只控制接纳/诊断，UI 仍保留窗口级回退。
 
 ---
 
@@ -300,7 +302,7 @@ CaptureWorkflow 预先记录 owner_window
 | Action 异步提交 | `ActionDispatcher::submit()` 负责准入与 at-most-once completion；`IAsyncActionHandler` 使用注入的 `ActionExecutor`，不把 worker 生命周期交给调用方 |
 | SmartRegion 查询 | UI 线程提交 latest-wins 请求；UIA/MSAA worker 返回带 root/generation/age 的结果，Overlay 在 UI 线程丢弃迟到结果 |
 | 自动化 / IPC | Pipe worker 负责传输，Application 消息泵 drain 后进入 AutomationEndpoint；MCP stdio 只做协议边界，不直接调用捕获引擎 |
-| 应用退出 | `ApplicationShutdownCoordinator` 在组合根按四阶段停止接入、拒绝新任务、取消业务生产者并清理回调；Export / LongShot / UIA / PipeServer 按共享 deadline 等待，超时保留应用对象图 |
+| 应用退出 | `ApplicationShutdownCoordinator` 在组合根按四阶段停止接入、拒绝新任务、取消业务生产者并清理回调；Capture / Export / LongShot / Region / PipeServer 按共享 deadline 等待，超时保留应用对象图 |
 | 单实例 | Named Mutex |
 
 “Win32 消息循环只在 app”现已落实：Overlay 只负责窗口过程和生命周期回调，CaptureWorkflow 通过阶段状态机续接交互。

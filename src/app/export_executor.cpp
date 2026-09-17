@@ -6,8 +6,8 @@
 
 namespace qingying {
 
-ExportExecutor::ExportExecutor(std::size_t max_queued)
-    : max_queued_(max_queued) {
+ExportExecutor::ExportExecutor(std::size_t max_queued, std::string thread_name)
+    : max_queued_(max_queued), thread_name_(std::move(thread_name)) {
   if (max_queued_ == 0) throw std::invalid_argument("export queue capacity");
   worker_ = std::thread([this] { run(); });
 }
@@ -63,9 +63,7 @@ bool ExportExecutor::joinUntil(
   if (!worker_.joinable()) return true;
   {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (!done_state_ &&
-        done_.wait_until(lock, deadline) == std::cv_status::timeout &&
-        !done_state_) {
+    if (!done_.wait_until(lock, deadline, [this] { return done_state_; })) {
       return false;
     }
   }
@@ -91,7 +89,7 @@ std::size_t ExportExecutor::running() const noexcept {
 
 std::string ExportExecutor::diagnosticSnapshot() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return "thread=export_worker request_id=" +
+  return "thread=" + thread_name_ + " request_id=" +
          std::to_string(active_request_id_) + " operation=" +
          (active_operation_.empty() ? std::string("none")
                                     : active_operation_) +

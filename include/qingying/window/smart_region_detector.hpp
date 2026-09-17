@@ -171,7 +171,8 @@ class SmartRegionCandidateCollection
   void replace(const SmartRegionCandidate* candidates,
                std::size_t candidate_count, int screen_x, int screen_y,
                const WindowRect& owner_rect,
-               const SmartRegionCandidate& selected) noexcept;
+               const SmartRegionCandidate& selected,
+               std::uint8_t minimum_visual_confidence = 70) noexcept;
   bool cycle(int direction) noexcept;
   void clear() noexcept;
   bool empty() const noexcept;
@@ -312,6 +313,7 @@ struct SmartRegionWindowSnapshot
   WindowRect owner_rect;
   WindowRect client_rect;
   bool is_chromium_browser_chrome{false};
+  std::uint8_t minimum_visual_confidence{70};
 
   bool valid() const noexcept;
 };
@@ -321,6 +323,7 @@ enum class SmartRegionDetectionPolicy : std::uint8_t
   Complete,
   FastFallbackOnly,
   WindowOnly,
+  UiSnapshot,
 };
 
 // 从同一点命中的多个候选中选择最小且可独立操作的有效区域。
