@@ -15,7 +15,6 @@ add_library(qingying_automation STATIC
   automation_endpoint.cpp
 )
 target_link_libraries(qingying_automation PUBLIC qingying_automation_contract)
-target_link_libraries(qingying_automation PRIVATE qingying_workflow)
 if(WIN32)
   target_link_libraries(qingying_automation PRIVATE bcrypt)
 endif()

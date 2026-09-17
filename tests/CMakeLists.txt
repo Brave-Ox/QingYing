@@ -183,6 +183,22 @@ if(MSVC)
 endif()
 
 include(GoogleTest)
+add_executable(qingying_automation_core_tests
+  automation_core_test.cpp
+  ui_action_scheduler_test.cpp)
+target_link_libraries(qingying_automation_core_tests PRIVATE
+  qingying_automation GTest::gtest GTest::gtest_main)
+if(WIN32)
+  add_custom_command(TARGET qingying_automation_core_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest> $<TARGET_FILE_DIR:qingying_automation_core_tests>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest_main> $<TARGET_FILE_DIR:qingying_automation_core_tests>)
+endif()
+gtest_discover_tests(qingying_automation_core_tests
+  TEST_PREFIX "AutomationCore."
+  WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_automation_core_tests>
+  DISCOVERY_MODE PRE_TEST)
 get_target_property(QINGYING_DESKTOP_SOURCES qingying SOURCES)
 list(TRANSFORM QINGYING_DESKTOP_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/src/app/" REGEX "^[^/].*\\.cpp$")
 add_executable(qingying_process_fixture WIN32 ${QINGYING_DESKTOP_SOURCES})

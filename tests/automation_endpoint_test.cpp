@@ -1,5 +1,6 @@
 ﻿#include "qingying/automation/automation_endpoint.h"
 #include "qingying/action/action_dispatcher.hpp"
+#include "qingying/app/automation_workflow_adapter.h"
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/capture_service.h"
 #include "qingying/app/longshot_controller.hpp"
@@ -63,6 +64,9 @@ class AutomationEndpointTest : public ::testing::Test {
   CaptureService capture_service{capture, store, pins, gate};
   CaptureWorkflow workflow{capture, capture_service, controller, store,
                            actions, pins, overlay, &gate};
+  AutomationWorkflowAdapter adapter{dispatcher, workflow, store, {
+      {ActionType::Copy, "copy", false},
+      {ActionType::CaptureRegion, "capture_region", false}}};
   OperationRegistry registry{123, {}, [this] { return now; }};
   std::vector<std::pair<UINT, UiMessageToken>> messages;
   bool post_ok{true};
@@ -89,7 +93,7 @@ class AutomationEndpointTest : public ::testing::Test {
         if (deferred && deferred->completion) deferred->finish(false);
       };
     }
-    endpoint = std::make_unique<AutomationEndpoint>(dispatcher, workflow, store,
+    endpoint = std::make_unique<AutomationEndpoint>(adapter, adapter,
         registry, scheduler, gate, AutomationLimits{}, std::move(policy));
     first = *endpoint->connectAuthenticated();
     second = *endpoint->connectAuthenticated();

@@ -1,8 +1,5 @@
 ﻿#include "qingying/automation/automation_endpoint.h"
 
-#include "qingying/action/action_dispatcher.hpp"
-#include "qingying/app/capture_workflow.hpp"
-#include "qingying/app/result_store.h"
 
 #include <algorithm>
 #include <limits>
@@ -17,23 +14,12 @@ AutomationResponse responseWith(int code) {
   response.result.message = std::string(errorCodeSymbol(code));
   return response;
 }
-const char* capability(ActionType type) {
-  switch (type) {
-    case ActionType::CaptureRegion: return "capture_region";
-    case ActionType::CaptureWindow: return "capture_window";
-    case ActionType::CropCenter: return "crop_center";
-    case ActionType::Copy: return "copy";
-    case ActionType::Save: return "save";
-    case ActionType::Pin: return "pin";
-    default: return "";
-  }
 }
-}
-AutomationEndpoint::AutomationEndpoint(ActionDispatcher& dispatcher,
-    CaptureWorkflow& workflow, ResultStore& results, OperationRegistry& registry,
+AutomationEndpoint::AutomationEndpoint(AutomationOperationPort& operations,
+    AutomationResultPort& results, OperationRegistry& registry,
     UiActionScheduler& scheduler, InteractionGate& gate, AutomationLimits limits,
     ExecutionPolicy policy)
-    : dispatcher_(dispatcher), workflow_(workflow), results_(results),
+    : operations_(operations), results_(results),
       registry_(registry), scheduler_(scheduler), gate_(gate), limits_(limits),
       policy_(std::move(policy)) {
   if (!limits_.valid()) throw std::invalid_argument("endpoint limits");
@@ -91,7 +77,8 @@ StatusInfo AutomationEndpoint::status() const {
   if (!stopping_) {
     info.capabilities = {"status", "get_operation", "cancel_operation", "release_result"};
     for (auto type : policy_.ready_actions) {
-      const std::string name = capability(type);
+      const auto descriptor = operations_.describe(type);
+      const std::string name = descriptor ? descriptor->capability : "";
       if (!name.empty() && std::find(info.capabilities.begin(), info.capabilities.end(), name) == info.capabilities.end())
         info.capabilities.push_back(name);
     }
@@ -202,7 +189,8 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     response.result.output = status();
     reply(std::move(response)); return;
   }
-  const bool ready = action && std::find(policy_.ready_actions.begin(),
+  const auto descriptor = operations_.describe(type);
+  const bool ready = action && descriptor && std::find(policy_.ready_actions.begin(),
       policy_.ready_actions.end(), type) != policy_.ready_actions.end();
   if (!ready) {
     reply(responseWith(gate_.busy() ? ErrorCode::kBusy : ErrorCode::kNotImplemented)); return;
@@ -231,12 +219,7 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
     }
     reply(responseWith(ErrorCode::kNotReady)); return;
   }
-  // Capture tools perform their own desktop admission. Save only prepares a lease
-  // on the UI thread and then runs on the bounded export worker, so it must not
-  // hold the desktop interaction gate while encoding.
-  const bool handler_owns_interaction =
-      type == ActionType::CaptureWindow || type == ActionType::CropCenter ||
-      type == ActionType::Save;
+  const bool handler_owns_interaction = descriptor->owns_interaction;
   auto guard = handler_owns_interaction
       ? InteractionGate::Guard{}
       : gate_.acquire(InteractionKind::Capture);
@@ -259,7 +242,7 @@ void AutomationEndpoint::execute(UiMessageToken ticket,
   dispatched.operation_control = submission.control;
   // Completion may come from a worker; only scheduler.complete is thread-safe.
   // The handler acknowledges worker/overlay/pin cleanup before calling back.
-  dispatcher_.submit(dispatched, [scheduler = &scheduler_, ticket](ActionResult result) {
+  operations_.submit(dispatched, [scheduler = &scheduler_, ticket](ActionResult result) {
     AutomationResponse response;
     response.result = std::move(result);
     scheduler->complete(ticket, std::move(response));
@@ -330,8 +313,9 @@ void AutomationEndpoint::finishShutdown() {
 }
 void AutomationEndpoint::shutdown() {
   checkThread();
+  if (shutdown_finished_) return;
   beginShutdown();
-  workflow_.shutdown();
+  operations_.shutdown();
   stopBusinessProducers();
   finishShutdown();
 }

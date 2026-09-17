@@ -1,5 +1,6 @@
 ﻿#include "qingying/app/automation_runtime.h"
 #include "qingying/app/automation_settings.h"
+#include "qingying/app/automation_workflow_adapter.h"
 #include "qingying/app/capture_service.h"
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/app/capture_workflow.hpp"
@@ -41,7 +42,8 @@ class AutomationShutdownTest : public ::testing::Test {
       last_context = context;
       endpoint.execute(token, context, request, std::move(control));
     }};
-  AutomationEndpoint endpoint{dispatcher, workflow, store, registry, scheduler,
+  AutomationWorkflowAdapter adapter{dispatcher, workflow, store, {}};
+  AutomationEndpoint endpoint{adapter, adapter, registry, scheduler,
       gate, {}, AutomationEndpoint::ExecutionPolicy{
           {}, [this] { export_executor.shutdown(); }, false}};
   ipc::PipeOptions options = [] {

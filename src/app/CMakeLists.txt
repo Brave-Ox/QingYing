@@ -33,6 +33,7 @@ if(WIN32)
 endif()
 
 add_library(qingying_app_handlers STATIC
+  automation_workflow_adapter.cpp
   action_handlers.cpp
   async_save_handler.cpp
 )
@@ -42,7 +43,7 @@ target_include_directories(qingying_app_handlers
 )
 
 target_link_libraries(qingying_app_handlers
-  PUBLIC qingying_action
+  PUBLIC qingying_action qingying_automation_contract
   PRIVATE
     qingying_capture
     qingying_window

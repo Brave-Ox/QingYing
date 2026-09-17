@@ -2,11 +2,9 @@
 
 #include "qingying/app/interaction_gate.h"
 #include "qingying/automation/ui_action_scheduler.h"
+#include "qingying/automation/operation_port.h"
 
 namespace qingying {
-class ActionDispatcher;
-class CaptureWorkflow;
-class ResultStore;
 
 // Trusted UI-thread composition boundary. A transport must authenticate first,
 // then ask the UI to connect; never construct scopes from client JSON. Submit
@@ -22,8 +20,8 @@ class AutomationEndpoint final {
     bool transport_enabled{false};
     std::function<std::pair<std::uint32_t, std::uint64_t>()> agent_pin_usage;
   };
-  AutomationEndpoint(ActionDispatcher& dispatcher, CaptureWorkflow& workflow,
-      ResultStore& results, OperationRegistry& registry,
+  AutomationEndpoint(AutomationOperationPort& operations,
+      AutomationResultPort& results, OperationRegistry& registry,
       UiActionScheduler& scheduler, InteractionGate& gate,
       AutomationLimits limits, ExecutionPolicy policy);
   ~AutomationEndpoint();
@@ -54,9 +52,8 @@ class AutomationEndpoint final {
   void checkThread() const;
   bool connected(const TrustedAutomationContext& context) const;
   void settle(UiMessageToken ticket, AutomationResponse& response);
-  ActionDispatcher& dispatcher_;
-  CaptureWorkflow& workflow_;
-  ResultStore& results_;
+  AutomationOperationPort& operations_;
+  AutomationResultPort& results_;
   OperationRegistry& registry_;
   UiActionScheduler& scheduler_;
   InteractionGate& gate_;
