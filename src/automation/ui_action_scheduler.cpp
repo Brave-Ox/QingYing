@@ -70,7 +70,7 @@ void UiActionScheduler::submit(TrustedAutomationContext context, AutomationReque
           auto token = channel_.push(AutomationRequestMessage{});
           if (token) {
             auto it = entries_.emplace(*token, std::move(entry)).first;
-            if (post_(WM_QINGYING_AUTOMATION_REQUEST, *token)) {
+            if (notifyLocked()) {
               // Private transport cancellation must reach a queued request
               // before the UI allocates its OperationId.
               const auto* cancel_request = std::get_if<CancelOperationRequest>(&it->second.request.payload);
@@ -87,7 +87,7 @@ void UiActionScheduler::submit(TrustedAutomationContext context, AutomationReque
                         *target, kInvalidOperationId,
                         status.abort_reason != AbortReason::None ? OperationState::Cancelling :
                             status.committed ? OperationState::Finalizing :
-                            other.running ? OperationState::Running : OperationState::Queued,
+                            other.phase == Phase::Running ? OperationState::Running : OperationState::Queued,
                         requested || status.abort_reason != AbortReason::None};
                     break;
                   }
@@ -113,24 +113,42 @@ bool UiActionScheduler::cancel(const TrustedAutomationContext& context, RequestI
   for (auto& pair : entries_) {
     auto& entry = pair.second;
     if (sameConnection(context.connection, entry.context.connection) && entry.request.request_id == request)
-      return entry.control->requestCancel(reason);
+      {
+        const bool requested = entry.control->requestCancel(reason);
+        if (requested) notifyLocked();
+        return requested;
+      }
   }
   return false;
 }
 bool UiActionScheduler::complete(UiMessageToken ticket, AutomationResponse response) {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto it = entries_.find(ticket);
-  if (it == entries_.end() || !it->second.running || it->second.response) return false;
+  if (it == entries_.end() || it->second.phase != Phase::Running || it->second.response) return false;
   auto& entry = it->second;
   response.connection = entry.context.connection;
   response.result.request_id = entry.request.request_id;
   entry.response = std::move(response);
-  const auto token = channel_.push(AutomationCompletionMessage{ticket});
-  if (token) {
-    if (post_(WM_QINGYING_AUTOMATION_COMPLETE, *token)) entry.completion_token = *token;
-    else channel_.discard(*token);
-  }
+  // The current UI batch collects synchronous completions before returning.
+  if (!draining_) notifyLocked();
   return true;
+}
+bool UiActionScheduler::notifyLocked() {
+  if (stopped_) return false;
+  if (draining_) { wake_needed_ = true; return true; }
+  if (wake_token_) return true;
+  const auto token = channel_.push(AutomationRequestMessage{});
+  if (!token) return false;
+  if (!post_(WM_QINGYING_AUTOMATION_WAKE, *token)) {
+    channel_.discard(*token);
+    return false;
+  }
+  wake_token_ = *token;
+  return true;
+}
+bool UiActionScheduler::notify() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return notifyLocked();
 }
 void UiActionScheduler::settle(UiMessageToken ticket) {
   Entry entry;
@@ -138,6 +156,7 @@ void UiActionScheduler::settle(UiMessageToken ticket) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = entries_.find(ticket);
     if (it == entries_.end() || !it->second.response) return;
+    it->second.phase = Phase::Settling;
     entry = std::move(it->second);
     entries_.erase(it);
     channel_.discard(ticket);
@@ -154,23 +173,36 @@ void UiActionScheduler::settle(UiMessageToken ticket) {
 }
 void UiActionScheduler::dispatch(UINT message, UiMessageToken token) {
   checkThread();
+  if (message == WM_QINGYING_AUTOMATION_WAKE) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_ || !wake_token_ || token != wake_token_) return;
+      channel_.discard(wake_token_);
+      wake_token_ = 0;
+    }
+    drain();
+    return;
+  }
   if (message == WM_QINGYING_AUTOMATION_COMPLETE) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (entries_.find(token) != entries_.end()) return;
+      if (token == wake_token_ || entries_.find(token) != entries_.end()) return;
     }
     auto event = channel_.take<AutomationCompletionMessage>(token);
     if (event) settle(event->ticket);
     return;
   }
   if (message != WM_QINGYING_AUTOMATION_REQUEST) return;
+  executeRequest(token);
+}
+void UiActionScheduler::executeRequest(UiMessageToken token) {
   TrustedAutomationContext context;
   AutomationRequest request;
   std::shared_ptr<OperationControl> control;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = entries_.find(token);
-    if (it == entries_.end() || it->second.running ||
+    if (it == entries_.end() || it->second.phase != Phase::Queued || it->second.response ||
         !channel_.take<AutomationRequestMessage>(token)) return;
     auto& entry = it->second;
     if (!accepting_ || !connected(entry.context)) entry.control->requestCancel(AbortReason::Disconnect);
@@ -178,7 +210,7 @@ void UiActionScheduler::dispatch(UINT message, UiMessageToken token) {
     if (status.abort_reason != AbortReason::None) {
       entry.response = failure(entry, status.abort_reason == AbortReason::Deadline ? ErrorCode::kTimeout : ErrorCode::kCancelled);
     } else {
-      entry.running = true;
+      entry.phase = Phase::Running;
       context = entry.context;
       request = entry.request;
       control = entry.control;
@@ -197,7 +229,7 @@ void UiActionScheduler::abortQueued(AbortReason reason, const TrustedAutomationC
     auto& entry = pair.second;
     if (context && !sameConnection(context->connection, entry.context.connection)) continue;
     entry.control->requestCancel(reason);
-    if (!entry.running && !entry.response) entry.response = failure(entry, ErrorCode::kCancelled);
+    if (entry.phase == Phase::Queued && !entry.response) entry.response = failure(entry, ErrorCode::kCancelled);
   }
 }
 void UiActionScheduler::disconnect(const TrustedAutomationContext& context) {
@@ -205,26 +237,63 @@ void UiActionScheduler::disconnect(const TrustedAutomationContext& context) {
   if (!connected(context)) return;
   connections_.erase(context.connection.generation);
   abortQueued(AbortReason::Disconnect, &context);
+  notifyLocked();
 }
 void UiActionScheduler::stopAccepting() {
   std::lock_guard<std::mutex> lock(mutex_);
   accepting_ = false;
   abortQueued(AbortReason::Shutdown, nullptr);
+  notifyLocked();
 }
 void UiActionScheduler::drain() {
   checkThread();
   std::vector<UiMessageToken> ready;
+  std::vector<UiMessageToken> queued;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& pair : entries_) if (pair.second.response) ready.push_back(pair.first);
+    if (draining_) return;
+    // Also retire a lost/stale posted wake when housekeeping recovers work.
+    channel_.discard(wake_token_);
+    wake_token_ = 0;
+    draining_ = true;
+    wake_needed_ = false;
+    for (const auto& pair : entries_) {
+      if (pair.second.response) ready.push_back(pair.first);
+      else if (pair.second.phase == Phase::Queued) queued.push_back(pair.first);
+    }
   }
-  for (auto ticket : ready) settle(ticket);
+  try {
+    for (auto ticket : ready) settle(ticket);
+    for (auto ticket : queued) executeRequest(ticket);
+    ready.clear();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (const auto& pair : entries_) if (pair.second.response) ready.push_back(pair.first);
+    }
+    for (auto ticket : ready) settle(ticket);
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    draining_ = false;
+    notifyLocked();
+    throw;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    draining_ = false;
+    bool pending = wake_needed_;
+    for (const auto& pair : entries_)
+      pending |= pair.second.response.has_value() || pair.second.phase == Phase::Queued;
+    if (pending) notifyLocked();
+  }
 }
 void UiActionScheduler::shutdown() {
   checkThread();
   stopAccepting();
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    stopped_ = true;
+    channel_.discard(wake_token_);
+    wake_token_ = 0;
     for (auto& pair : entries_) if (!pair.second.response)
       pair.second.response = failure(pair.second, ErrorCode::kCancelled);
     connections_.clear();
@@ -239,7 +308,7 @@ QueueUsage UiActionScheduler::queueUsage() const {
   std::lock_guard<std::mutex> lock(mutex_);
   QueueUsage usage;
   for (const auto& pair : entries_) {
-    pair.second.running ? ++usage.running : ++usage.queued;
+    pair.second.phase == Phase::Running ? ++usage.running : ++usage.queued;
     pair.second.control_lane ? ++usage.control : ++usage.ordinary;
   }
   return usage;
@@ -254,7 +323,7 @@ void UiActionScheduler::shareControl(UiMessageToken ticket, std::shared_ptr<Oper
   if (!control) throw std::invalid_argument("shared operation control");
   std::lock_guard<std::mutex> lock(mutex_);
   const auto it = entries_.find(ticket);
-  if (it == entries_.end() || !it->second.running) return;
+  if (it == entries_.end() || it->second.phase != Phase::Running) return;
   const auto abort = it->second.control->status().abort_reason;
   if (abort != AbortReason::None) control->requestCancel(abort);
   it->second.control = std::move(control);

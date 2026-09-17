@@ -118,6 +118,59 @@ TEST_F(UiActionSchedulerTest, CompletionPostFailureIsRecoveredByDrain) {
   EXPECT_EQ(completions, 1);
   EXPECT_EQ(scheduler.pending(), 0u);
 }
+TEST_F(UiActionSchedulerTest, BurstUsesOneWakeAndBatchDrainWithoutTimer) {
+  for (RequestId id = 1; id <= 8; ++id) submit(id);
+  ASSERT_EQ(messages.size(), 1u);
+  EXPECT_EQ(messages.front().first, WM_QINGYING_AUTOMATION_WAKE);
+  pump();
+  EXPECT_EQ(executions, 8);
+  EXPECT_EQ(scheduler.queueUsage().running, 8u);
+}
+TEST_F(UiActionSchedulerTest, HousekeepingRecoveryRetiresLostWake) {
+  submit(1);
+  const auto stale = messages.front();
+  messages.clear(); // simulate a successfully posted message being lost
+  scheduler.drain();
+  EXPECT_EQ(executions, 1);
+  EXPECT_TRUE(scheduler.complete(running, {}));
+  ASSERT_EQ(messages.size(), 1u);
+  scheduler.dispatch(stale.first, stale.second);
+  EXPECT_EQ(completions, 0);
+  pump();
+  EXPECT_EQ(completions, 1);
+}
+TEST_F(UiActionSchedulerTest, CancelCompletionAndShutdownSequenceSettlesOnce) {
+  submit(1);
+  pump();
+  EXPECT_TRUE(scheduler.cancel(context, 1));
+  EXPECT_TRUE(scheduler.complete(running, {}));
+  ASSERT_EQ(messages.size(), 1u);
+  const auto stale = messages.front();
+  pump();
+  EXPECT_EQ(completions, 1);
+  scheduler.shutdown();
+  scheduler.dispatch(stale.first, stale.second);
+  EXPECT_FALSE(scheduler.notify());
+  EXPECT_FALSE(scheduler.complete(running, {}));
+  EXPECT_EQ(completions, 1);
+}
+TEST_F(UiActionSchedulerTest, NestedDrainDoesNotDispatchNewRequestsReentrantly) {
+  bool nested = false;
+  scheduler.setSettlementHooks([&](UiMessageToken, AutomationResponse&) {
+    submit(2);
+    scheduler.drain();
+    EXPECT_EQ(executions, 1);
+    nested = true;
+  }, {});
+  submit(1);
+  pump();
+  EXPECT_TRUE(scheduler.complete(running, {}));
+  pump();
+  EXPECT_TRUE(nested);
+  scheduler.setSettlementHooks({}, {});
+  pump();
+  EXPECT_EQ(executions, 2);
+}
 TEST_F(UiActionSchedulerTest, DisconnectRejectsDecodedRequestsAndOldGeneration) {
   submit(1);
   scheduler.disconnect(context);

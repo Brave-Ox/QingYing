@@ -12,7 +12,8 @@ bool AutomationRuntime::enable() {
       scheduler_.submit(std::move(context), std::move(request), std::move(completion));
     },
     [this](const TrustedAutomationContext& context) { scheduler_.disconnect(context); },
-    [this](const TrustedAutomationContext& context) { endpoint_.disconnect(context); }
+    [this](const TrustedAutomationContext& context) { endpoint_.disconnect(context); },
+    [this] { scheduler_.notify(); }
   }, options_);
   if (!pipe->start()) return false;
   pipe_ = std::move(pipe);
@@ -28,6 +29,9 @@ void AutomationRuntime::tick() {
   if (stopped_) return;
   if (pipe_) pipe_->drain();
   endpoint_.tick();
+}
+void AutomationRuntime::drainTransport() {
+  if (!stopped_ && pipe_) pipe_->drain();
 }
 void AutomationRuntime::stopAccepting() {
   if (stopped_) {

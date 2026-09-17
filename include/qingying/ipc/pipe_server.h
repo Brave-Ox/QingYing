@@ -19,7 +19,7 @@ struct PipeOptions {
 // Each server object starts once; re-enable constructs a new server while the
 // endpoint continues to allocate unique generations.
 // Construct/start/drain/stop on the owner (UI) thread. drain() never waits for
-// I/O. Call it periodically, including when UI wake messages were lost.
+// I/O. Drain on Hooks::wake; low-frequency housekeeping recovers lost wakes.
 // Hooks must not throw or reenter this server. connect/submit/disconnect run
 // on the owner; revoke runs on an I/O thread (or owner during stop) and MUST
 // synchronously revoke scheduler admission, without waiting for UI work.
@@ -33,6 +33,8 @@ class PipeServer final {
                        AutomationCompletion)> submit;
     std::function<void(const TrustedAutomationContext&)> revoke;
     std::function<void(const TrustedAutomationContext&)> disconnect;
+    // Thread-safe notification only: never drain inline or reenter the server.
+    std::function<void()> wake;
   };
   explicit PipeServer(Hooks hooks, PipeOptions options = {});
   ~PipeServer();

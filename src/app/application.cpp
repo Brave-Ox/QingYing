@@ -314,7 +314,9 @@ struct Application::Impl {
         *result = 0;
         return true;
       }
-      if (msg == WM_QINGYING_AUTOMATION_REQUEST || msg == WM_QINGYING_AUTOMATION_COMPLETE) {
+      if (msg == WM_QINGYING_AUTOMATION_WAKE ||
+          msg == WM_QINGYING_AUTOMATION_REQUEST || msg == WM_QINGYING_AUTOMATION_COMPLETE) {
+        if (msg == WM_QINGYING_AUTOMATION_WAKE) automation_runtime_.drainTransport();
         scheduler_.dispatch(msg, static_cast<UiMessageToken>(lparam));
         *result = 0;
         return true;
@@ -408,7 +410,7 @@ struct Application::Impl {
       }
       return true;
     });
-    if (!SetTimer(tray_.hwnd(), kAutomationMaintenanceTimer, 250, nullptr)) {
+    if (!SetTimer(tray_.hwnd(), kAutomationMaintenanceTimer, 1000, nullptr)) {
       shutdown();
       return 3;
     }

@@ -309,18 +309,22 @@ TEST_F(ReadyEndpointTest, CompletionCallbackCannotReenterBeforeGuardRelease) {
   auto admitted = first;
   admitted.submitted_at = now;
   bool completed = false;
+  RequestId nested = 0;
   scheduler.submit(admitted, request, [&](AutomationResponse) {
     completed = true;
     EXPECT_TRUE(gate.busy());
-    const auto nested = submit(second, BeginLongShotRequest{});
+    nested = submit(second, BeginLongShotRequest{});
     pump();
-    EXPECT_EQ(responses.at(nested).result.error_code, ErrorCode::kBusy);
+    EXPECT_EQ(responses.count(nested), 0u);
+    EXPECT_TRUE(gate.busy());
   });
   pump();
   deferred->finish(true);
   pump();
   EXPECT_TRUE(completed);
   EXPECT_FALSE(gate.busy());
+  ASSERT_NE(nested, 0u);
+  EXPECT_EQ(responses.at(nested).result.error_code, ErrorCode::kNotImplemented);
 }
 TEST_F(ReadyEndpointTest, DisconnectRevokesGenerationButWaitsForActualCleanup) {
   const auto id = submit(first, copyRequest());

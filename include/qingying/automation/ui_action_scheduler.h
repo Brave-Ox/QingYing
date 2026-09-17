@@ -11,8 +11,9 @@ namespace qingying {
 // Post must enqueue a message (never dispatch inline), return false on failure,
 // and must not throw or reenter the scheduler. Join producers before destruction.
 // Bind Post to PostMessage(hwnd, message, 0, token) != FALSE and forward these
-// two WM_APP messages to dispatch(message, LPARAM). Call drain periodically on
-// UI to recover failed completion posts and disconnected queued requests.
+// WM_QINGYING_AUTOMATION_WAKE to dispatch(message, LPARAM). One pending wake
+// covers a bounded batch of requests/results. Low-frequency housekeeping may
+// call drain to recover a failed wake; normal progress never waits for a timer.
 // Capacity covers queued AND running requests until completion delivery, so
 // request-control associations and reserved completion slots remain bounded.
 // Completion callbacks run outside locks: rejection on the submitting thread,
@@ -35,6 +36,8 @@ class UiActionScheduler final {
   // PostMessage fails. drain() recovers such events on the UI thread.
   bool complete(UiMessageToken ticket, AutomationResponse response);
   void dispatch(UINT message, UiMessageToken token);
+  // Thread-safe, coalesced notification for transport and scheduler events.
+  bool notify();
   void stopAccepting();
   void drain();
   // Final callback reclamation, after stopping/joining business producers and
@@ -53,13 +56,16 @@ class UiActionScheduler final {
       std::function<void(UiMessageToken)> after);
 
  private:
+  // Terminal business states live in OperationRegistry; scheduler entries are
+  // retired atomically at settlement, before any consumer callback runs.
+  enum class Phase { Queued, Running, Settling };
   struct Entry {
     TrustedAutomationContext context;
     AutomationRequest request;
     AutomationCompletion completion;
     std::shared_ptr<OperationControl> control;
     bool control_lane{false};
-    bool running{false};
+    Phase phase{Phase::Queued};
     UiMessageToken completion_token{0};
     std::optional<AutomationResponse> response;
     std::optional<CancellationResult> cancellation_receipt;
@@ -67,6 +73,8 @@ class UiActionScheduler final {
   bool connected(const TrustedAutomationContext& context) const;
   void checkThread() const;
   void settle(UiMessageToken ticket);
+  void executeRequest(UiMessageToken ticket);
+  bool notifyLocked();
   void abortQueued(AbortReason reason, const TrustedAutomationContext* context);
   static AutomationResponse failure(const Entry& entry, int code);
   Post post_;
@@ -78,6 +86,10 @@ class UiActionScheduler final {
   std::thread::id ui_thread_;
   mutable std::mutex mutex_;
   bool accepting_{true};
+  bool stopped_{false};
+  bool draining_{false};
+  bool wake_needed_{false};
+  UiMessageToken wake_token_{0};
   ApplicationEpoch epoch_{0};
   ConnectionGeneration last_generation_{0};
   std::map<ConnectionGeneration, ResultScopeId> connections_;

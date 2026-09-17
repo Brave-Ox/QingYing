@@ -13,6 +13,8 @@ class AutomationRuntime final {
   bool enable();
   void disable();
   void tick();
+  // UI wake path; performs no lease/deadline housekeeping.
+  void drainTransport();
   // Phase 1 of application shutdown: revoke transport admission without
   // waiting for I/O workers.
   void stopAccepting();

@@ -56,6 +56,7 @@ void revoke(Shared& shared, Session& session) {
   session.requests[0].clear();
   session.requests[1].clear();
   if (session.context) shared.hooks.revoke(*session.context);
+  if (!shared.stopping && shared.hooks.wake) shared.hooks.wake();
 }
 }
 struct PipeServer::Impl {
@@ -110,6 +111,7 @@ struct PipeServer::Impl {
           {
             std::lock_guard<std::mutex> lock(shared->mutex);
             session->hello = true;
+            if (shared->hooks.wake) shared->hooks.wake();
           }
           HANDLE events[] = {session->stream.stopEvent(), session->ready.get()};
           const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -140,6 +142,7 @@ struct PipeServer::Impl {
               session->pending.emplace(wire->request.request_id, PendingRequest{wire->rpc_id, control});
               ++shared->in_flight[control];
               session->requests[control].push_back({std::move(*wire), std::chrono::steady_clock::now()});
+              if (shared->hooks.wake) shared->hooks.wake();
             }
           }
         }

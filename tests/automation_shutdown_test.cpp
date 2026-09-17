@@ -34,9 +34,14 @@ class AutomationShutdownTest : public ::testing::Test {
                            actions, pins, overlay, &gate};
   OperationRegistry registry{901};
   std::vector<std::pair<UINT, UiMessageToken>> messages;
+  std::mutex message_mutex;
   TrustedAutomationContext last_context;
   UiActionScheduler scheduler{
-    [this](UINT message, UiMessageToken token) { messages.emplace_back(message, token); return true; },
+    [this](UINT message, UiMessageToken token) {
+      std::lock_guard<std::mutex> lock(message_mutex);
+      messages.emplace_back(message, token);
+      return true;
+    },
     [this](UiMessageToken token, const TrustedAutomationContext& context,
         const AutomationRequest& request, std::shared_ptr<OperationControl> control) {
       last_context = context;
@@ -53,9 +58,15 @@ class AutomationShutdownTest : public ::testing::Test {
   }();
   AutomationRuntime runtime{endpoint, scheduler, options};
   void pump() {
-    runtime.tick();
-    auto batch = std::move(messages); messages.clear();
-    for (const auto& item : batch) scheduler.dispatch(item.first, item.second);
+    std::vector<std::pair<UINT, UiMessageToken>> batch;
+    {
+      std::lock_guard<std::mutex> lock(message_mutex);
+      batch.swap(messages);
+    }
+    for (const auto& item : batch) {
+      if (item.first == WM_QINGYING_AUTOMATION_WAKE) runtime.drainTransport();
+      scheduler.dispatch(item.first, item.second);
+    }
   }
   bool connect(ipc::PipeAutomationClient& client) {
     auto connected = std::async(std::launch::async, [&] { return client.connect(); });
