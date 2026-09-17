@@ -1,4 +1,6 @@
-﻿#include <cstdint>
+﻿#include "qingying/window/smart_region_diagnostics.hpp"
+#include "smart_region_visual_cache.hpp"
+#include <cstdint>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>

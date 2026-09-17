@@ -2,6 +2,7 @@
 
 add_subdirectory(action)
 add_subdirectory(window)
+add_subdirectory(smart_region)
 add_subdirectory(automation)
 add_subdirectory(ipc)
 add_subdirectory(ui)

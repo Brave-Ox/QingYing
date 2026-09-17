@@ -1,4 +1,6 @@
-﻿#include "qingying/window/smart_region_detector.hpp"
+﻿#include "qingying/window/smart_region_diagnostics.hpp"
+#include "smart_region_visual_cache.hpp"
+#include "qingying/window/smart_region_detector.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -1703,14 +1705,23 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   {
     *window_snapshot = SmartRegionWindowSnapshot{};
   }
+  SmartRegionWindowSnapshot supplied_snapshot;
+  const bool injected = m_providers.window_snapshot != nullptr;
   WindowDetector window_detector;
   HWND root_window = nullptr;
   WindowRect window_rect;
   const std::uint64_t window_detection_begin_ms =
       diagnostic_enabled ? GetTickCount64() : 0;
-  if (!(policy == SmartRegionDetectionPolicy::UiSnapshot
+  const bool found_window = injected
+      ? m_providers.window_snapshot(screen_x, screen_y, supplied_snapshot, m_providers.context) && supplied_snapshot.valid()
+      : (policy == SmartRegionDetectionPolicy::UiSnapshot
             ? window_detector.snapshotAt(screen_x, screen_y, root_window, window_rect)
-            : window_detector.detectAt(screen_x, screen_y, root_window, window_rect))) {
+            : window_detector.detectAt(screen_x, screen_y, root_window, window_rect));
+  if (injected) {
+    root_window = reinterpret_cast<HWND>(supplied_snapshot.root_window);
+    window_rect = supplied_snapshot.owner_rect;
+  }
+  if (!found_window) {
     if (diagnostic_enabled) {
       diagnostic_event.window_detection_attempted = true;
       diagnostic_event.window_detection_ms =
@@ -1723,7 +1734,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     diagnostic_event.window_detection_attempted = true;
     diagnostic_event.window_detection_ms =
         GetTickCount64() - window_detection_begin_ms;
-    if (policy != SmartRegionDetectionPolicy::UiSnapshot)
+    if (!injected && policy != SmartRegionDetectionPolicy::UiSnapshot)
       recordWindowContext(diagnostic_event, root_window, screen_x, screen_y);
   }
 
@@ -1731,8 +1742,9 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   SmartRegionCandidate candidates[SmartRegionMaxCandidates];
   std::size_t candidate_count = 0;
   WindowRect client_rect;
-  const bool has_client_rect =
-      getRootClientScreenRect(root_window, client_rect);
+  if (injected) client_rect = supplied_snapshot.client_rect;
+  const bool has_client_rect = injected ? !client_rect.empty()
+      : getRootClientScreenRect(root_window, client_rect);
   if (window_snapshot != nullptr)
   {
     window_snapshot->root_window =
@@ -1740,8 +1752,19 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     window_snapshot->owner_rect = window_rect;
     window_snapshot->client_rect = client_rect;
   }
+  if (!injected) {
+    supplied_snapshot.root_window = reinterpret_cast<std::uintptr_t>(root_window);
+    supplied_snapshot.owner_rect = window_rect;
+    supplied_snapshot.client_rect = client_rect;
+  }
   std::size_t uia_candidate_count = 0;
-  if (policy == SmartRegionDetectionPolicy::Complete)
+  if (policy == SmartRegionDetectionPolicy::Complete && m_providers.accessibility_query)
+  {
+    candidate_count = (std::min)(SmartRegionMaxAccessibilityCandidates,
+        m_providers.accessibility_query(supplied_snapshot, screen_point, candidates,
+            SmartRegionMaxAccessibilityCandidates, m_providers.context));
+  }
+  else if (policy == SmartRegionDetectionPolicy::Complete && !injected)
   {
     const std::uint64_t uia_lookup_begin_ms =
         diagnostic_enabled ? GetTickCount64() : 0;
@@ -1787,7 +1810,7 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
   WindowRect chromium_browser_chrome;
   bool use_workbench_visual_policy = false;
-  if (policy != SmartRegionDetectionPolicy::WindowOnly &&
+  if (!injected && policy != SmartRegionDetectionPolicy::WindowOnly &&
       policy != SmartRegionDetectionPolicy::UiSnapshot)
   {
     SmartRegionCandidate known_content;
@@ -1825,6 +1848,14 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
 
   if (policy != SmartRegionDetectionPolicy::WindowOnly &&
+      policy != SmartRegionDetectionPolicy::UiSnapshot && m_providers.visual_locator && visual_context)
+  {
+    SmartRegionCandidate visual;
+    if (m_providers.visual_locator(*visual_context, supplied_snapshot, screen_point, visual, m_providers.context)
+        && candidate_count < SmartRegionMaxCandidates)
+      candidates[candidate_count++] = visual;
+  }
+  else if (!injected && policy != SmartRegionDetectionPolicy::WindowOnly &&
       policy != SmartRegionDetectionPolicy::UiSnapshot &&
       visual_context != nullptr && visual_context->valid() &&
       has_client_rect) {

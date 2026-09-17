@@ -2,7 +2,7 @@
 
 #include <Windows.h>
 
-#include "qingying/window/smart_region_detector.hpp"
+#include "qingying/window/smart_region_types.hpp"
 
 namespace qingying::window_detail {
 

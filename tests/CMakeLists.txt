@@ -148,6 +148,7 @@ target_include_directories(qingying_tests
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/longshot
     ${CMAKE_SOURCE_DIR}/src/window
+    ${CMAKE_SOURCE_DIR}/src/smart_region
     ${CMAKE_SOURCE_DIR}/src/ipc
     ${CMAKE_SOURCE_DIR}/src/mcp
 )
@@ -164,6 +165,7 @@ target_link_libraries(qingying_tests
     qingying_annotate
     qingying_capture
     qingying_export
+    qingying_smart_region
     qingying_overlay
     qingying_ui
     qingying_pin
@@ -208,3 +210,18 @@ if(WIN32)
     COMMENT "Copy gtest DLLs next to qingying_tests"
   )
 endif()
+
+# SmartRegion tests deliberately link no overlay/application targets.
+add_executable(qingying_smart_region_tests smart_region_boundary_test.cpp)
+target_link_libraries(qingying_smart_region_tests PRIVATE
+  qingying_smart_region GTest::gtest GTest::gtest_main)
+if(WIN32)
+  add_custom_command(TARGET qingying_smart_region_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest> $<TARGET_FILE_DIR:qingying_smart_region_tests>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest_main> $<TARGET_FILE_DIR:qingying_smart_region_tests>)
+endif()
+gtest_discover_tests(qingying_smart_region_tests
+  WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_smart_region_tests>
+  DISCOVERY_MODE PRE_TEST)

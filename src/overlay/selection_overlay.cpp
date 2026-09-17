@@ -19,7 +19,7 @@
 #include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_mode.hpp"
-#include "../window/uia_region_query_worker.hpp"
+#include "qingying/window/smart_region_query.hpp"
 
 namespace qingying {
 
@@ -62,7 +62,6 @@ struct OverlayWindowData {
   int handle_radius{handles::kHandleHitRadius};
   SelectionHandle active_handle{SelectionHandle::None};
   SmartRegionDetector smart_region_detector;
-  SmartRegionVisualResultCache smart_region_visual_cache;
   SmartRegionDiagnosticTrace smart_region_diagnostics;
   SmartRegionHoverStabilizer hover_stabilizer;
   SmartRegionHoverRenderGate hover_render_gate;
@@ -329,7 +328,6 @@ void clearHover(OverlayWindowData* data) noexcept
   }
   data->hover_stabilizer.clear();
   data->hover_timer_pending_since_ms = 0;
-  data->smart_region_visual_cache.clear();
   data->hover_update_gate.reset();
   data->async_presentation_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
@@ -633,7 +631,6 @@ bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
   static_cast<void>(KillTimer(hwnd, kHoverStabilizeTimerId));
   data->hover_stabilizer.clear();
   data->hover_timer_pending_since_ms = 0;
-  data->smart_region_visual_cache.clear();
   applyHoverCandidate(data, data->hover_candidates.current(),
                       data->hover_screen_point);
   if (data->hover_render_gate.update(data->hover_candidate, data->has_hover))
@@ -674,7 +671,7 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   if (!data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
           nullptr, policy, &fallbacks,
-          &window_snapshot, &data->smart_region_visual_cache))
+          &window_snapshot))
   {
     static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
         data->hover_motion_delta_x, data->hover_motion_delta_y,

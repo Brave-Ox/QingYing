@@ -1,4 +1,7 @@
-﻿#include "uia_region_query_worker.hpp"
+﻿#include "qingying/window/smart_region_detector.hpp"
+#include "qingying/window/smart_region_diagnostics.hpp"
+#include "smart_region_visual_cache.hpp"
+#include "uia_region_query_worker.hpp"
 #include "qingying/app/app_messages.hpp"
 
 #include <algorithm>

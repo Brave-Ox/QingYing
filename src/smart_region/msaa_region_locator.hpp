@@ -6,7 +6,7 @@
 #include <Windows.h>
 #include <oleacc.h>
 
-#include "qingying/window/smart_region_detector.hpp"
+#include "qingying/window/smart_region_diagnostics.hpp"
 
 namespace qingying::window_detail {
 
