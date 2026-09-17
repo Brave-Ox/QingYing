@@ -6,6 +6,7 @@
 #include "qingying/export/export_service.hpp"
 #include "qingying/pin/pin_manager.hpp"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/automation/action_catalog.h"
 
 #include <gtest/gtest.h>
 
@@ -40,6 +41,9 @@ TEST(AppActionHandlersTest, RegistersP0Handlers) {
 
   qingying::registerAppHandlers(dispatcher, capture_service, result_store,
                                 result_actions);
+
+  for (const auto& entry : qingying::actionCatalog())
+    if (entry.action) EXPECT_TRUE(dispatcher.hasHandler(*entry.action)) << entry.id;
 
   const qingying::ActionRequest status =
       qingying::makeActionRequest(qingying::StatusRequest{});

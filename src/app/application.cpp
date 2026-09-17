@@ -137,17 +137,11 @@ struct Application::Impl {
                    const AutomationRequest& request, std::shared_ptr<OperationControl> control) {
               automation_endpoint_.execute(ticket, context, request, std::move(control));
             }),
-        automation_adapter_(dispatcher_, capture_workflow_, result_store_, {
-            {ActionType::CaptureWindow, "capture_window", true},
-            {ActionType::CropCenter, "crop_center", true},
-            {ActionType::Copy, "copy", false},
-            {ActionType::Save, "save", true},
-            {ActionType::Pin, "pin", false}}),
+        automation_adapter_(dispatcher_, capture_workflow_, result_store_),
         automation_endpoint_(automation_adapter_, automation_adapter_,
             operation_registry_, scheduler_, interaction_gate_, {},
             AutomationEndpoint::ExecutionPolicy{
-                {ActionType::CaptureWindow, ActionType::CropCenter,
-                 ActionType::Copy, ActionType::Save, ActionType::Pin},
+                automationReadyActions(),
                 [this] {
                   export_executor_.requestStop();
                   capture_service_.beginStop();

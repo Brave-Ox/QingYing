@@ -1,5 +1,7 @@
 ﻿#include "mcp_test_client.h"
 #include "automation_wire_codec.h"
+#include <set>
+#include <algorithm>
 using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
@@ -227,4 +229,82 @@ TEST(McpToolCatalogTest, FailedOperationQueryIsSuccessfulAndCancellationHidesNum
   EXPECT_EQ(result["structuredContent"]["operation_id"], "owned");
   EXPECT_EQ(result["structuredContent"]["cancellation_requested"], true);
   EXPECT_FALSE(result["structuredContent"].contains("target"));
+}
+
+TEST(McpToolCatalogTest, RegistryIsTheOnlyDiscoverySource) {
+  ASSERT_EQ(tools().size(), actionCatalog().size());
+  std::set<std::string> names;
+  const auto registered = automationActionDescriptors();
+  for (const auto& entry : actionCatalog()) {
+    EXPECT_TRUE(names.insert(entry.id).second);
+    const auto* tool = findTool(entry.id);
+    ASSERT_NE(tool, nullptr);
+    EXPECT_EQ(tool->kind, entry.kind);
+    EXPECT_STREQ(tool->description, entry.description);
+    EXPECT_STREQ(tool->argument, entry.handle_argument);
+    EXPECT_EQ(entry.cancellable, entry.action && *entry.action != ActionType::Status);
+    if (entry.action) {
+      EXPECT_NE(entry.validate, nullptr);
+      if (*entry.action == ActionType::Status) continue;
+      auto found = std::find_if(registered.begin(), registered.end(), [&](const auto& action) {
+        return action.type == *entry.action;
+      });
+      ASSERT_NE(found, registered.end());
+      EXPECT_EQ(found->capability, entry.id);
+      EXPECT_EQ(found->owns_interaction, entry.owns_interaction);
+    }
+  }
+}
+
+TEST(McpToolCatalogTest, DecodedActionsHaveIdenticalPipeValidationAndRoute) {
+  for (const auto& entry : actionCatalog()) {
+    if (!entry.action || *entry.action == ActionType::Status) continue;
+    Json args;
+    switch (entry.kind) {
+      case ToolKind::CaptureWindow: args = {{"query", "Editor"}}; break;
+      case ToolKind::CropCenter: args = {{"width", 32}, {"height", 24}}; break;
+      case ToolKind::Save: args = {{"result_id", "opaque_123"}, {"path", "C:\\shots"}, {"name", "capture.png"}}; break;
+      default: args = {{"result_id", "opaque_123"}}; break;
+    }
+    auto request = findTool(entry.id)->decode(args, 1, {});
+    ASSERT_TRUE(validateAutomationRequest(request).valid);
+    const auto& execute = std::get<ExecuteActionRequest>(request.payload);
+    EXPECT_EQ(actionType(execute.payload), *entry.action);
+    ipc::WireRequest wire;
+    wire.request = request;
+    const auto frame = ipc::encodeFrame(wire);
+    ASSERT_TRUE(frame);
+  }
+}
+
+TEST(McpToolCatalogTest, CommonCaptureParametersAreRejectedByBothTransports) {
+  for (const auto& parameters : std::vector<std::pair<std::string, Json>>{
+      {"capture_window", {{"query", "x"}, {"match", "regex"}}},
+      {"capture_window", {{"query", "x"}, {"process_id", 0}}},
+      {"capture_window", {{"query", ""}}},
+      {"crop_center", {{"width", 0}, {"height", 24}}},
+      {"crop_center", {{"width", 32}, {"height", -1}}}}) {
+    EXPECT_THROW(findTool(parameters.first)->decode(parameters.second, 1, {}), std::invalid_argument);
+    auto payload = parameters.second;
+    payload["action"] = parameters.first;
+    Json request{{"type", "execute_action"}, {"rpc_id", 1}, {"request_id", 1}, {"payload", payload}};
+    EXPECT_FALSE(ipc::decodeBody(request.dump()));
+  }
+}
+
+TEST(McpToolCatalogTest, ActionFailureCodeAndMessageMatchPipeResponse) {
+  AutomationResponse response;
+  response.result.request_id = 1;
+  response.result.error_code = ErrorCode::kInvalidArgument;
+  response.result.message = "crop dimensions must be positive";
+  ipc::WireResponse wire;
+  wire.response = response;
+  const auto frame = ipc::encodeFrame(wire);
+  ASSERT_TRUE(frame);
+  const auto decoded = ipc::decodeBody(std::string_view(frame.bytes).substr(4));
+  ASSERT_TRUE(decoded);
+  const auto& failure = std::get<ipc::WireResponse>(*decoded.message).response.result;
+  const auto toolResult = findTool("crop_center")->encode(response, Json::object(), {});
+  EXPECT_EQ(toolResult["structuredContent"]["error"]["code"], std::string(errorCodeSymbol(failure.error_code)));
+  EXPECT_EQ(toolResult["structuredContent"]["error"]["message"], failure.message);
 }

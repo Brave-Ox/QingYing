@@ -135,6 +135,11 @@ void ActionDispatcher::registerAsyncHandler(
   async_handlers_[key] = std::move(handler);
 }
 
+bool ActionDispatcher::hasHandler(ActionType type) const noexcept {
+  const auto key = static_cast<Key>(type);
+  return handlers_.count(key) != 0 || async_handlers_.count(key) != 0;
+}
+
 void ActionDispatcher::setExecutor(ActionExecutor executor) {
   executor_ = std::move(executor);
 }

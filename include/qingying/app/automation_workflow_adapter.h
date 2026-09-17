@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "qingying/automation/operation_port.h"
+#include "qingying/automation/action_catalog.h"
 #include <vector>
 
 namespace qingying {
@@ -12,7 +12,7 @@ class AutomationWorkflowAdapter final : public AutomationOperationPort,
                                         public AutomationResultPort {
  public:
   AutomationWorkflowAdapter(ActionDispatcher& dispatcher, CaptureWorkflow& workflow,
-      ResultStore& results, std::vector<AutomationActionDescriptor> descriptors);
+      ResultStore& results, std::vector<AutomationActionDescriptor> descriptors = automationActionDescriptors());
   std::optional<AutomationActionDescriptor> describe(ActionType type) const override;
   void submit(const ActionRequest& request, ActionCompletion completion) override;
   void shutdown() override;

@@ -19,7 +19,7 @@ AutomationWorkflowAdapter::AutomationWorkflowAdapter(ActionDispatcher& dispatche
 }
 std::optional<AutomationActionDescriptor> AutomationWorkflowAdapter::describe(ActionType type) const {
   for (const auto& descriptor : descriptors_)
-    if (descriptor.type == type) return descriptor;
+    if (descriptor.type == type && dispatcher_.hasHandler(type)) return descriptor;
   return std::nullopt;
 }
 void AutomationWorkflowAdapter::submit(const ActionRequest& request, ActionCompletion completion) {

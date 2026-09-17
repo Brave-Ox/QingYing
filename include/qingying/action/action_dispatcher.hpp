@@ -17,6 +17,7 @@ class ActionDispatcher {
   void registerHandler(std::unique_ptr<IActionHandler> handler);
   void registerAsyncHandler(std::unique_ptr<IAsyncActionHandler> handler);
   void setExecutor(ActionExecutor executor);
+  bool hasHandler(ActionType type) const noexcept;
   ActionResult dispatch(const ActionRequest& request) const;
 
   // Completes synchronously for a registered IActionHandler. An

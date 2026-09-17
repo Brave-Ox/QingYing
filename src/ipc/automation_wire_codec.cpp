@@ -1,4 +1,6 @@
 ﻿#include "automation_wire_codec.h"
+#include "action_catalog_codec.h"
+#include "qingying/automation/action_catalog.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -256,9 +258,12 @@ AutomationLimits readLimits(const Json& value) {
   require(validLimits(result));
   return result;
 }
-const std::set<std::string> capabilities{
-    "status", "capture_region", "capture_window", "crop_center", "save", "copy",
-    "pin", "longshot_select", "get_operation", "cancel_operation", "release_result"};
+const std::set<std::string> capabilities = [] {
+  // Retain reserved v1 names for compatibility; they are not advertised tools.
+  std::set<std::string> names{"capture_region", "longshot_select"};
+  for (const auto& entry : actionCatalog()) names.insert(entry.id);
+  return names;
+}();
 Json capabilitiesJson(const std::vector<std::string>& names) {
   require(names.size() <= capabilities.size());
   for (const auto& name : names) require(capabilities.count(name) != 0);
@@ -342,11 +347,11 @@ template <typename T> T readEnum(const Json& value, const std::vector<std::pair<
 Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& limits) {
   auto result = std::visit([&](const auto& value) -> Json {
     using T = std::decay_t<decltype(value)>;
-    if constexpr (std::is_same_v<T, StatusRequest>) return {{"action", "status"}};
+    if constexpr (std::is_same_v<T, StatusRequest>) return {{"action", automationActionId(ActionType::Status)}};
     else if constexpr (std::is_same_v<T, CaptureRegionRequest>)
-      return {{"action", "capture_region"}, {"region", rectJson(value.region)}};
+      return {{"action", automationActionId(ActionType::CaptureRegion)}, {"region", rectJson(value.region)}};
     else if constexpr (std::is_same_v<T, CaptureWindowRequest>) {
-      Json window{{"action", "capture_window"},
+      Json window{{"action", automationActionId(ActionType::CaptureWindow)},
                   {"query", utf8(value.window_query,
                                  limits.max_window_query_utf16_units)},
                   {"match", value.match == WindowMatchMode::Exact
@@ -355,7 +360,7 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
       return window;
     }
     else if constexpr (std::is_same_v<T, CropCenterRequest>)
-      return {{"action", "crop_center"}, {"width", value.width}, {"height", value.height}};
+      return {{"action", automationActionId(ActionType::CropCenter)}, {"width", value.width}, {"height", value.height}};
     else {
       require(value.result.kind == ResultSelectionKind::Explicit ||
               ((std::is_same_v<T, SaveRequest> ||
@@ -364,7 +369,7 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
                value.result.kind == ResultSelectionKind::Current));
       if constexpr (std::is_same_v<T, SaveRequest>) {
         path(value.path, limits);
-        Json save{{"action", "save"},
+        Json save{{"action", automationActionId(ActionType::Save)},
                   {"path", utf8(value.path, limits.max_path_utf16_units)},
                   {"overwrite", value.overwrite}};
         if (execute.result_handle)
@@ -374,7 +379,7 @@ Json actionJson(const ExecuteActionRequest& execute, const AutomationLimits& lim
           save["result_id"] = value.result.result_id;
         return save;
       } else {
-        Json consumer{{"action", std::is_same_v<T, CopyRequest> ? "copy" : "pin"}};
+        Json consumer{{"action", automationActionId(std::is_same_v<T, CopyRequest> ? ActionType::Copy : ActionType::Pin)}};
         if constexpr (std::is_same_v<T, CopyRequest> ||
                       std::is_same_v<T, PinRequest>) {
           if (execute.result_handle)
@@ -396,26 +401,14 @@ ExecuteActionRequest readAction(const Json& value, const AutomationLimits& limit
   if (name == "status") { fields(value, {"action"}); result.payload = StatusRequest{}; }
   else if (name == "capture_region") {
     fields(value, {"action", "region"}); result.payload = CaptureRegionRequest{readRect(value.at("region"))};
-  } else if (name == "capture_window") {
-    fields(value, {"action", "query"}, {"match", "process_id"});
-    CaptureWindowRequest window;
-    window.window_query = wide(value.at("query"), limits.max_window_query_utf16_units);
-    if (value.contains("match")) {
-      const auto& match = string(value.at("match"), 16);
-      require(match == "contains" || match == "exact");
-      window.match = match == "exact" ? WindowMatchMode::Exact
-                                      : WindowMatchMode::Contains;
-    }
-    if (value.contains("process_id")) {
-      require(!value.at("process_id").is_null());
-      window.process_id = static_cast<std::uint32_t>(
-          uint(value.at("process_id"), UINT32_MAX));
-      require(*window.process_id != 0);
-    }
-    result.payload = std::move(window);
-  } else if (name == "crop_center") {
-    fields(value, {"action", "width", "height"});
-    result.payload = CropCenterRequest{integer(value.at("width")), integer(value.at("height"))};
+  } else if (const auto* descriptor = findActionDescriptor(name);
+             descriptor && (descriptor->kind == AutomationToolKind::CaptureWindow ||
+                            descriptor->kind == AutomationToolKind::CropCenter)) {
+    auto arguments = value;
+    arguments.erase("action");
+    auto request = decodeActionArguments(descriptor->kind, descriptor->handle_argument,
+                                        arguments, 1, limits);
+    result = std::get<ExecuteActionRequest>(std::move(request.payload));
   } else if (name == "copy" || name == "pin" || name == "save") {
     const bool save = name == "save";
     const bool opaque_consumer = save || name == "copy" || name == "pin";

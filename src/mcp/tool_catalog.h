@@ -1,10 +1,11 @@
 ﻿#pragma once
 #include "qingying/automation/automation_contract.h"
+#include "qingying/automation/action_catalog.h"
 #include <nlohmann/json.hpp>
 #include <array>
 namespace qingying::mcp {
 using Json = nlohmann::json;
-enum class ToolKind { Status, CaptureWindow, CropCenter, Copy, Save, Pin, GetOperation, CancelOperation, ReleaseResult };
+using ToolKind = AutomationToolKind;
 struct Tool {
   const char* name;
   const char* description;
@@ -14,7 +15,7 @@ struct Tool {
   AutomationRequest decode(const Json& arguments, RequestId id, const AutomationLimits& limits) const;
   Json encode(const AutomationResponse& response, const Json& arguments, const AutomationLimits& limits) const;
 };
-const std::array<Tool, 9>& tools();
+const std::vector<Tool>& tools();
 const Tool* findTool(const std::string& name);
 Json toolFailure(int code, const std::string& message);
 }  // namespace qingying::mcp

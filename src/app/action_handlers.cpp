@@ -8,6 +8,8 @@
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/automation/action_catalog.h"
+#include <stdexcept>
 
 #include <memory>
 
@@ -194,25 +196,38 @@ void registerAppHandlers(ActionDispatcher& dispatcher,
                          ResultStore& results,
                          ResultActionService& result_actions,
                          ExportExecutor* export_executor) {
-  dispatcher.registerHandler(std::make_unique<StatusHandler>());
-  dispatcher.registerHandler(
-      std::make_unique<CaptureRegionHandler>(capture_service));
-  dispatcher.registerHandler(
-      std::make_unique<CropCenterHandler>(capture_service));
-  dispatcher.registerHandler(
-      std::make_unique<CaptureWindowHandler>(capture_service));
-  for (const auto action : {ActionType::CaptureRegion, ActionType::CropCenter,
-                            ActionType::CaptureWindow})
-    dispatcher.registerAsyncHandler(std::make_unique<AsyncCaptureHandler>(capture_service, action));
-  dispatcher.registerHandler(
-      std::make_unique<CopyHandler>(results, result_actions));
-  dispatcher.registerHandler(
-      std::make_unique<SaveHandler>(results, result_actions));
-  if (export_executor != nullptr) {
-    registerAsyncSaveHandler(dispatcher, result_actions, *export_executor);
+  // GUI-only region capture remains outside the external product contract.
+  dispatcher.registerHandler(std::make_unique<CaptureRegionHandler>(capture_service));
+  dispatcher.registerAsyncHandler(std::make_unique<AsyncCaptureHandler>(capture_service, ActionType::CaptureRegion));
+  for (const auto& descriptor : actionCatalog()) {
+    if (!descriptor.action) continue;
+    switch (*descriptor.action) {
+      case ActionType::Status:
+        dispatcher.registerHandler(std::make_unique<StatusHandler>());
+        break;
+      case ActionType::CaptureWindow:
+        dispatcher.registerHandler(std::make_unique<CaptureWindowHandler>(capture_service));
+        dispatcher.registerAsyncHandler(std::make_unique<AsyncCaptureHandler>(capture_service, *descriptor.action));
+        break;
+      case ActionType::CropCenter:
+        dispatcher.registerHandler(std::make_unique<CropCenterHandler>(capture_service));
+        dispatcher.registerAsyncHandler(std::make_unique<AsyncCaptureHandler>(capture_service, *descriptor.action));
+        break;
+      case ActionType::Copy:
+        dispatcher.registerHandler(std::make_unique<CopyHandler>(results, result_actions));
+        break;
+      case ActionType::Save:
+        dispatcher.registerHandler(std::make_unique<SaveHandler>(results, result_actions));
+        if (export_executor) registerAsyncSaveHandler(dispatcher, result_actions, *export_executor);
+        break;
+      case ActionType::Pin:
+        dispatcher.registerHandler(std::make_unique<PinHandler>(results, result_actions));
+        break;
+      default:
+        throw std::logic_error("action descriptor has no application handler factory");
+    }
   }
-  dispatcher.registerHandler(
-      std::make_unique<PinHandler>(results, result_actions));
+
 }
 
 }  // namespace qingying

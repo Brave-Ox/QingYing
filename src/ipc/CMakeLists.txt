@@ -1,4 +1,5 @@
 add_library(qingying_ipc STATIC
+  action_catalog_codec.cpp
   automation_wire_codec.cpp
   pipe_identity.cpp
   pipe_io.cpp

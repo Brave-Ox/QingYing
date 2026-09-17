@@ -1,4 +1,5 @@
 ﻿#include "qingying/automation/automation_endpoint.h"
+#include "qingying/automation/action_catalog.h"
 
 
 #include <algorithm>
@@ -75,7 +76,9 @@ StatusInfo AutomationEndpoint::status() const {
   info.busy = gate_.busy();
   info.busy_reason = gate_.reason();
   if (!stopping_) {
-    info.capabilities = {"status", "get_operation", "cancel_operation", "release_result"};
+    for (const auto& entry : actionCatalog())
+      if (!entry.action || *entry.action == ActionType::Status)
+        info.capabilities.push_back(entry.id);
     for (auto type : policy_.ready_actions) {
       const auto descriptor = operations_.describe(type);
       const std::string name = descriptor ? descriptor->capability : "";
