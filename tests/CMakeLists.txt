@@ -1,6 +1,7 @@
 # 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
+  image_memory_budget_test.cpp
   fault_boundary_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
   ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp

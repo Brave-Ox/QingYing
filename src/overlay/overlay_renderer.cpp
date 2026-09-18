@@ -471,6 +471,10 @@ bool OverlayRenderer::render(HWND hwnd, const coord::VirtualScreenRect& screen,
     return false;
   }
 
+  auto render_memory = ImageMemoryBudget::global().reserve(
+      static_cast<std::uint64_t>(screen.width) * screen.height * 4 * 3,
+      ImageMemoryKind::InFlight);
+  if (!render_memory) return false;
   BITMAPINFO bmi{};
   bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
   bmi.bmiHeader.biWidth = screen.width;
@@ -530,6 +534,7 @@ Image OverlayRenderer::makeLongShotPreviewImage(const Image& source) {
   Image result;
   result.width = width;
   result.height = height;
+  result.pixels = ImagePixels(ImageAllocator<std::uint32_t>(ImageMemoryKind::Preview));
   result.pixels.resize(static_cast<std::size_t>(width) *
                        static_cast<std::size_t>(height));
   for (int y = 0; y < height; ++y) {

@@ -85,6 +85,70 @@ class ComInitialization final {
   HRESULT result_;
 };
 
+// WIC writes directly into the already-exclusive temporary file. No complete
+// PNG is accumulated in an HGLOBAL or copied a second time before commit.
+class PngFileStream final : public IStream {
+ public:
+  explicit PngFileStream(HANDLE file) : file_(file) {}
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** value) override {
+    if (!value) return E_POINTER;
+    *value = nullptr;
+    if (id != IID_IUnknown && id != IID_ISequentialStream && id != IID_IStream) return E_NOINTERFACE;
+    *value = static_cast<IStream*>(this); AddRef(); return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const auto count = --references_; if (!count) delete this; return count;
+  }
+  HRESULT STDMETHODCALLTYPE Read(void*, ULONG, ULONG*) override { return STG_E_ACCESSDENIED; }
+  HRESULT STDMETHODCALLTYPE Write(const void* data, ULONG size, ULONG* written) override {
+    if (written) *written = 0;
+    if (!data && size) return STG_E_INVALIDPOINTER;
+    auto* bytes = static_cast<const BYTE*>(data);
+    ULONG total = 0;
+    while (total < size) {
+      DWORD count = 0;
+      if (!WriteFile(file_, bytes + total, (std::min)(size - total, 1024UL * 1024), &count, nullptr) || !count)
+        return STG_E_WRITEFAULT;
+      total += count;
+      if (written) *written = total;
+    }
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Seek(LARGE_INTEGER offset, DWORD origin, ULARGE_INTEGER* position) override {
+    if (origin > STREAM_SEEK_END) return STG_E_INVALIDFUNCTION;
+    LARGE_INTEGER result{};
+    if (!SetFilePointerEx(file_, offset, &result, origin)) return STG_E_SEEKERROR;
+    if (position) position->QuadPart = static_cast<ULONGLONG>(result.QuadPart);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetSize(ULARGE_INTEGER size) override {
+    if (size.QuadPart > static_cast<ULONGLONG>((std::numeric_limits<LONGLONG>::max)())) return STG_E_MEDIUMFULL;
+    LARGE_INTEGER zero{}, saved{}, end{};
+    end.QuadPart = static_cast<LONGLONG>(size.QuadPart);
+    if (!SetFilePointerEx(file_, zero, &saved, FILE_CURRENT) ||
+        !SetFilePointerEx(file_, end, nullptr, FILE_BEGIN) || !SetEndOfFile(file_)) return STG_E_WRITEFAULT;
+    return SetFilePointerEx(file_, saved, nullptr, FILE_BEGIN) ? S_OK : STG_E_SEEKERROR;
+  }
+  HRESULT STDMETHODCALLTYPE CopyTo(IStream*, ULARGE_INTEGER, ULARGE_INTEGER*, ULARGE_INTEGER*) override { return E_NOTIMPL; }
+  HRESULT STDMETHODCALLTYPE Commit(DWORD) override { return FlushFileBuffers(file_) ? S_OK : STG_E_WRITEFAULT; }
+  HRESULT STDMETHODCALLTYPE Revert() override { return E_NOTIMPL; }
+  HRESULT STDMETHODCALLTYPE LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) override { return E_NOTIMPL; }
+  HRESULT STDMETHODCALLTYPE UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) override { return E_NOTIMPL; }
+  HRESULT STDMETHODCALLTYPE Stat(STATSTG* stat, DWORD) override {
+    if (!stat) return E_POINTER;
+    *stat = {};
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file_, &size)) return STG_E_READFAULT;
+    stat->type = STGTY_STREAM; stat->grfMode = STGM_WRITE;
+    stat->cbSize.QuadPart = static_cast<ULONGLONG>(size.QuadPart); return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Clone(IStream** value) override { if (value) *value = nullptr; return E_NOTIMPL; }
+ private:
+  std::atomic<ULONG> references_{1};
+  HANDLE file_;
+};
+
 bool validImage(const Image& image, UINT* stride, UINT* bytes) {
   if (image.width <= 0 || image.height <= 0) return false;
   const auto width = static_cast<std::size_t>(image.width);
@@ -149,23 +213,10 @@ std::unique_ptr<TemporaryFile> createTemporary(const std::wstring& directory) {
   return {};
 }
 
-bool writeAll(HANDLE file, const void* data, std::size_t size) {
-  const auto* next = static_cast<const std::uint8_t*>(data);
-  while (size != 0) {
-    const DWORD chunk = static_cast<DWORD>((std::min)(
-        size, static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
-    DWORD written = 0;
-    if (!WriteFile(file, next, chunk, &written, nullptr) || written == 0) return false;
-    next += written;
-    size -= written;
-  }
-  return FlushFileBuffers(file) != FALSE;
-}
-
 }  // namespace
 
 ActionResult savePngFileTransaction(const Image& image,
-    const std::wstring& path, ExportService::PngSaveOptions options) {
+    const std::wstring& path, ExportService::PngSaveOptions options) try {
   if (path.empty()) return failure(ErrorCode::kInvalidArgument,
       "save path is required", "validate");
   UINT stride = 0;
@@ -191,6 +242,13 @@ ActionResult savePngFileTransaction(const Image& image,
         "output directory identity is not allowed", "validate_directory");
   }
 
+  // Conservatively admit WIC scratch/conversion buffers before codec entry.
+  // File-backed output avoids an additional full compressed-image allocation.
+  auto encode_memory = ImageMemoryBudget::global().reserve(
+      static_cast<std::uint64_t>(bytes) * 2 + stride * 8ULL + 65536,
+      ImageMemoryKind::EncodeScratch);
+  if (!encode_memory) return failure(ErrorCode::kResourceLimit,
+      "PNG encoder exceeds image memory budget", "encode");
   auto temporary = createTemporary(directory.wstring());
   if (!temporary) return failure(ErrorCode::kExportFailed,
       "failed to create exclusive temporary file", "create_temporary");
@@ -199,26 +257,14 @@ ActionResult savePngFileTransaction(const Image& image,
   if (!com.usable()) return failure(ErrorCode::kExportFailed,
       "COM initialization failed", "encode");
   ComPtr<IStream> stream;
-  HRESULT hr = CreateStreamOnHGlobal(nullptr, TRUE, stream.GetAddressOf());
-  if (FAILED(hr)) return failure(ErrorCode::kExportFailed,
-      "failed to create PNG stream", "encode");
-  hr = encodePng(image, stream.Get());
+  stream.Attach(new PngFileStream(temporary->handle().get()));
+  HRESULT hr = encodePng(image, stream.Get());
   if (FAILED(hr)) return failure(ErrorCode::kExportFailed,
       "PNG encoding failed", "encode");
-  HGLOBAL memory = nullptr;
-  if (FAILED(GetHGlobalFromStream(stream.Get(), &memory)) || memory == nullptr)
-    return failure(ErrorCode::kExportFailed, "PNG stream unavailable", "encode");
-  STATSTG stats{};
-  if (FAILED(stream->Stat(&stats, STATFLAG_NONAME)) ||
-      stats.cbSize.QuadPart > (std::numeric_limits<std::size_t>::max)())
-    return failure(ErrorCode::kExportFailed, "PNG stream size is invalid", "encode");
-  const auto size = static_cast<std::size_t>(stats.cbSize.QuadPart);
-  const void* data = GlobalLock(memory);
-  if (data == nullptr || !writeAll(temporary->handle().get(), data, size)) {
-    if (data != nullptr) GlobalUnlock(memory);
+  if (FAILED(stream->Commit(STGC_DEFAULT))) {
     return failure(ErrorCode::kExportFailed, "temporary PNG write failed", "write_temporary");
   }
-  GlobalUnlock(memory);
+  stream.Reset();
 
   if (options.authorize_commit && !options.authorize_commit())
     return failure(ErrorCode::kCancelled, "save cancelled before commit", "commit_authorization");
@@ -244,6 +290,8 @@ ActionResult savePngFileTransaction(const Image& image,
       std::filesystem::absolute(destination).lexically_normal().wstring(),
       ImageFormat::Png};
   return result;
+} catch (const std::bad_alloc&) {
+  return failure(ErrorCode::kResourceLimit, "image memory budget exhausted", "encode");
 }
 
 }  // namespace qingying::detail

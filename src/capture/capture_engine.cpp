@@ -81,7 +81,7 @@ CaptureEngine::CaptureEngine() : impl_(std::make_unique<Impl>()) {}
 CaptureEngine::~CaptureEngine() = default;
 
 ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
-                                          Image& out) {
+                                          Image& out) try {
   ActionResult r;
   if (width <= 0 || height <= 0) {
     r.ok = false;
@@ -108,6 +108,9 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
   }
 
   // 与虚拟桌面（所有显示器并集）求交：负坐标/越界都收敛到桌面内，
+  auto dib_memory = ImageMemoryBudget::global().reserve(pixel_count * kBytesPerPixel,
+                                                       ImageMemoryKind::InFlight);
+  if (!dib_memory) throw std::bad_alloc{};
   // 得到实际可拷贝的源区域。GetDC(nullptr) 的 DC 坐标即虚拟桌面坐标。
   const std::int64_t virt_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
   const std::int64_t virt_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
@@ -208,6 +211,12 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
   r.ok = true;
   r.error_code = ErrorCode::kOk;
   return r;
+} catch (const std::bad_alloc&) {
+  out = Image{};
+  ActionResult result;
+  result.error_code = ErrorCode::kResourceLimit;
+  result.message = "image memory budget exhausted";
+  return result;
 }
 
 ActionResult CaptureEngine::captureRegion(const ScreenPhysicalRect& region,

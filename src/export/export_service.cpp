@@ -33,11 +33,14 @@ ActionResult makeExportError(const char* message) {
 
 }  // namespace
 
-ActionResult ExportService::copyToClipboard(const Image& image) {
-  const std::vector<std::uint8_t> dib_bytes = dib::encodeDib(image);
+ActionResult ExportService::copyToClipboard(const Image& image) try {
+  const auto dib_bytes = dib::encodeDib(image);
   if (dib_bytes.empty()) {
     return makeExportError("ExportService::copyToClipboard: 空图，无内容可复制");
   }
+
+  auto clipboard_memory = ImageMemoryBudget::global().reserve(dib_bytes.size(), ImageMemoryKind::WireCopy);
+  if (!clipboard_memory) throw std::bad_alloc{};
 
   if (!::OpenClipboard(nullptr)) {
     return makeExportError("ExportService::copyToClipboard: OpenClipboard 失败");
@@ -80,6 +83,11 @@ ActionResult ExportService::copyToClipboard(const Image& image) {
   r.error_code = ErrorCode::kOk;
   r.message = "图像已复制到剪贴板";
   return r;
+} catch (const std::bad_alloc&) {
+  ActionResult result;
+  result.error_code = ErrorCode::kResourceLimit;
+  result.message = "image memory budget exhausted";
+  return result;
 }
 
 ActionResult ExportService::savePng(const Image& image,

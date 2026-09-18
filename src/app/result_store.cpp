@@ -101,11 +101,15 @@ ResultId ResultStore::publish(ResultScopeId scope, Image image,
     lease.metadata_.expires_at = deadline(clock_(), limits_.result_ttl);
   }
   reservation.commit();
+  image.classifyMemory(ImageMemoryKind::Retained);
   auto storage = std::make_shared<RetainedImage>(std::move(reservation), std::move(image));
   lease.image_ = std::shared_ptr<const Image>(storage, &storage->image);
   const auto previous = slots_.find(scope);
-  if (previous != slots_.end()) remember(scope, previous->second,
-      expired(previous->second) ? Invalidation::Expired : Invalidation::Replaced);
+  if (previous != slots_.end()) {
+    previous->second.image()->classifyMemory(ImageMemoryKind::ExternalLease);
+    remember(scope, previous->second,
+        expired(previous->second) ? Invalidation::Expired : Invalidation::Replaced);
+  }
   slots_[scope] = std::move(lease);
   return id;
 }
@@ -160,12 +164,17 @@ ResultId ResultStore::resolve(const ResultSelection& selection) const noexcept {
 }
 
 void ResultStore::clearScope(ResultScopeId scope) noexcept {
+  const auto found = slots_.find(scope);
+  if (found != slots_.end()) found->second.image()->classifyMemory(ImageMemoryKind::ExternalLease);
   slots_.erase(scope);
   // Disconnect clears this scope's query history as well as its slot.
   tombstones_.erase(std::remove_if(tombstones_.begin(), tombstones_.end(),
       [scope](const Tombstone& t) { return t.scope == scope; }), tombstones_.end());
 }
-void ResultStore::clearAll() noexcept { slots_.clear(); tombstones_.clear(); }
+void ResultStore::clearAll() noexcept {
+  for (const auto& slot : slots_) slot.second.image()->classifyMemory(ImageMemoryKind::ExternalLease);
+  slots_.clear(); tombstones_.clear();
+}
 void ResultStore::clear() noexcept { clearScope(kGuiResultScopeId); }
 
 void ResultStore::release(ResultScopeId scope, ResultId id) noexcept {
@@ -206,6 +215,7 @@ void ResultStore::sweep() noexcept {
   pruneTombstones();
   for (auto it = slots_.begin(); it != slots_.end();) {
     if (expired(it->second)) {
+      it->second.image()->classifyMemory(ImageMemoryKind::ExternalLease);
       remember(it->first, it->second, Invalidation::Expired);
       it = slots_.erase(it);
     } else ++it;
@@ -230,6 +240,7 @@ int ResultStore::releaseResult(ResultScopeId scope, ResultId id) noexcept {
   const auto it = slots_.find(scope);
   if (it != slots_.end() && it->second.metadata().result_id == id) {
     const bool was_expired = expired(it->second);
+    it->second.image()->classifyMemory(ImageMemoryKind::ExternalLease);
     remember(scope, it->second, was_expired ? Invalidation::Expired : Invalidation::Released);
     slots_.erase(it);
     return was_expired ? ErrorCode::kResultExpired : ErrorCode::kOk;

@@ -127,6 +127,8 @@ class AsyncSaveHandler final : public IAsyncActionHandler {
           ActionResult result;
           try {
             result = actions_.executeSave(std::move(state->task));
+          } catch (const std::bad_alloc&) {
+            result = failure(ErrorCode::kResourceLimit, "image memory budget exhausted", "encode");
           } catch (...) {
             result = failure(ErrorCode::kExportFailed,
                              "save worker threw an exception", "encode");

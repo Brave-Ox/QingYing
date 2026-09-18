@@ -1,5 +1,6 @@
 add_library(qingying_action STATIC
   action_dispatcher.cpp
+  image_memory_budget.cpp
 )
 target_link_libraries(qingying_action PUBLIC qingying_diagnostics)
 

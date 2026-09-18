@@ -229,6 +229,9 @@ struct CaptureService::AsyncImpl {
           if (work->result.ok && work->transform && aborted(work->request) == ErrorCode::kOk)
             work->transform(work->image);
         }
+      } catch (const std::bad_alloc&) {
+        work->image = Image{};
+        work->result = failure(ErrorCode::kResourceLimit, "image memory budget exhausted");
       } catch (...) {
         work->result = failure(ErrorCode::kCaptureFailed, "capture provider threw an exception");
         work->result.diagnostic = recordFault(ErrorCode::kCaptureFailed,

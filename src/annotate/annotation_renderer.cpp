@@ -705,6 +705,9 @@ void drawMosaic(Image& target, const Annotation& annotation)
   const std::size_t pixel_count =
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
 
+  auto mosaic_memory = ImageMemoryBudget::global().reserve(
+      static_cast<std::uint64_t>(pixel_count) * 2, ImageMemoryKind::EncodeScratch);
+  if (!mosaic_memory) throw std::bad_alloc{};
   std::vector<std::uint8_t> mask(pixel_count, 0);
   for (std::size_t i = 1; i < annotation.points.size(); ++i)
   {

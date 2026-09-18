@@ -1,4 +1,4 @@
-#include <Windows.h>
+﻿#include <Windows.h>
 
 #include <gtest/gtest.h>
 
@@ -111,6 +111,38 @@ TEST(SelectionOverlayTest, QueuedLongShotMessagesCanBeAbortedSafely) {
   overlay.hide();
   overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
+}
+
+TEST(SelectionOverlayTest, PendingPreviewUsesLatestImageAndReleasesBudgetOnHide) {
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+  Image preview{1, 1, {0xFFFFFFFFu}};
+  const auto baseline = ImageMemoryBudget::global().snapshot().used_bytes;
+  for (int i = 0; i < 100; ++i) ASSERT_TRUE(overlay.postLongShotPreview(preview));
+  const auto pending = ImageMemoryBudget::global().snapshot();
+  EXPECT_EQ(pending.bytes[static_cast<std::size_t>(ImageMemoryKind::Preview)], 4u);
+  EXPECT_EQ(pending.allocations[static_cast<std::size_t>(ImageMemoryKind::Preview)], 1u);
+  EXPECT_EQ(pending.used_bytes, baseline + 4);
+  overlay.hide();
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline);
+}
+
+TEST(SelectionOverlayTest, ExpiredPendingPreviewReturnsPixelBudgetInsteadOfDisplaying) {
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+  Image preview{1, 1, {0xFFFFFFFFu}};
+  ASSERT_TRUE(overlay.postLongShotPreview(preview));
+  Sleep(2100);
+  const HWND window = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(window, nullptr);
+  MSG message{};
+  while (PeekMessageW(&message, window, WM_QINGYING_SELECTION_LONGSHOT_PREVIEW,
+                      WM_QINGYING_SELECTION_LONGSHOT_PREVIEW, PM_REMOVE)) {
+    DispatchMessageW(&message);
+  }
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().bytes[
+                static_cast<std::size_t>(ImageMemoryKind::Preview)], 0u);
+  overlay.hide();
 }
 
 TEST(SelectionOverlayTest, WindowDestroyedBeforeOwnerIsSafe) {

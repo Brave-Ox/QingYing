@@ -349,7 +349,7 @@ TEST(AnnotationRendererTest, SourceImageIsNotModified)
   AnnotationDocument document;
   ASSERT_TRUE(document.add(makeRedRectangle()));
   const Image source = makeCanvas();
-  const std::vector<std::uint32_t> before = source.pixels;
+  const auto before = source.pixels;
   Image out;
 
   ASSERT_TRUE(renderer.rasterize(source, document, out));
@@ -700,7 +700,7 @@ TEST(AnnotationRendererTest, TextLeavesSourceImageUnmodified)
   ASSERT_TRUE(document.add(text));
 
   const Image source = makeCanvas();
-  const std::vector<std::uint32_t> before = source.pixels;
+  const auto before = source.pixels;
   Image out;
   ASSERT_TRUE(renderer.rasterize(source, document, out));
   EXPECT_EQ(source.pixels, before);

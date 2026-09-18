@@ -79,12 +79,37 @@ TEST(PngFileTransactionTest, CancellationBeforeCommitLeavesNoOutputOrTemporary) 
   TemporaryDirectory directory;
   const auto destination = directory.file(L"cancelled.png");
   ExportService::PngSaveOptions options;
-  options.authorize_commit = [] { return false; };
+  const auto before = ImageMemoryBudget::global().snapshot().used_bytes;
+  options.authorize_commit = [] {
+    EXPECT_GT(ImageMemoryBudget::global().snapshot().bytes[
+        static_cast<std::size_t>(ImageMemoryKind::EncodeScratch)], 0u);
+    return false;
+  };
   const auto result = savePngFileTransaction(image(), destination.wstring(), options);
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error_code, ErrorCode::kCancelled);
   EXPECT_FALSE(std::filesystem::exists(destination));
   EXPECT_EQ(temporaryCount(directory.path()), 0u);
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, before);
+}
+
+TEST(PngFileTransactionTest, BudgetExhaustionCreatesNoFileAndRetryCanCommit) {
+  TemporaryDirectory directory;
+  const auto destination = directory.file(L"budget.png");
+  auto pixels = image();
+  auto budget = ImageMemoryBudget::global();
+  const auto before = budget.snapshot();
+  struct RestoreLimit { ImageMemoryBudget budget; std::uint64_t bytes; ~RestoreLimit() { budget.setLimit(bytes); } } restore{budget, before.limit_bytes};
+  ASSERT_TRUE(budget.setLimit(before.used_bytes + 65535));
+  const auto rejected = savePngFileTransaction(pixels, destination.wstring(), {});
+  EXPECT_EQ(rejected.error_code, ErrorCode::kResourceLimit);
+  EXPECT_FALSE(std::filesystem::exists(destination));
+  EXPECT_EQ(temporaryCount(directory.path()), 0u);
+  EXPECT_EQ(budget.snapshot().used_bytes, before.used_bytes);
+  ASSERT_TRUE(budget.setLimit(before.limit_bytes));
+  const auto retry = savePngFileTransaction(pixels, destination.wstring(), {});
+  EXPECT_TRUE(retry.ok) << retry.message;
+  EXPECT_EQ(budget.snapshot().used_bytes, before.used_bytes);
 }
 
 TEST(PngFileTransactionTest, DirectoryCannotBeReplacedDuringCommitAuthorization) {

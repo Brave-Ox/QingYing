@@ -35,7 +35,7 @@ struct DibInfoHeader {
 
 }  // namespace
 
-std::vector<std::uint8_t> encodeDib(const Image& image) {
+DibBytes encodeDib(const Image& image) {
   if (image.empty()) {
     return {};
   }
@@ -51,7 +51,8 @@ std::vector<std::uint8_t> encodeDib(const Image& image) {
   const std::size_t pixel_bytes =
       row_bytes * static_cast<std::size_t>(image.height);
 
-  std::vector<std::uint8_t> out(kHeaderSize + pixel_bytes, 0);
+  DibBytes out(kHeaderSize + pixel_bytes, 0,
+               ImageAllocator<std::uint8_t>(ImageMemoryKind::EncodeScratch));
   DibInfoHeader header{};
   header.biWidth = image.width;
   header.biHeight = image.height;  // 正 = 底向上（CF_DIB 标准）

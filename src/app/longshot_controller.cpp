@@ -84,6 +84,7 @@ struct LongShotController::Impl {
           LongShotCompletionMessage completion;
           completion.result = result;
           completion.image = std::move(image);
+          completion.image.classifyMemory(ImageMemoryKind::WorkerQueue);
           const std::optional<UiMessageToken> token =
               messages.push(std::move(completion));
           if (!token.has_value()) {

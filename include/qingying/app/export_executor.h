@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include "qingying/diagnostics/fault_types.hpp"
+#include "qingying/action/image_memory_budget.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,7 @@ class ExportExecutor final {
 
  private:
   struct Job {
+    ImageMemoryBudget::Token queue_memory;
     Task execute;
     Task reject;
     std::uint64_t request_id{0};

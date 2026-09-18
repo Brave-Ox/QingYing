@@ -19,12 +19,14 @@ bool ExportExecutor::submit(Task execute, Task reject,
                             std::uint64_t request_id,
                             std::string operation) {
   if (!execute) return false;
+  auto queue_memory = ImageMemoryBudget::global().reserve(sizeof(Job), ImageMemoryKind::WorkerQueue);
+  if (!queue_memory) return false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (stopping_ || jobs_.size() >= max_queued_) return false;
     auto context = currentFaultContext();
     if (request_id) context.request_id = request_id;
-    jobs_.push(Job{std::move(execute), std::move(reject), request_id,
+    jobs_.push(Job{std::move(queue_memory), std::move(execute), std::move(reject), request_id,
                    std::move(operation), context});
     last_progress_ = "queued";
   }

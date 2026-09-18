@@ -950,6 +950,7 @@ bool SmartRegionVisualResultCache::lookup(
 {
   out = SmartRegionCandidate{};
   found = false;
+  if (now() - m_cached_at >= std::chrono::seconds{2}) return false;
   if (!m_valid || root_window != m_root_window ||
       background_identity != m_background_identity ||
       !rectanglesEqual(owner_rect, m_owner_rect))
@@ -997,6 +998,9 @@ void SmartRegionVisualResultCache::store(
     std::uint8_t minimum_visual_confidence,
     bool allow_browser_wide_fallback) noexcept
 {
+  const auto current = now();
+  if (m_valid && current - m_cached_at >= std::chrono::seconds{2}) clear();
+  m_cached_at = current;
   if (!m_valid || root_window != m_root_window ||
       background_identity != m_background_identity ||
       !rectanglesEqual(owner_rect, m_owner_rect))

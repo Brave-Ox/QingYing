@@ -26,7 +26,7 @@ std::uint32_t kMakePixel(std::uint8_t b, std::uint8_t g, std::uint8_t r,
 
 TEST(DibEncoderTest, EmptyImageYieldsEmptyBytes) {
   const Image image;
-  const std::vector<std::uint8_t> bytes = encodeDib(image);
+  const auto bytes = encodeDib(image);
   EXPECT_TRUE(bytes.empty());
 }
 
@@ -36,7 +36,7 @@ TEST(DibEncoderTest, HeaderIsBottomUpBgra32) {
   image.height = 1;
   image.pixels = {kMakePixel(0, 0, 0, 0xFF), kMakePixel(0, 0, 0, 0xFF)};
 
-  const std::vector<std::uint8_t> bytes = encodeDib(image);
+  const auto bytes = encodeDib(image);
   ASSERT_FALSE(bytes.empty());
   ASSERT_GE(bytes.size(), sizeof(BITMAPINFOHEADER));
 
@@ -63,7 +63,7 @@ TEST(DibEncoderTest, PixelDataIsBottomUp) {
       kMakePixel(0x00, 0x00, 0x00, 0xFF),  // 底行：黑
   };
 
-  const std::vector<std::uint8_t> bytes = encodeDib(image);
+  const auto bytes = encodeDib(image);
   ASSERT_GE(bytes.size(),
             sizeof(BITMAPINFOHEADER) + 2u * 2u * 4u);
   const auto* px =

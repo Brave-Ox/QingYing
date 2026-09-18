@@ -827,6 +827,28 @@ TEST(SmartRegionVisualResultCacheTest,
   EXPECT_FALSE(cache.lookup(2, 101, owner_rect, 207, 207, cached, found));
 }
 
+TEST(SmartRegionVisualResultCacheTest, ExpiresWithoutSleepingAndHasFixedStorage) {
+  auto time = std::chrono::steady_clock::time_point{};
+  SmartRegionVisualResultCache cache([](void* context) noexcept {
+    return *static_cast<std::chrono::steady_clock::time_point*>(context);
+  }, &time);
+  const WindowRect owner{0, 0, 1000, 800};
+  SmartRegionCandidate candidate{1, 2, {96, 96, 240, 240}, SmartRegionKind::KnownContent};
+  candidate.source = SmartRegionDiagnosticSource::Visual;
+  candidate.semantic = SmartRegionSemantic::ContentSurface;
+  cache.store(1, 101, owner, 100, 100, &candidate);
+  SmartRegionCandidate cached;
+  bool found = false;
+  ASSERT_TRUE(cache.lookup(1, 101, owner, 100, 100, cached, found));
+  EXPECT_TRUE(found);
+  time += std::chrono::seconds{2};
+  EXPECT_FALSE(cache.lookup(1, 101, owner, 100, 100, cached, found));
+  cache.store(1, 101, owner, 500, 500, nullptr);
+  EXPECT_FALSE(cache.lookup(1, 101, owner, 100, 100, cached, found));
+  EXPECT_EQ(cache.maximumCandidates(), 6u);
+  EXPECT_EQ(cache.storageBytes(), sizeof(cache));
+}
+
 TEST(SmartRegionVisualResultCacheTest,
      ReusesWideBrowserFallbackOnlyInsideTheSameCell)
 {

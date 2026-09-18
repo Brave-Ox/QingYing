@@ -53,6 +53,7 @@ struct LongShotCompletionMessage {
 
 struct SelectionOverlayLongShotPreviewMessage {
   Image image;
+  std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
 };
 
 struct SelectionOverlayLongShotFinishedMessage {

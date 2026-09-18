@@ -47,6 +47,8 @@ class ResultStore {
   // The injected monotonic clock must not throw; store operations run on UI.
   using Clock = std::function<std::chrono::steady_clock::time_point()>;
   explicit ResultStore(AutomationLimits limits = {}, Clock clock = {});
+  ~ResultStore() { clearAll(); }
+  ImageMemorySnapshot imageMemorySnapshot() const noexcept { return ImageMemoryBudget::global().snapshot(); }
   ResultStore(const ResultStore&) = delete;
   ResultStore& operator=(const ResultStore&) = delete;
   ResultBudget::Reservation reserve(ResultScopeId scope, int width, int height,

@@ -50,6 +50,7 @@ struct OverlayWindowData {
   SelectionClosedCallback closed_callback;
   std::atomic<std::uintptr_t>* owner_hwnd{nullptr};
   std::atomic<bool>* accepting_messages{nullptr};
+  std::atomic<UiMessageToken>* preview_token{nullptr};
   UiMessageChannel* message_channel{nullptr};
   bool window_destroyed{false};
   HWND overlay{nullptr};
@@ -1125,10 +1126,13 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_QINGYING_SELECTION_LONGSHOT_PREVIEW: {
       if (data != nullptr && data->message_channel != nullptr) {
-        const auto message =
+        auto token = static_cast<UiMessageToken>(lparam);
+        if (data->preview_token) data->preview_token->compare_exchange_strong(token, 0);
+        auto message =
             data->message_channel->take<SelectionOverlayLongShotPreviewMessage>(
                 static_cast<UiMessageToken>(lparam));
         if (message.has_value()) {
+          if (std::chrono::steady_clock::now() - message->created_at > std::chrono::seconds{2}) return 0;
           data->longshot_preview = std::move(message->image);
           updateOverlay(hwnd, data);
         }
@@ -1587,6 +1591,7 @@ struct SelectionOverlay::Impl {
       nullptr, nullptr, window_detail::RegionQueryLane::Discovery};
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
+  std::atomic<UiMessageToken> preview_token{0};
   std::atomic<bool> accepting_messages{false};
 };
 
@@ -1633,8 +1638,10 @@ bool SelectionOverlay::show(Image background,
   data->discovery_worker = &impl_->discovery_worker;
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
+  data->preview_token = &impl_->preview_token;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
-  data->background = std::make_shared<const Image>(std::move(background));  // 桌面截图背景（物理像素）；空则纯遮罩
+  if (!background.classifyMemory(ImageMemoryKind::VisualCache)) background = Image{};
+  data->background = std::make_shared<const Image>(std::move(background));  // 空背景降级到纯遮罩。
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
   data->longshot_control_callback = std::move(longshot_control_callback);
@@ -1717,9 +1724,13 @@ bool SelectionOverlay::postLongShotPreview(const Image& image) {
     if (!token.has_value()) {
       return false;
     }
+    const auto previous = impl_->preview_token.exchange(*token);
+    if (previous) impl_->messages.discard(previous);
     if (!PostMessageW(hwnd, WM_QINGYING_SELECTION_LONGSHOT_PREVIEW, 0,
                       static_cast<LPARAM>(*token))) {
       impl_->messages.discard(*token);
+      auto failed = *token;
+      impl_->preview_token.compare_exchange_strong(failed, 0);
       return false;
     }
   } catch (...) {

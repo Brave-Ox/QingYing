@@ -183,7 +183,7 @@ bool ImageStitcher::append(Image& accumulated, const Image& next,
 
   const std::size_t new_pixel_count =
       (accumulated_height + new_rows) * width;
-  std::vector<std::uint32_t> merged;
+  ImagePixels merged;
   try {
     merged.reserve(new_pixel_count);
     merged.insert(merged.end(), accumulated.pixels.begin(),
@@ -193,6 +193,8 @@ bool ImageStitcher::append(Image& accumulated, const Image& next,
     merged.insert(merged.end(), next.pixels.begin() +
                                     static_cast<std::ptrdiff_t>(first_new_pixel),
                   next.pixels.end());
+  } catch (const std::bad_alloc&) {
+    throw;
   } catch (...) {
     return false;
   }
