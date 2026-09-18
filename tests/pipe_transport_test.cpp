@@ -155,6 +155,61 @@ TEST(PipeTransportTest, CloseFromCompletionIsSupported) {
   client.submit(request(1), [&](AutomationResponse) { client.close(); ++calls; });
   ASSERT_TRUE(test.pump([&] { return calls == 1; }));
   client.close();
+  EXPECT_EQ(client.diagnostics().state, PipeClientState::Closed);
+  EXPECT_EQ(client.diagnostics().last_frame_request, 1u);
+  EXPECT_FALSE(client.diagnostics().reader_running);
+}
+TEST(PipeTransportTest, DestructionFromReaderCallbackJoinsThroughOwnedReaper) {
+  Harness test;
+  ASSERT_TRUE(test.server.start());
+  auto client = std::make_unique<PipeAutomationClient>(test.config);
+  ASSERT_TRUE(test.connect(*client));
+  std::atomic<bool> destroyed{false};
+  client->submit(request(1), [&](AutomationResponse) {
+    client.reset();
+    destroyed.store(true);
+  });
+  ASSERT_TRUE(test.pump([&] { return destroyed.load(); }));
+  EXPECT_TRUE(test.pump([&] { return test.disconnected == 1; }));
+}
+TEST(PipeTransportTest, ConcurrentCloseAndCallbackCloseDoNotSelfJoin) {
+  Harness test;
+  test.hold = true;
+  ASSERT_TRUE(test.server.start());
+  PipeAutomationClient client(test.config);
+  ASSERT_TRUE(test.connect(client));
+  std::atomic<int> callbacks{0};
+  client.submit(request(1), [&](AutomationResponse) { client.close(); ++callbacks; });
+  ASSERT_TRUE(test.pump([&] { return test.submitted == 1; }));
+  auto first = std::async(std::launch::async, [&] { client.close(); });
+  auto second = std::async(std::launch::async, [&] { client.close(); });
+  ASSERT_EQ(first.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(second.wait_for(2s), std::future_status::ready);
+  first.get(); second.get();
+  EXPECT_EQ(callbacks, 1);
+  EXPECT_EQ(client.diagnostics().pending_callbacks, 0u);
+  EXPECT_EQ(client.diagnostics().close_reason, ClientCloseReason::ClientClose);
+  EXPECT_FALSE(client.connect());
+}
+TEST(PipeTransportTest, ServerDisconnectSettlesCallbacksAndIsDiagnosable) {
+  Harness test;
+  test.hold = true;
+  ASSERT_TRUE(test.server.start());
+  PipeAutomationClient client(test.config);
+  ASSERT_TRUE(test.connect(client));
+  std::atomic<int> callbacks{0};
+  client.submit(request(1), [&](AutomationResponse response) {
+    EXPECT_EQ(response.result.error_code, ErrorCode::kCancelled);
+    ++callbacks;
+  });
+  ASSERT_TRUE(test.pump([&] { return test.submitted == 1; }));
+  test.server.stop();
+  ASSERT_TRUE(test.pump([&] { return !client.diagnostics().reader_running; }));
+  client.close();
+  EXPECT_EQ(callbacks, 1);
+  EXPECT_EQ(client.diagnostics().close_reason, ClientCloseReason::PeerDisconnect);
+  EXPECT_FALSE(client.diagnostics().reader_running);
+  EXPECT_EQ(client.diagnostics().state, PipeClientState::Closed);
 }
 TEST(PipeTransportTest, FourConnectionsAndFifthIsBounded) {
   Harness test;

@@ -28,10 +28,62 @@ struct PendingCompletion {
   AutomationCompletion callback;
   bool control;
 };
+// Allocated before reader launch: transferring ownership on self-close never
+// allocates. No detached threads; the service owns and joins every handoff.
+struct ReaderJoinTask {
+  std::thread reader;
+  std::unique_ptr<ReaderJoinTask> next;
+};
+class ReaderJoiner {
+ public:
+  ReaderJoiner() : worker_([this] { run(); }) {}
+  ~ReaderJoiner() {
+    { std::lock_guard<std::mutex> lock(mutex_); stopping_ = true; }
+    ready_.notify_one();
+    worker_.join();
+  }
+  void adopt(std::unique_ptr<ReaderJoinTask> task) noexcept {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      auto* tail = task.get();
+      if (tail_) tail_->next = std::move(task);
+      else head_ = std::move(task);
+      tail_ = tail;
+    }
+    ready_.notify_one();
+  }
+ private:
+  void run() {
+    for (;;) {
+      std::unique_ptr<ReaderJoinTask> task;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ready_.wait(lock, [this] { return stopping_ || head_; });
+        if (!head_) return;
+        task = std::move(head_);
+        head_ = std::move(task->next);
+        if (!head_) tail_ = nullptr;
+      }
+      if (task->reader.joinable()) task->reader.join();
+    }
+  }
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::unique_ptr<ReaderJoinTask> head_;
+  ReaderJoinTask* tail_{nullptr};
+  bool stopping_{false};
+  std::thread worker_;
+};
+ReaderJoiner& readerJoiner() {
+  static ReaderJoiner service;
+  return service;
 }
-struct PipeAutomationClient::Impl {
-  explicit Impl(PipeOptions config) : options(std::move(config)), stream(options) {
+}
+struct PipeAutomationClient::ConnectionLifetime {
+  explicit ConnectionLifetime(PipeOptions config) : options(std::move(config)), stream(options),
+      reader_task(std::make_unique<ReaderJoinTask>()) {
     if (!detail::validOptions(options)) throw std::invalid_argument("pipe client configuration");
+    (void)readerJoiner();
   }
   void settle() noexcept {
     std::map<RequestId, PendingCompletion> callbacks;
@@ -51,22 +103,39 @@ struct PipeAutomationClient::Impl {
       while (!stream.stopped()) {
         auto message = stream.read(detail::Deadline::max());
         auto* response = message ? std::get_if<WireResponse>(&*message) : nullptr;
-        if (!response) { error = ERROR_INVALID_DATA; break; }
+        if (!response) {
+          std::lock_guard<std::mutex> lock(mutex);
+          if (close_reason == ClientCloseReason::None) {
+            close_reason = message ? ClientCloseReason::ProtocolError : ClientCloseReason::PeerDisconnect;
+            error = ERROR_INVALID_DATA;
+          }
+          break;
+        }
         AutomationCompletion completion;
         {
           std::lock_guard<std::mutex> lock(mutex);
           const auto* rpc = std::get_if<std::uint64_t>(&response->rpc_id);
           auto found = pending.find(response->response.result.request_id);
           if (!accepting || !rpc || *rpc != response->response.result.request_id || found == pending.end()) {
-            error = ERROR_INVALID_DATA; break;
+            if (close_reason == ClientCloseReason::None) {
+              close_reason = ClientCloseReason::ProtocolError;
+              error = ERROR_INVALID_DATA;
+            }
+            break;
           }
+          last_frame_request = response->response.result.request_id;
           completion = std::move(found->second.callback);
           pending.erase(found);
           response->response.connection = connection;
         }
         deliver(std::move(completion), std::move(response->response));
       }
-    } catch (...) { error = ERROR_NOT_ENOUGH_MEMORY; }
+    } catch (...) {
+      std::lock_guard<std::mutex> lock(mutex);
+      reader_exception = true;
+      close_reason = ClientCloseReason::ReaderException;
+      error = ERROR_NOT_ENOUGH_MEMORY;
+    }
     stream.cancel();
     stream.joinWriter();
     settle();
@@ -84,22 +153,37 @@ struct PipeAutomationClient::Impl {
   std::map<RequestId, PendingCompletion> pending;
   AutomationConnection connection;
   std::thread::id reader_id;
+  std::unique_ptr<ReaderJoinTask> reader_task;
+  ClientCloseReason close_reason{ClientCloseReason::None};
+  RequestId last_frame_request{0};
+  bool reader_exception{false};
   bool attempted{false};
+  bool connecting{false};
   bool accepting{false};
   bool reader_done{true};
   std::atomic<DWORD> error{ERROR_SUCCESS};
 };
 PipeAutomationClient::PipeAutomationClient(PipeOptions options)
-    : impl_(std::make_shared<Impl>(std::move(options))) {}
+    : impl_(std::make_shared<ConnectionLifetime>(std::move(options))) {}
 PipeAutomationClient::~PipeAutomationClient() { close(); }
 bool PipeAutomationClient::connect() {
   auto state = impl_;
+  struct Attempt {
+    std::shared_ptr<ConnectionLifetime> state;
+    ~Attempt() {
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->connecting = false;
+      if (state->attempted && !state->connection.valid() && state->close_reason == ClientCloseReason::None)
+        state->close_reason = ClientCloseReason::ConnectFailure;
+    }
+  } attempt{state};
   // connect must finish before concurrent use. This method never silently
   // reconnects an object whose prior requests have an unknown outcome.
   {
     std::lock_guard<std::mutex> lock(state->mutex);
     if (state->attempted || state->stream.stopped()) return false;
     state->attempted = true;
+    state->connecting = true;
   }
   detail::Identity identity;
   if (!detail::currentIdentity(identity)) { state->error = ERROR_ACCESS_DENIED; return false; }
@@ -130,7 +214,7 @@ bool PipeAutomationClient::connect() {
         state->accepting = true;
         state->reader_done = false;
         try {
-          std::thread([state] { state->run(); }).detach();
+          state->reader_task->reader = std::thread([state] { state->run(); });
           state->error = ERROR_SUCCESS;
           return true;
         } catch (...) { state->accepting = false; state->reader_done = true; }
@@ -148,6 +232,18 @@ AutomationConnection PipeAutomationClient::connection() const {
   return impl_->connection;
 }
 std::uint32_t PipeAutomationClient::lastError() const noexcept { return impl_->error.load(); }
+PipeClientDiagnostics PipeAutomationClient::diagnostics() const {
+  auto state = impl_;
+  std::lock_guard<std::mutex> lock(state->mutex);
+  return {state->connection, state->close_reason, state->error.load(),
+      state->last_frame_request, state->pending.size(), state->accepting,
+      !state->reader_done, state->reader_exception,
+      state->connecting ? PipeClientState::Connecting :
+      state->accepting ? PipeClientState::Connected :
+      !state->reader_done ? PipeClientState::Closing :
+      state->close_reason == ClientCloseReason::ConnectFailure ? PipeClientState::Failed :
+      state->close_reason != ClientCloseReason::None ? PipeClientState::Closed : PipeClientState::Idle};
+}
 void PipeAutomationClient::submit(AutomationRequest request, AutomationCompletion completion) {
   auto state = impl_;
   const auto id = request.request_id;
@@ -189,17 +285,21 @@ void PipeAutomationClient::submit(AutomationRequest request, AutomationCompletio
 }
 void PipeAutomationClient::close() noexcept {
   auto state = impl_;
-  state->stream.cancel();
   bool on_reader = false;
+  std::unique_ptr<ReaderJoinTask> reader;
   {
     std::lock_guard<std::mutex> lock(state->mutex);
     state->accepting = false;
+    if (state->close_reason == ClientCloseReason::None) state->close_reason = ClientCloseReason::ClientClose;
     on_reader = state->reader_id == std::this_thread::get_id();
+    reader = std::move(state->reader_task);
   }
+  state->stream.cancel();
   if (on_reader) {
-    state->settle();
-    return; // shared state retains buffers until this callback returns to run.
+    if (reader && reader->reader.joinable()) readerJoiner().adopt(std::move(reader));
+    return; // reader settles pending callbacks after this callback returns.
   }
+  if (reader && reader->reader.joinable()) { reader->reader.join(); return; }
   std::unique_lock<std::mutex> lock(state->mutex);
   state->done.wait(lock, [&] { return state->reader_done; });
 }
