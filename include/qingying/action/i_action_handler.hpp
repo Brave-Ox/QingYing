@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_request.hpp"
+#include "qingying/action/action_result.hpp"
 
 #include <functional>
 

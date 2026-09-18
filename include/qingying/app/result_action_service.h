@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_request.hpp"
+#include "qingying/action/action_result.hpp"
 #include "qingying/action/i_async_action_handler.h"
 #include "qingying/app/result_store.h"
 #include "qingying/app/interaction_gate.h"

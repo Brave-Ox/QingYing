@@ -1,4 +1,5 @@
 ﻿#include "qingying/automation/operation_registry.h"
+#include "qingying/automation/automation_contract.h"
 #include "qingying/app/result_store.h"
 
 #include <gtest/gtest.h>

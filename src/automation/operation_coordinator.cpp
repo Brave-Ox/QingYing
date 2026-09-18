@@ -1,4 +1,5 @@
 ﻿#include "qingying/automation/operation_coordinator.h"
+#include "qingying/automation/automation_contract.h"
 #include "qingying/automation/action_catalog.h"
 
 

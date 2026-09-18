@@ -3,7 +3,7 @@
 #include "qingying/action/i_async_action_handler.h"
 #include "qingying/app/export_executor.h"
 #include "qingying/app/result_action_service.h"
-#include "qingying/automation/automation_contract.h"
+#include "qingying/operation/operation_types.hpp"
 
 #include <atomic>
 #include <memory>

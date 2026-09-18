@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_types.hpp"
 #include "qingying/automation/automation_session_state.h"
 
 #include <mutex>

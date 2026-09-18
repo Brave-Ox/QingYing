@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
-#include "qingying/action/types.hpp"
+#include "qingying/capture/capture_types.hpp"
 #include "qingying/app/result_budget.h"
 
 #include <cstdint>

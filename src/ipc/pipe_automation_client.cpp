@@ -1,4 +1,5 @@
 ﻿#include "qingying/ipc/pipe_automation_client.h"
+#include "qingying/automation/automation_contract.h"
 #include "pipe_io.h"
 
 #include <atomic>

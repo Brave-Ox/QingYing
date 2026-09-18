@@ -2,7 +2,8 @@
 #include "qingying/action/i_action_handler.hpp"
 #include "qingying/action/compatibility/legacy_action_dispatcher.h"
 #include "qingying/action/i_async_action_handler.h"
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_request.hpp"
+#include "qingying/action/action_result.hpp"
 
 #include <gtest/gtest.h>
 
@@ -609,4 +610,15 @@ TEST(ActionDispatcherTest, InjectedExecutorIsPassedToAsyncHandler) {
 
   EXPECT_TRUE(executor_called);
   EXPECT_EQ(completions, 1);
+}
+
+TEST(ActionRequestTest, UnknownWindowMatchModeIsRejectedBeforeDispatch) {
+  qingying::CaptureWindowRequest payload;
+  payload.window_query = L"test";
+  payload.match = static_cast<qingying::WindowMatchMode>(999);
+  const auto request = qingying::makeActionRequest(payload);
+  EXPECT_FALSE(qingying::validateActionRequest(request).valid);
+  qingying::ActionDispatcher dispatcher;
+  EXPECT_EQ(dispatcher.dispatch(request).error_code,
+            qingying::ErrorCode::kInvalidArgument);
 }

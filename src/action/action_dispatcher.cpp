@@ -91,6 +91,10 @@ ActionValidationResult validateActionRequest(const ActionRequest& request) {
                      : invalidRequest("capture region must be non-empty");
         } else if constexpr (std::is_same_v<Payload,
                                             CaptureWindowRequest>) {
+          if (payload.match != WindowMatchMode::Contains &&
+              payload.match != WindowMatchMode::Exact) {
+            return invalidRequest("window match mode is invalid");
+          }
           return payload.window_query.empty() ||
                          (payload.process_id && *payload.process_id == 0)
                      ? invalidRequest("window query is required")

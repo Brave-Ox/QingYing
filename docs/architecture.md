@@ -167,6 +167,10 @@ app → workflow + 上述服务 + app_runtime（Composition Root）
 
 ### 5.2 契约约定
 
+公共契约按领域包含：`action/common_types.hpp` 提供稳定 ID、动作枚举、错误及结果选择；`capture/capture_types.hpp` 提供捕获请求/结果元数据；`window/window_types.hpp` 提供稳定窗口候选。`action/action_request.hpp` 与 `action/action_result.hpp` 分别组合输入与输出；`operation/operation_types.hpp` 提供取消和操作控制，携带结果的快照独立放在 `operation_snapshot.hpp`。自动化值类型、客户端接口及边界校验分别位于 `automation_types.hpp`、`automation_client.h` 和 `automation_contract.h`。新代码直接包含所需头，`action/types.hpp` 只作为兼容聚合入口保留。
+
+Pipe 的未可信 JSON 请求先解析为 codec 私有 DTO，再显式转换和校验为 AutomationRequest；scope、认证身份、取消状态和准入时间仅由可信 transport/endpoint 提供。稳定候选字段属于可序列化契约，窗口定位诊断留在窗口/SmartRegion 模块中。
+
 - 捕获矩形一律为物理屏幕像素；
 - `Image` 为 BGRA32、行优先；
 - `ActionResult.ok == false` 时必须给稳定 `error_code` 和可读 `message`；

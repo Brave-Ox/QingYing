@@ -1,4 +1,5 @@
 ﻿#include "tool_catalog.h"
+#include "qingying/automation/automation_contract.h"
 #include "automation_wire_codec.h"
 #include "action_catalog_codec.h"
 #include <Windows.h>

@@ -1,4 +1,5 @@
 ﻿#include "action_catalog_codec.h"
+#include "qingying/automation/automation_contract.h"
 #include <Windows.h>
 #include <climits>
 #include <filesystem>

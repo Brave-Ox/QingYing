@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "qingying/action/types.hpp"
+#include "qingying/action/common_types.hpp"
+#include "qingying/action/automation_limits.h"
 
 #include <memory>
 #include <optional>

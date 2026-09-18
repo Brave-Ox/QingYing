@@ -1,4 +1,5 @@
 ﻿#include "mcp_test_client.h"
+#include "qingying/automation/automation_contract.h"
 #include "automation_wire_codec.h"
 #include <set>
 #include <algorithm>

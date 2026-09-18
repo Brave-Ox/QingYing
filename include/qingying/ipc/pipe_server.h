@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_types.hpp"
 #include <chrono>
 #include <memory>
 #include <string>

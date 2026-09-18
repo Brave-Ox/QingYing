@@ -411,3 +411,28 @@ TEST(AutomationWireCodecTest, PartialSuffixAfterCompleteFramesIsReportedAtEof) {
 }
 }  // namespace
 }  // namespace qingying::ipc
+
+namespace qingying::ipc {
+TEST(AutomationWireCodecTest, UnknownWindowMatchCannotBecomeAValidWireValue) {
+  WireRequest request;
+  request.request.request_id = 1;
+  request.request.payload = ExecuteActionRequest{CaptureWindowRequest{
+      L"test", static_cast<WindowMatchMode>(999), {}}};
+  EXPECT_EQ(encodeFrame(request, {}, now).error, WireError::InvalidMessage);
+  EXPECT_EQ(decodeBody(requestWith(
+      R"({"action":"capture_window","query":"test","match":"unexpected"})"),
+      {}, now).error, WireError::InvalidMessage);
+}
+TEST(AutomationWireCodecTest, RejectedDtoNeverReachesTheFrameConsumer) {
+  for (const std::string payload : {
+      R"({"action":"capture_window","query":"test","match":999})",
+      R"({"action":"crop_center","width":0,"height":100})",
+      R"({"action":"status","operation_control":1})"}) {
+    FrameDecoder decoder;
+    int delivered = 0;
+    EXPECT_NE(decoder.feed(framed(requestWith(payload)),
+        [&](WireMessage) { ++delivered; return true; }, now), WireError::None);
+    EXPECT_EQ(delivered, 0);
+  }
+}
+}  // namespace qingying::ipc

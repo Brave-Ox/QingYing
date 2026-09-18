@@ -1,4 +1,5 @@
 ﻿#include "automation_wire_codec.h"
+#include "qingying/automation/automation_contract.h"
 #include "action_catalog_codec.h"
 #include "qingying/automation/action_catalog.h"
 
@@ -473,14 +474,32 @@ Json requestJson(const WireRequest& value, const AutomationLimits& limits) {
   }, value.request.payload);
   return result;
 }
-WireRequest readRequest(const Json& value, const std::string& type, const AutomationLimits& limits) {
+// Untrusted wire envelope: no scope, cancellation token, operation control or
+// monotonic timestamp. Only conversion below may create a domain request.
+struct WireRequestDto {
+  RpcId rpc_id;
+  std::uint64_t request_id;
+  std::optional<std::uint64_t> timeout_ms;
+  std::string type;
+  Json payload;
+};
+WireRequestDto readRequestDto(const Json& value, const std::string& type,
+                              const AutomationLimits& limits) {
   fields(value, {"type", "rpc_id", "request_id", "payload"}, {"timeout_ms"});
+  WireRequestDto dto{readRpc(value.at("rpc_id"), limits),
+                     id(value.at("request_id")), {}, type, value.at("payload")};
+  require(dto.payload.is_object());
+  if (value.contains("timeout_ms")) dto.timeout_ms = uint(value.at("timeout_ms"),
+      static_cast<std::uint64_t>(limits.max_request_timeout.count()));
+  return dto;
+}
+WireRequest toDomainRequest(const WireRequestDto& dto, const AutomationLimits& limits) {
   WireRequest result;
-  result.rpc_id = readRpc(value.at("rpc_id"), limits);
-  result.request.request_id = id(value.at("request_id"));
-  if (value.contains("timeout_ms")) result.request.timeout = std::chrono::milliseconds{
-      uint(value.at("timeout_ms"), static_cast<std::uint64_t>(limits.max_request_timeout.count()))};
-  const auto& payload = value.at("payload");
+  result.rpc_id = dto.rpc_id;
+  result.request.request_id = dto.request_id;
+  if (dto.timeout_ms) result.request.timeout = std::chrono::milliseconds{*dto.timeout_ms};
+  const auto& type = dto.type;
+  const auto& payload = dto.payload;
   if ((type == "get_operation" || type == "cancel_operation") && payload.contains("operation_handle")) {
     fields(payload, {"operation_handle"});
     OperationHandle handle{string(payload.at("operation_handle"), limits.max_opaque_handle_bytes, false)};
@@ -505,6 +524,10 @@ WireRequest readRequest(const Json& value, const std::string& type, const Automa
   } else throw Failure{WireError::InvalidMessage};
   require(validateAutomationRequest(result.request, limits).valid);
   return result;
+}
+
+WireRequest readRequest(const Json& value, const std::string& type, const AutomationLimits& limits) {
+  return toDomainRequest(readRequestDto(value, type, limits), limits);
 }
 
 Json optionalBool(const std::optional<bool>& value) { return value ? Json(*value) : Json(nullptr); }

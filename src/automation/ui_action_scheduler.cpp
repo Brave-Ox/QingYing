@@ -1,4 +1,5 @@
 ﻿#include "qingying/automation/ui_action_scheduler.h"
+#include "qingying/automation/automation_contract.h"
 
 #include <stdexcept>
 

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "qingying/action/types.hpp"
+#include "qingying/action/common_types.hpp"
+#include "qingying/window/window_types.hpp"
 
 #include <cstddef>
 #include <cstdint>

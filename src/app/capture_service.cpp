@@ -2,7 +2,7 @@
 
 #include "qingying/app/result_store.h"
 #include "qingying/capture/capture_engine.hpp"
-#include "qingying/automation/automation_contract.h"
+#include "qingying/operation/operation_types.hpp"
 #include "qingying/pin/pin_manager.hpp"
 
 #include <Windows.h>

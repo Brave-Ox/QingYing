@@ -1,7 +1,8 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_request.hpp"
+#include "qingying/action/action_result.hpp"
 #include "qingying/app/app_messages.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
 

@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/image.hpp"
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_result.hpp"
 #include "qingying/geometry/rect_types.h"
 
 #include <memory>

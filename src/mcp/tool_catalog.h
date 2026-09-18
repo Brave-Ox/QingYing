@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_types.hpp"
 #include "qingying/automation/action_catalog.h"
 #include <nlohmann/json.hpp>
 #include <array>

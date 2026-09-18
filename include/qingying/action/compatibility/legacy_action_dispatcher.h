@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/action/compatibility/legacy_action_request.h"
+#include "qingying/action/action_request.hpp"
 
 #include <optional>
 

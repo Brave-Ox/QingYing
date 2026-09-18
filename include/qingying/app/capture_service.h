@@ -2,7 +2,8 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/action/i_action_handler.hpp"
-#include "qingying/action/types.hpp"
+#include "qingying/action/action_request.hpp"
+#include "qingying/action/action_result.hpp"
 #include "qingying/app/interaction_gate.h"
 #include "qingying/window/window_resolver.h"
 

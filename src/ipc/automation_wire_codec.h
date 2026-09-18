@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_types.hpp"
 
 #include <array>
 #include <string_view>

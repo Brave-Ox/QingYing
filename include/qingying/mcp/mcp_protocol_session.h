@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_client.h"
 #include <memory>
 #include <string_view>
 namespace qingying::mcp {

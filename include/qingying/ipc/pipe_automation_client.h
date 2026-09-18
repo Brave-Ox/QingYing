@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "qingying/automation/automation_client.h"
+
 #include "qingying/ipc/pipe_server.h"
 
 namespace qingying::ipc {

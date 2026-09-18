@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_types.hpp"
 #include <map>
 #include <set>
 #include <stdexcept>

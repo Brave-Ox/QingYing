@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "qingying/action/types.hpp"
+#include "qingying/action/common_types.hpp"
 
 namespace qingying {
 
