@@ -237,22 +237,38 @@ std::optional<TrustedAutomationContext> OperationRegistry::connect(ResultScopeId
       sessions_.size() >= limits_.max_connections || next_generation_ == 0) return std::nullopt;
   for (const auto& entry : sessions_) if (entry.second.scope == scope) return std::nullopt;
   const auto generation = next_generation_++;
-  sessions_.emplace(generation, Session{scope});
   TrustedAutomationContext context;
   context.connection = {epoch_, generation};
   context.action.result_scope = scope;
   context.submitted_at = clock_();
+  sessions_.emplace(generation, Session{context});
   return context;
 }
 
-void OperationRegistry::disconnect(const TrustedAutomationContext& context) {
+bool OperationRegistry::isConnected(const TrustedAutomationContext& context) const {
+  checkThread();
+  const auto it = sessions_.find(context.connection.generation);
+  return it != sessions_.end() && it->second.accepts(context);
+}
+std::vector<TrustedAutomationContext> OperationRegistry::activeContexts() const {
+  checkThread();
+  std::vector<TrustedAutomationContext> result;
+  for (const auto& entry : sessions_) if (entry.second.connected) result.push_back(entry.second.context());
+  return result;
+}
+std::optional<AutomationSessionState> OperationRegistry::sessionSnapshot(const TrustedAutomationContext& context) const {
+  checkThread();
+  const auto it = sessions_.find(context.connection.generation);
+  if (it == sessions_.end() || !context.valid() ||
+      !sameConnection(it->second.context().connection, context.connection) ||
+      it->second.scope != context.action.result_scope) return std::nullopt;
+  return it->second;
+}
+void OperationRegistry::disconnect(const TrustedAutomationContext& context, AutomationSessionCloseReason reason) {
   checkThread();
   auto* owner = session(context);
   if (!owner) return;
-  owner->connected = false;
-  owner->result_id = kInvalidResultId;
-  owner->result_handle = {};
-  owner->invalid_results.clear();
+  if (!owner->close(reason)) return;
   for (auto& entry : records_) {
     auto& value = entry.second;
     if (!sameConnection(value.connection, context.connection)) continue;
@@ -313,12 +329,12 @@ OperationSubmission OperationRegistry::begin(const TrustedAutomationContext& con
   catch (const std::filesystem::filesystem_error&) { return {ErrorCode::kInvalidArgument}; }
   if (parameters.size() > limits_.max_frame_bytes) return {ErrorCode::kResourceLimit};
   if (key) {
-    for (const auto& entry : records_) {
-      const auto& value = entry.second;
-      if (sameConnection(value.connection, context.connection) && value.request_key == key) {
-        return value.canonical_parameters == parameters ? submission(value, true)
-                                                        : OperationSubmission{ErrorCode::kConflict};
-      }
+    const auto* owner = session(context);
+    const auto found = owner->idempotency_entries_.find(*key);
+    if (found != owner->idempotency_entries_.end()) {
+      const auto& value = records_.at(found->second);
+      return value.canonical_parameters == parameters ? submission(value, true)
+                                                      : OperationSubmission{ErrorCode::kConflict};
     }
   }
   std::uint64_t active = 0, local = 0;
@@ -350,6 +366,8 @@ OperationSubmission OperationRegistry::begin(const TrustedAutomationContext& con
     return {ErrorCode::kConflict};
   }
   refresh(inserted.first->second);
+  try { session(context)->admitted(id, inserted.first->second.request_key); }
+  catch (...) { records_.erase(inserted.first); return {ErrorCode::kResourceLimit}; }
   return submission(inserted.first->second, false);
 }
 
@@ -442,6 +460,7 @@ bool OperationRegistry::complete(const TrustedAutomationContext& context, Operat
   value->snapshot.outcome = std::move(*settled);
   value->snapshot.updated_at = clock_();
   value->snapshot.completed_at = value->snapshot.updated_at;
+  session(context, false)->settled(id);
   const auto* captured = std::get_if<CapturedResult>(&value->snapshot.outcome->output);
   if (value->snapshot.outcome->ok && captured) {
     value->snapshot.result_availability = session(context) ? ResultAvailability::Available : ResultAvailability::Released;
@@ -512,11 +531,24 @@ void OperationRegistry::invalidateResult(const TrustedAutomationContext& context
   }
 }
 
+void OperationRegistry::forgetRecord(const Record& record) {
+  const auto it = sessions_.find(record.connection.generation);
+  if (it == sessions_.end()) return;
+  it->second.settled(record.snapshot.operation_id);
+  if (record.request_key) {
+    auto& index = it->second.idempotency_entries_;
+    const auto key = index.find(*record.request_key);
+    if (key != index.end() && key->second == record.snapshot.operation_id) index.erase(key);
+  }
+}
 void OperationRegistry::trim() {
   const auto now = clock_();
   for (auto it = records_.begin(); it != records_.end();) {
     if (it->second.snapshot.completed_at && now >= deadline(*it->second.snapshot.completed_at,
-                                                           limits_.completed_operation_ttl)) it = records_.erase(it);
+                                                           limits_.completed_operation_ttl)) {
+      forgetRecord(it->second);
+      it = records_.erase(it);
+    }
     else ++it;
   }
   for (auto session_it = sessions_.begin(); session_it != sessions_.end();) {
@@ -539,6 +571,7 @@ void OperationRegistry::trim() {
         if (oldest == records_.end() || *it->second.snapshot.completed_at < *oldest->second.snapshot.completed_at ||
             (*it->second.snapshot.completed_at == *oldest->second.snapshot.completed_at && it->first < oldest->first)) oldest = it;
       }
+      forgetRecord(oldest->second);
       records_.erase(oldest);
       --terminal;
     }

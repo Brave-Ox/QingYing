@@ -13,6 +13,7 @@ add_library(qingying_automation STATIC
   operation_registry.cpp
   ui_action_scheduler.cpp
   automation_endpoint.cpp
+  operation_coordinator.cpp
 )
 target_link_libraries(qingying_automation PUBLIC qingying_automation_contract)
 if(WIN32)

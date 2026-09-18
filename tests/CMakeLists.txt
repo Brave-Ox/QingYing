@@ -184,6 +184,7 @@ endif()
 
 include(GoogleTest)
 add_executable(qingying_automation_core_tests
+  automation_session_state_test.cpp
   automation_core_test.cpp
   ui_action_scheduler_test.cpp)
 target_link_libraries(qingying_automation_core_tests PRIVATE

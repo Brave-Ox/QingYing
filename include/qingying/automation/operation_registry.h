@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/automation/automation_contract.h"
+#include "qingying/automation/automation_session_state.h"
 
 #include <mutex>
 #include <thread>
@@ -57,7 +58,11 @@ class OperationRegistry {
   OperationRegistry& operator=(const OperationRegistry&) = delete;
 
   std::optional<TrustedAutomationContext> connect(ResultScopeId scope);
-  void disconnect(const TrustedAutomationContext& context);
+  void disconnect(const TrustedAutomationContext& context,
+      AutomationSessionCloseReason reason = AutomationSessionCloseReason::Disconnected);
+  bool isConnected(const TrustedAutomationContext& context) const;
+  std::vector<TrustedAutomationContext> activeContexts() const;
+  std::optional<AutomationSessionState> sessionSnapshot(const TrustedAutomationContext& context) const;
   OperationSubmission begin(const TrustedAutomationContext& context,
       const AutomationRequest& request, std::shared_ptr<OperationControl> control = {});
   std::optional<OperationSnapshot> get(const TrustedAutomationContext& context,
@@ -84,18 +89,7 @@ class OperationRegistry {
   std::size_t recordCount() const;
 
  private:
-  struct Session {
-    struct InvalidResult {
-      ResultId id;
-      ResultHandle handle;
-      std::chrono::steady_clock::time_point invalidated_at;
-    };
-    ResultScopeId scope;
-    bool connected{true};
-    ResultId result_id{kInvalidResultId};
-    ResultHandle result_handle;
-    std::vector<InvalidResult> invalid_results;
-  };
+  using Session = AutomationSessionState;
   struct Record {
     AutomationConnection connection;
     ResultScopeId scope;
@@ -113,6 +107,7 @@ class OperationRegistry {
                  bool connected = true);
   void refresh(Record& record);
   void trim();
+  void forgetRecord(const Record& record);
   std::string newHandle() const;
   OperationSubmission submission(const Record& record, bool reused) const;
 
