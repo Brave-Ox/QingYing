@@ -365,8 +365,8 @@ TEST(LongShotEngineTest, CancelSignalsTheActiveProfile) {
   condition.notify_all();
   worker.join();
 
-  EXPECT_TRUE(worker_result.ok);
-  EXPECT_FALSE(output.empty());
+  EXPECT_FALSE(worker_result.ok);
+  EXPECT_TRUE(output.empty());
 }
 
 TEST(LongShotEngineTest, RetriesStaleFrameWithoutSendingAnotherWheel) {
@@ -449,6 +449,168 @@ TEST(LongShotEngineTest,
   EXPECT_EQ(capture_count, 4);
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
   EXPECT_TRUE(out.empty());
+}
+
+namespace {
+class SequenceProfile final : public LongShotProfile {
+ public:
+  mutable int inputs{0};
+  int reject_input{0};
+  const char* name() const noexcept override { return "test.sequence"; }
+  bool resolve(const LongShotRequest& request,
+               LongShotProfileResult& out) const override {
+    out = LongShotProfileResult{1, request.selectionRect()};
+    return true;
+  }
+  bool scrollDown(const LongShotRequest&,
+                  const LongShotProfileResult&) const override {
+    return ++inputs != reject_input;
+  }
+  bool queryScrollState(const LongShotProfileResult&,
+                        LongShotScrollState&) const override { return false; }
+};
+}
+
+TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {
+  for (int failure = 0; failure < 3; ++failure) {
+    SCOPED_TRACE(failure);
+    auto profile = std::make_unique<SequenceProfile>();
+    auto* sequence = profile.get();
+    if (failure == 2) sequence->reject_input = 2;
+    LongShotProfileRegistry registry;
+    registry.add(std::move(profile));
+    int captures = 0;
+    LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+      ++captures;
+      ActionResult result;
+      result.ok = !(failure == 1 && captures >= 3);
+      result.error_code = result.ok ? ErrorCode::kOk : ErrorCode::kCaptureFailed;
+      image = makeStrip(rect.width, rect.height,
+                        captures == 1 ? 0 : captures == 2 ? 10 : 100);
+      return result;
+    }, std::move(registry));
+    LongShotOutcome out;
+    const auto result = engine.captureSelection({1, 0, 0, 32, 40}, out);
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(out.accepted_frames, 2);
+    EXPECT_EQ(out.image.pixels, makeStrip(32, 50, 0).pixels);
+    EXPECT_EQ(out.image.height, 50);
+    EXPECT_TRUE(out.isPartial());
+    EXPECT_EQ(out.strategy, "test.sequence");
+    EXPECT_EQ(out.stop_reason, failure == 0 ? LongShotStopReason::MatchFailed :
+                               failure == 1 ? LongShotStopReason::CaptureFailed :
+                                              LongShotStopReason::InputUnavailable);
+    EXPECT_EQ(result.failure_frame, 3);
+    EXPECT_EQ(sequence->inputs, 2);
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
+  for (bool height_limit : {false, true}) {
+    LongShotProfileRegistry registry;
+    registry.add(std::make_unique<SequenceProfile>());
+    int captures = 0;
+    LongShotLimits limits;
+    limits.max_frames = height_limit ? 30 : 2;
+    limits.max_output_height = height_limit ? 45 : 30000;
+    LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+      image = makeStrip(rect.width, rect.height, 10 * captures++);
+      ActionResult result;
+      result.ok = true;
+      return result;
+    }, std::move(registry), limits);
+    LongShotOutcome out;
+    EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+    EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+    EXPECT_FALSE(out.isComplete());
+    EXPECT_EQ(out.accepted_frames, height_limit ? 1 : 2);
+    EXPECT_EQ(out.image.pixels, makeStrip(32, height_limit ? 40 : 50, 0).pixels);
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest, StopKeepsImageButCancelDiscardsIt) {
+  for (bool cancel : {false, true}) {
+    LongShotProfileRegistry registry;
+    registry.add(std::make_unique<SequenceProfile>());
+    LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+      image = makeStrip(rect.width, rect.height, 0);
+      ActionResult result;
+      result.ok = true;
+      return result;
+    }, std::move(registry));
+    LongShotOutcome out;
+    const auto result = engine.captureSelection({1, 0, 0, 32, 40}, out,
+        [&](const Image&) { if (cancel) engine.cancel(); }, [] { return false; });
+    EXPECT_EQ(out.stop_reason, cancel ? LongShotStopReason::Cancelled
+                                     : LongShotStopReason::UserStopped);
+    EXPECT_EQ(out.hasExportableResult(), !cancel);
+    EXPECT_EQ(result.ok, !cancel);
+    if (cancel) EXPECT_EQ(result.error_code, ErrorCode::kCancelled);
+    EXPECT_EQ(out.accepted_frames, cancel ? 0 : 1);
+    EXPECT_EQ(out.image.empty(), cancel);
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest, InitialCaptureFailureClearsUntrustedPayload) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 0);
+    return ActionResult{};
+  }, std::move(registry));
+  LongShotOutcome out;
+  EXPECT_FALSE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::CaptureFailed);
+  EXPECT_EQ(out.failure_stage, LongShotFailureStage::InitialCapture);
+  EXPECT_TRUE(out.image.empty());
+  EXPECT_EQ(out.accepted_frames, 0);
+}
+
+TEST(LongShotOutcomeCaptureTest, StitchAllocationFailureKeepsPreviousPixels) {
+  auto budget = ImageMemoryBudget::global();
+  struct RestoreLimit {
+    ImageMemoryBudget budget;
+    std::uint64_t limit;
+    ~RestoreLimit() { budget.setLimit(limit); }
+  } restore{budget, budget.snapshot().limit_bytes};
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  int captures = 0;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 10 * captures++);
+    if (captures == 2) {
+      EXPECT_TRUE(budget.setLimit(budget.snapshot().used_bytes));
+    }
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome out;
+  EXPECT_FALSE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::StitchFailed);
+  EXPECT_EQ(out.failure_stage, LongShotFailureStage::Stitching);
+  EXPECT_EQ(out.accepted_frames, 1);
+  EXPECT_EQ(out.image.height, 40);
+  for (int y = 0; y < 40; ++y)
+    for (int x = 0; x < 32; ++x)
+      EXPECT_EQ(out.image.pixels[y * 32 + x], pixelFor(x, y));
+  EXPECT_TRUE(out.hasExportableResult());
+}
+
+TEST(LongShotOutcomeCaptureTest, IdenticalFramesReportNoProgress) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 0);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome out;
+  EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::NoProgress);
+  EXPECT_FALSE(out.isComplete());
+  EXPECT_EQ(out.accepted_frames, 1);
 }
 
 }  // namespace qingying

@@ -82,7 +82,7 @@ enum class LongShotStopReason : std::uint8_t {
 
 // 内部 C++ 完成载荷，不属于 profile DLL 的 C ABI。image 只能包含已接受的
 // 帧；accepted_frames 不计重采或拒绝的帧。尺寸直接取 image，避免重复元数据。
-// C02 将捕获循环接入此模型，旧 ActionResult + Image 入口继续兼容。
+// 捕获循环通过此模型交付，旧 ActionResult + Image 入口继续兼容。
 struct LongShotOutcome {
   Image image;
   int accepted_frames{0};
@@ -127,6 +127,19 @@ class LongShotEngine {
   // Uses the supplied limits for exactly this capture. The engine does not
   // retain the reference after this synchronous call returns.
   ActionResult captureSelection(const LongShotRequest& request, Image& out,
+                                LongShotProgressCallback on_progress,
+                                LongShotContinueCallback should_continue,
+                                const LongShotLimits& limits);
+
+  // 完成载荷入口：失败时保留已验证部分；cancel() 放弃结果，继续回调
+  // 返回 false 则表示主动停止并保留。旧入口失败时仍清空输出。
+  ActionResult captureSelection(const LongShotRequest& request,
+                                LongShotOutcome& out,
+                                LongShotProgressCallback on_progress = {},
+                                LongShotContinueCallback should_continue = {});
+
+  ActionResult captureSelection(const LongShotRequest& request,
+                                LongShotOutcome& out,
                                 LongShotProgressCallback on_progress,
                                 LongShotContinueCallback should_continue,
                                 const LongShotLimits& limits);
