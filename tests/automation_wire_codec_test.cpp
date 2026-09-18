@@ -1,5 +1,6 @@
 ﻿#include "automation_wire_codec.h"
 #include <gtest/gtest.h>
+#include "qingying/diagnostics/fault_boundary.h"
 #include <limits>
 
 namespace qingying::ipc {
@@ -54,6 +55,28 @@ TEST(AutomationWireCodecTest, HeaderIsFourByteLittleEndianBodyLength) {
   for (unsigned i = 0; i < 4; ++i) size |= std::uint32_t{static_cast<unsigned char>(frame.bytes[i])} << (8 * i);
   EXPECT_EQ(size, frame.bytes.size() - 4);
   EXPECT_EQ(frame.bytes[4], '{');
+}
+TEST(AutomationWireCodecTest, FaultMetadataRoundtripsAndRejectsInvalidOriginsAndSensitiveTokens) {
+  WireResponse response;
+  response.response.result.request_id = 7;
+  response.response.result.error_code = ErrorCode::kUnknown;
+  response.response.result.diagnostic = recordFault(ErrorCode::kUnknown, FaultOrigin::Handler,
+      FaultDomain::Request, "test.provider", {117, 13, 23, 7, 9});
+  const auto frame = encodeFrame(response, {}, now);
+  ASSERT_TRUE(frame);
+  const auto decoded = decodeBody(std::string_view(frame.bytes).substr(4), {}, now);
+  ASSERT_TRUE(decoded);
+  const auto& result = std::get<WireResponse>(*decoded.message).response.result;
+  ASSERT_TRUE(result.diagnostic);
+  EXPECT_STREQ(result.diagnostic->correlation_id.data(), "a117-s13-r7");
+  EXPECT_EQ(result.diagnostic->origin, FaultOrigin::Handler);
+  auto corrupted = frame.bytes.substr(4);
+  const auto origin = corrupted.find("\"origin\":\"handler\"");
+  ASSERT_NE(origin, std::string::npos);
+  corrupted.replace(origin, 18, "\"origin\":\"invalid\"");
+  EXPECT_FALSE(decodeBody(corrupted, {}, now));
+  response.response.result.diagnostic->provider_id[0] = '/';
+  EXPECT_FALSE(encodeFrame(response, {}, now));
 }
 TEST(AutomationWireCodecTest, EverySplitAndBytewiseFeedDecodesExactlyOnce) {
   const auto frame = framed(status);

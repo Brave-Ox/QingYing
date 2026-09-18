@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/capture_service.h"
 
 #include "qingying/app/result_store.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/operation/operation_types.hpp"
 #include "qingying/pin/pin_manager.hpp"
@@ -230,6 +231,8 @@ struct CaptureService::AsyncImpl {
         }
       } catch (...) {
         work->result = failure(ErrorCode::kCaptureFailed, "capture provider threw an exception");
+        work->result.diagnostic = recordFault(ErrorCode::kCaptureFailed,
+            FaultOrigin::Worker, FaultDomain::Provider, "capture");
       }
       work->done.store(true, std::memory_order_release);
       PostMessageW(notify, WM_QINGYING_CAPTURE_COMPLETE, 0, 0);

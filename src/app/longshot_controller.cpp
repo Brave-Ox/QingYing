@@ -2,6 +2,7 @@
 
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/ui_message_channel.h"
+#include "qingying/diagnostics/fault_boundary.h"
 
 #include <Windows.h>
 
@@ -45,13 +46,19 @@ struct LongShotController::Impl {
     }
 
     try {
-      worker = std::thread([this, request, completion_window] {
+      auto context = currentFaultContext();
+      if (!context.request_id) context.request_id = diagnostic_request_id;
+      worker = std::thread([this, request, completion_window, context] {
+        DiagnosticScope scope(context);
         struct WorkerDone final {
           Impl* owner;
           ~WorkerDone() { owner->markWorkerDone(); }
         } done{this};
         Image image;
-        const ActionResult result = engine.captureSelection(
+        ActionResult result;
+        FaultDiagnostic fault;
+        if (!containFault(FaultOrigin::Worker, FaultDomain::Request, [&] {
+          result = engine.captureSelection(
             request, image,
             [this](const Image& preview) {
               progress_frames.fetch_add(1);
@@ -63,25 +70,35 @@ struct LongShotController::Impl {
               }
               return !stop_requested.load();
             });
+        }, &fault)) {
+          result.error_code = fault.error_code;
+          result.diagnostic = fault;
+          result.failure_stage = "longshot_worker";
+        }
 
         if (shutting_down.load()) {
           return;
         }
 
-        LongShotCompletionMessage completion;
-        completion.result = result;
-        completion.image = std::move(image);
-        const std::optional<UiMessageToken> token =
-            messages.push(std::move(completion));
-        if (!token.has_value()) {
-          postCompletionFailure(completion_window);
-          return;
-        }
-        if (!PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0,
-                          static_cast<LPARAM>(*token))) {
-          messages.discard(*token);
-          (void)overlay.postLongShotFinished(false);
-          return;
+        if (!containFault(FaultOrigin::Worker, FaultDomain::Request, [&] {
+          LongShotCompletionMessage completion;
+          completion.result = result;
+          completion.image = std::move(image);
+          const std::optional<UiMessageToken> token =
+              messages.push(std::move(completion));
+          if (!token.has_value()) {
+            postCompletionFailure(completion_window);
+            return;
+          }
+          if (!PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0,
+                            static_cast<LPARAM>(*token))) {
+            messages.discard(*token);
+            (void)overlay.postLongShotFinished(false);
+            return;
+          }
+        })) {
+          containFault(FaultOrigin::Worker, FaultDomain::Request,
+                       [&] { postCompletionFailure(completion_window); });
         }
       });
     } catch (...) {

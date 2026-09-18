@@ -1,6 +1,10 @@
 ﻿#include <gtest/gtest.h>
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_query.hpp"
+#include "qingying/diagnostics/fault_boundary.h"
+#include <atomic>
+#include <stdexcept>
+#include <thread>
 
 namespace qingying {
 namespace {
@@ -100,4 +104,36 @@ TEST(SmartRegionBoundaryTest, RejectsExpiredAndPreviousGenerationResults) {
   EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1001));
 }
 }  // namespace
+TEST(SmartRegionBoundaryTest, ThrowingProviderIsContainedCooledAndDoesNotStopTheWorker) {
+  using namespace window_detail;
+  std::atomic<int> calls{0};
+  UiaRegionQueryWorker worker([](const UiaRegionQueryRequest&, UiaRegionQueryResult& result, void* context) {
+    if (++*static_cast<std::atomic<int>*>(context) == 1) throw std::runtime_error("private provider title");
+    result.succeeded = true;
+  }, &calls);
+  ASSERT_TRUE(worker.start());
+  UiaRegionQueryRequest request;
+  request.request_id = 1; request.generation = 31; request.process_id = 41;
+  request.root_window = reinterpret_cast<HWND>(123);
+  request.owner_rect = {0, 0, 640, 480}; request.screen_point = {30, 30};
+  request.requested_at_ms = GetTickCount64();
+  auto wait_result = [&](UiaRegionQueryResult& result) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    do {
+      if (worker.tryTakeLatest(result)) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+  };
+  ASSERT_TRUE(worker.request(request));
+  UiaRegionQueryResult result;
+  ASSERT_TRUE(wait_result(result)); EXPECT_FALSE(result.succeeded);
+  request.request_id = 2; request.requested_at_ms = GetTickCount64();
+  ASSERT_TRUE(worker.request(request)); ASSERT_TRUE(wait_result(result));
+  EXPECT_TRUE(result.suppressed_by_cooldown); EXPECT_EQ(calls, 1);
+  request.root_window = reinterpret_cast<HWND>(124); request.request_id = 3;
+  ASSERT_TRUE(worker.request(request)); ASSERT_TRUE(wait_result(result));
+  EXPECT_TRUE(result.succeeded); EXPECT_EQ(calls, 2);
+  worker.stop();
+}
 }  // namespace qingying

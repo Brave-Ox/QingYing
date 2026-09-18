@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <thread>
 
 namespace qingying {
 namespace {
@@ -73,6 +74,52 @@ TEST(DllLongShotProfileTest, AdaptsPluginCallbacksToNativeProfile) {
   EXPECT_FALSE(state.valid);
 }
 
+TEST(DllLongShotProfileTest, AbiExceptionsAreContainedAndQuarantineOnlyTheFaultingPlugin) {
+  const auto path = testPluginPath();
+  const auto module = LoadLibraryW(path.c_str());
+  ASSERT_NE(module, nullptr);
+  using SetStage = void (QINGYING_LONGSHOT_PLUGIN_CALL *)(int);
+  const auto set_stage = reinterpret_cast<SetStage>(GetProcAddress(module, "qingying_test_set_fault_stage"));
+  ASSERT_NE(set_stage, nullptr);
+  struct Reset {
+    HMODULE module; SetStage set;
+    ~Reset() { set(0); FreeLibrary(module); }
+  } reset{module, set_stage};
+  for (int stage : {1, 2, 3, 4, 5, 6, 8}) {
+    set_stage(0);
+    LongShotPluginHost host;
+    ASSERT_TRUE(host.loadFile(path));
+    auto& loaded = *host.plugins().front();
+    {
+      DllLongShotProfile profile(loaded);
+      LongShotProfileResult result;
+      if (stage <= 3) {
+        set_stage(stage);
+        EXPECT_FALSE(profile.resolve(testRequest(), result));
+      } else {
+        ASSERT_TRUE(profile.resolve(testRequest(), result));
+        set_stage(stage);
+        if (stage == 4) EXPECT_FALSE(profile.scrollDown(testRequest(), result));
+        if (stage == 5) { LongShotScrollState state; EXPECT_FALSE(profile.queryScrollState(result, state)); }
+        if (stage == 8) EXPECT_NO_THROW(profile.cancel());
+        // Stage 6 throws during the scope's session cleanup.
+      }
+    }
+    EXPECT_TRUE(loaded.faulted());
+    set_stage(0);
+    EXPECT_EQ(loaded.invoke([] { return QINGYING_LONGSHOT_STATUS_OK; }), QINGYING_LONGSHOT_STATUS_FAILED);
+    EXPECT_NO_THROW(host.unloadAll());
+  }
+  set_stage(9);
+  LongShotPluginHost rejected;
+  EXPECT_FALSE(rejected.loadFile(path));
+  set_stage(0);
+  LongShotPluginHost shutdown;
+  ASSERT_TRUE(shutdown.loadFile(path));
+  set_stage(7);
+  EXPECT_NO_THROW(shutdown.unloadAll());
+}
+
 TEST(DllLongShotProfileTest, ConvertsAllLoadedPluginsIntoRegistryProfiles) {
   LongShotPluginHost host;
   ASSERT_TRUE(host.loadFile(testPluginPath()));
@@ -85,6 +132,29 @@ TEST(DllLongShotProfileTest, ConvertsAllLoadedPluginsIntoRegistryProfiles) {
   ASSERT_NE(profile, nullptr);
   EXPECT_STREQ(profile->name(), "test.longshot");
   EXPECT_TRUE(result.valid());
+}
+
+TEST(DllLongShotProfileTest, SlowCallbackEntersCooldownWithoutQuarantiningCleanup) {
+  LongShotPluginHost host;
+  ASSERT_TRUE(host.loadFile(testPluginPath()));
+  const auto& plugin = *host.plugins().front();
+  EXPECT_EQ(plugin.invoke([] {
+    std::this_thread::sleep_for(std::chrono::milliseconds{510});
+    return QINGYING_LONGSHOT_STATUS_OK;
+  }), QINGYING_LONGSHOT_STATUS_FAILED);
+  EXPECT_FALSE(plugin.faulted());
+  bool invoked = false;
+  EXPECT_EQ(plugin.invoke([&] { invoked = true; return QINGYING_LONGSHOT_STATUS_OK; }),
+            QINGYING_LONGSHOT_STATUS_FAILED);
+  EXPECT_FALSE(invoked);
+  EXPECT_EQ(plugin.invoke([&] { invoked = true; return QINGYING_LONGSHOT_STATUS_OK; }, true),
+            QINGYING_LONGSHOT_STATUS_OK);
+  EXPECT_TRUE(invoked);
+  const auto faults = recentFaults();
+  ASSERT_FALSE(faults.empty());
+  EXPECT_EQ(faults.back().error_code, ErrorCode::kTimeout);
+  EXPECT_GE(faults.back().elapsed_ms, 500u);
+  EXPECT_STREQ(faults.back().provider_id.data(), "test.longshot");
 }
 
 TEST(DllLongShotProfileTest, RejectsStaleOrOutOfBoundsProfileResults) {

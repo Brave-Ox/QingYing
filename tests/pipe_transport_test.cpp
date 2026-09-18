@@ -1,8 +1,10 @@
 ﻿#include "qingying/ipc/pipe_automation_client.h"
 #include "pipe_io.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include <gtest/gtest.h>
 #include <atomic>
 #include <future>
+#include <stdexcept>
 #include <set>
 
 namespace qingying::ipc {
@@ -20,6 +22,7 @@ PipeOptions options() {
 struct Harness {
   explicit Harness(PipeOptions config = options()) : config(std::move(config)), server({
     [this]() -> std::optional<TrustedAutomationContext> {
+      if (throw_connect) throw std::runtime_error("connect fault");
       EXPECT_EQ(std::this_thread::get_id(), owner);
       if (reject) return std::nullopt;
       TrustedAutomationContext context;
@@ -31,6 +34,7 @@ struct Harness {
     [this](TrustedAutomationContext context, AutomationRequest request, AutomationCompletion completion) {
       EXPECT_EQ(std::this_thread::get_id(), owner);
       ++submitted;
+      if (throw_submit) throw std::runtime_error("submit fault");
       admission = context.submitted_at;
       AutomationResponse response;
       response.connection = context.connection;
@@ -42,14 +46,16 @@ struct Harness {
       else completion(std::move(response));
     },
     [this](const TrustedAutomationContext& context) {
+      if (throw_revoke) throw std::runtime_error("revoke fault");
       std::lock_guard<std::mutex> lock(mutex);
       revoked.insert(context.connection.generation);
     },
     [this](const TrustedAutomationContext& context) {
       EXPECT_EQ(std::this_thread::get_id(), owner);
       std::lock_guard<std::mutex> lock(mutex);
-      EXPECT_EQ(revoked.count(context.connection.generation), 1);
+      if (!throw_revoke) EXPECT_EQ(revoked.count(context.connection.generation), 1);
       ++disconnected;
+      if (throw_disconnect) throw std::runtime_error("disconnect fault");
     }
   }, this->config) {}
   ~Harness() { server.stop(); }
@@ -89,6 +95,8 @@ struct Harness {
   unsigned connected{0}, submitted{0}, disconnected{0};
   ConnectionGeneration generation{0};
   bool reject{false}, hold{false}, large{false};
+  bool throw_connect{false}, throw_submit{false}, throw_disconnect{false};
+  std::atomic<bool> throw_revoke{false};
   detail::Deadline admission;
   std::vector<std::function<void()>> held;
   PipeServer server;
@@ -104,6 +112,73 @@ WireRequest wire(RequestId id) {
   result.request = request(id);
   return result;
 }
+}
+TEST(PipeTransportTest, SubmitHookFailureReturnsStableErrorAndNextRequestStillWorks) {
+  Harness test;
+  ASSERT_TRUE(test.server.start());
+  PipeAutomationClient client(test.config);
+  ASSERT_TRUE(test.connect(client));
+  test.throw_submit = true;
+  std::atomic<int> calls{0};
+  client.submit(request(1), [&](AutomationResponse response) {
+    EXPECT_EQ(response.result.error_code, ErrorCode::kUnknown);
+    EXPECT_EQ(response.result.failure_stage, "pipe_submit");
+    EXPECT_EQ(response.result.request_id, 1u);
+    EXPECT_TRUE(response.transport_available);
+    ++calls;
+  });
+  ASSERT_TRUE(test.pump([&] { return calls == 1; }));
+  test.throw_submit = false;
+  client.submit(request(2), [&](AutomationResponse response) { EXPECT_TRUE(response.result.ok); ++calls; });
+  ASSERT_TRUE(test.pump([&] { return calls == 2; }));
+}
+TEST(PipeTransportTest, ReaderContainsThrowingCallbackAndKeepsRequestCorrelation) {
+  Harness test;
+  ASSERT_TRUE(test.server.start());
+  PipeAutomationClient client(test.config);
+  ASSERT_TRUE(test.connect(client));
+  std::atomic<int> calls{0};
+  client.submit(request(1), [&](AutomationResponse) {
+    ++calls;
+    throw std::runtime_error("private callback data");
+  });
+  ASSERT_TRUE(test.pump([&] { return calls == 1; }));
+  client.submit(request(2), [&](AutomationResponse response) {
+    EXPECT_TRUE(response.result.ok);
+    ++calls;
+  });
+  ASSERT_TRUE(test.pump([&] { return calls == 2; }));
+  const auto identity = client.connection();
+  bool found = false;
+  for (const auto& fault : recentFaults()) {
+    if (std::string(fault.provider_id.data()) != "pipe_client_callback") continue;
+    if (fault.context.epoch != identity.application_epoch ||
+        fault.context.session_id != identity.generation) continue;
+    EXPECT_EQ(fault.context.request_id, 1u);
+    EXPECT_EQ(fault.domain, FaultDomain::Request);
+    EXPECT_EQ(fault.error_code, ErrorCode::kUnknown);
+    found = true;
+  }
+  EXPECT_TRUE(found);
+  EXPECT_FALSE(client.diagnostics().reader_exception);
+}
+TEST(PipeTransportTest, ConnectAndCleanupHookFailuresDoNotStopOtherSessions) {
+  Harness test;
+  ASSERT_TRUE(test.server.start());
+  PipeAutomationClient healthy(test.config);
+  ASSERT_TRUE(test.connect(healthy));
+  test.throw_connect = true;
+  PipeAutomationClient rejected(test.config);
+  EXPECT_FALSE(test.connect(rejected));
+  test.throw_connect = false;
+  std::atomic<bool> done{false};
+  healthy.submit(request(1), [&](AutomationResponse response) { EXPECT_TRUE(response.result.ok); done = true; });
+  ASSERT_TRUE(test.pump([&] { return done.load(); }));
+  test.throw_revoke = true;
+  test.throw_disconnect = true;
+  healthy.close();
+  EXPECT_TRUE(test.pump([&] { return test.disconnected == 1; }));
+  EXPECT_NO_THROW(test.server.stop());
 }
 TEST(PipeTransportTest, RoundTripWithOneByteReadsAndWrites) {
   auto config = options();

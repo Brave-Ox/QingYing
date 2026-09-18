@@ -1,5 +1,6 @@
 ﻿#include "qingying/ipc/pipe_server.h"
 #include "pipe_io.h"
+#include "qingying/diagnostics/fault_boundary.h"
 
 #include <algorithm>
 #include <atomic>
@@ -45,6 +46,10 @@ struct Shared {
   std::size_t in_flight[2]{};
   std::vector<std::shared_ptr<Session>> sessions;
 };
+void wake(Shared& shared) noexcept {
+  if (shared.hooks.wake) containFault(FaultOrigin::Pipe, FaultDomain::Session,
+      [&] { shared.hooks.wake(); });
+}
 // mutex held: invalidate the transport before scheduler revocation. Both
 // scheduler.submit and scheduler.disconnect share scheduler's admission lock.
 void revoke(Shared& shared, Session& session) {
@@ -55,8 +60,13 @@ void revoke(Shared& shared, Session& session) {
   session.pending.clear();
   session.requests[0].clear();
   session.requests[1].clear();
-  if (session.context) shared.hooks.revoke(*session.context);
-  if (!shared.stopping && shared.hooks.wake) shared.hooks.wake();
+  if (session.context) {
+    DiagnosticScope scope({session.context->connection.application_epoch,
+        session.context->connection.generation, session.context->action.result_scope});
+    containFault(FaultOrigin::Pipe, FaultDomain::Session,
+        [&] { shared.hooks.revoke(*session.context); });
+  }
+  if (!shared.stopping) wake(shared);
 }
 }
 struct PipeServer::Impl {
@@ -111,7 +121,7 @@ struct PipeServer::Impl {
           {
             std::lock_guard<std::mutex> lock(shared->mutex);
             session->hello = true;
-            if (shared->hooks.wake) shared->hooks.wake();
+            wake(*shared);
           }
           HANDLE events[] = {session->stream.stopEvent(), session->ready.get()};
           const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -142,7 +152,7 @@ struct PipeServer::Impl {
               session->pending.emplace(wire->request.request_id, PendingRequest{wire->rpc_id, control});
               ++shared->in_flight[control];
               session->requests[control].push_back({std::move(*wire), std::chrono::steady_clock::now()});
-              if (shared->hooks.wake) shared->hooks.wake();
+              wake(*shared);
             }
           }
         }
@@ -164,6 +174,7 @@ struct PipeServer::Impl {
         }
       }
     } catch (...) {
+      recordFault(ErrorCode::kUnknown, FaultOrigin::Pipe, FaultDomain::Application);
       // Allocation or hook failures must close admission rather than escape
       // a worker. stop() will reclaim owner-side records.
       std::lock_guard<std::mutex> lock(shared->mutex);
@@ -235,6 +246,7 @@ void PipeServer::drain() {
   std::vector<std::shared_ptr<Session>> sessions;
   { std::lock_guard<std::mutex> lock(shared->mutex); sessions = shared->sessions; }
   for (auto& session : sessions) {
+    const bool survived = containFault(FaultOrigin::Pipe, FaultDomain::Session, [&] {
     bool connect = false;
     {
       std::lock_guard<std::mutex> lock(shared->mutex);
@@ -253,7 +265,8 @@ void PipeServer::drain() {
           hello.limits = shared->options.limits;
           session->stream.send(hello);
           SetEvent(session->ready.get());
-        } else shared->hooks.revoke(*context);
+        } else containFault(FaultOrigin::Pipe, FaultDomain::Session,
+            [&] { shared->hooks.revoke(*context); });
       } else revoke(*shared, *session);
     }
     // Prioritize control requests; process only the finite snapshot admitted
@@ -275,11 +288,13 @@ void PipeServer::drain() {
         const auto id = request.wire.request.request_id;
         std::weak_ptr<Session> weak = session;
         auto delivered = std::make_shared<std::atomic<bool>>(false);
-        shared->hooks.submit(context, std::move(request.wire.request),
-            [shared, weak, id, delivered](AutomationResponse response) {
+        AutomationCompletion completion = [shared, weak, id, delivered, context](AutomationResponse response) {
           if (delivered->exchange(true)) return;
           auto target = weak.lock();
           if (!target) return;
+          DiagnosticScope scope({context.connection.application_epoch, context.connection.generation,
+              context.action.result_scope, id, 0, context.submitted_at});
+          if (!containFault(FaultOrigin::Pipe, FaultDomain::Session, [&] {
           std::lock_guard<std::mutex> lock(shared->mutex);
           auto found = target->pending.find(id);
           if (!target->live || found == target->pending.end()) return;
@@ -288,10 +303,34 @@ void PipeServer::drain() {
           WireResponse wire;
           wire.rpc_id = found->second.rpc;
           wire.response = std::move(response);
+          // Strict wire v1 clients reject new result fields. Correlation remains
+          // derivable from hello epoch/generation and request_id; MCP adds the
+          // structured diagnostic after binding the response to that identity.
+          wire.response.result.diagnostic.reset();
+          if (auto* operation = std::get_if<OperationSnapshot>(&wire.response.control))
+            if (operation->outcome) operation->outcome->diagnostic.reset();
           --shared->in_flight[found->second.control];
           target->pending.erase(found);
           if (!target->stream.send(wire)) revoke(*shared, *target);
-        });
+          })) {
+            std::lock_guard<std::mutex> lock(shared->mutex);
+            revoke(*shared, *target);
+          }
+        };
+        DiagnosticScope scope({context.connection.application_epoch, context.connection.generation,
+            context.action.result_scope, id, 0, context.submitted_at});
+        FaultDiagnostic fault;
+        if (!containFault(FaultOrigin::Pipe, FaultDomain::Request, [&] {
+              shared->hooks.submit(context, std::move(request.wire.request), completion);
+            }, &fault)) {
+          AutomationResponse response;
+          response.connection = context.connection;
+          response.result.request_id = id;
+          response.result.error_code = fault.error_code;
+          response.result.failure_stage = "pipe_submit";
+          response.result.diagnostic = fault;
+          completion(std::move(response));
+        }
       }
     }
     std::optional<TrustedAutomationContext> cleanup;
@@ -300,10 +339,29 @@ void PipeServer::drain() {
       if (!session->live && !session->cleanup_done) {
         cleanup = session->context;
         session->cleanup_done = true;
-      } else continue;
+      } else return;
     }
-    if (cleanup) shared->hooks.disconnect(*cleanup);
+    if (cleanup) {
+      DiagnosticScope scope({cleanup->connection.application_epoch, cleanup->connection.generation,
+          cleanup->action.result_scope});
+      containFault(FaultOrigin::Pipe, FaultDomain::Session, [&] { shared->hooks.disconnect(*cleanup); });
+    }
     SetEvent(session->cleaned.get());
+    });
+    if (!survived) {
+      std::optional<TrustedAutomationContext> cleanup;
+      {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        revoke(*shared, *session);
+        if (!session->cleanup_done) { cleanup = session->context; session->cleanup_done = true; }
+      }
+      if (cleanup) {
+        DiagnosticScope scope({cleanup->connection.application_epoch, cleanup->connection.generation,
+            cleanup->action.result_scope});
+        containFault(FaultOrigin::Pipe, FaultDomain::Session, [&] { shared->hooks.disconnect(*cleanup); });
+      }
+      SetEvent(session->cleaned.get());
+    }
   }
 }
 void PipeServer::stopAccepting() noexcept {

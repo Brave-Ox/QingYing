@@ -36,6 +36,8 @@
 
 输出同时提供 structuredContent 和对应的 text JSON，业务失败使用 isError:true；公共响应中的操作/结果 ID 保留不透明字符串，不输出内部 request/operation 数字 ID。get_operation 的 outcome 保留成功/错误诊断，不公开内部 ActionOutput 和 data；capture_window/crop_center/copy/save/pin 通过响应侧可信句柄元数据映射公开 ID。
 
+已绑定连接的普通业务错误可包含 `error.diagnostic`：correlation_id、origin、domain、retryable、provider_id 和 elapsed_ms。该关联标记只用于查询诊断，不是结果或操作句柄；Pipe v1 未传输完整诊断时，由可信连接身份与调用 request ID 生成同一关联标记，provider_id 为空、elapsed_ms 为 0 表示该入口没有耗时数据，具体底层来源以服务端日志为准。日志不包含窗口标题、保存路径、图像或异常自由文本；JSON-RPC 参数/帧错误仍保持各自协议语义。
+
 依据：[Tools、结构化输出及错误分层](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)。
 
 ## 请求相关性与取消

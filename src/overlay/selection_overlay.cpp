@@ -1,6 +1,7 @@
 ﻿#include "qingying/overlay/selection_overlay.hpp"
 
 #include <Windows.h>
+#include "qingying/diagnostics/ui_message_boundary.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1073,7 +1074,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
 }
 
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
-                                LPARAM lparam) {
+                                LPARAM lparam) try {
   OverlayWindowData* data = reinterpret_cast<OverlayWindowData*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -1575,6 +1576,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
   }
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
+catch (...) { return recoverUiMessage(hwnd, msg, wparam, lparam); }
 
 }  // namespace
 

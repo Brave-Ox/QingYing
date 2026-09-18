@@ -1,5 +1,6 @@
 ﻿#include "qingying/automation/ui_action_scheduler.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/diagnostics/fault_boundary.h"
 
 #include <stdexcept>
 
@@ -105,7 +106,11 @@ void UiActionScheduler::submit(TrustedAutomationContext context, AutomationReque
       }
     }
   }
-  if (entry.completion) entry.completion(failure(entry, error));
+  DiagnosticScope scope({entry.context.connection.application_epoch,
+      entry.context.connection.generation, entry.context.action.result_scope,
+      entry.request.request_id, 0, entry.context.submitted_at});
+  if (entry.completion) containFault(FaultOrigin::Scheduler, FaultDomain::Request,
+      [&] { entry.completion(failure(entry, error)); });
 }
 bool UiActionScheduler::cancel(const TrustedAutomationContext& context, RequestId request,
                                AbortReason reason) {
@@ -140,7 +145,11 @@ bool UiActionScheduler::notifyLocked() {
   if (wake_token_) return true;
   const auto token = channel_.push(AutomationRequestMessage{});
   if (!token) return false;
-  if (!post_(WM_QINGYING_AUTOMATION_WAKE, *token)) {
+  bool posted = false;
+  containFault(FaultOrigin::Scheduler, FaultDomain::Request, [&] {
+    posted = post_(WM_QINGYING_AUTOMATION_WAKE, *token);
+  });
+  if (!posted) {
     channel_.discard(*token);
     return false;
   }
@@ -163,14 +172,37 @@ void UiActionScheduler::settle(UiMessageToken ticket) {
     channel_.discard(ticket);
     channel_.discard(entry.completion_token);
   }
-  if (before_settlement_) before_settlement_(ticket, *entry.response);
-  try {
-    if (entry.completion) entry.completion(std::move(*entry.response));
-  } catch (...) {
-    if (after_settlement_) after_settlement_(ticket);
-    throw;
+  DiagnosticScope scope({entry.context.connection.application_epoch,
+      entry.context.connection.generation, entry.context.action.result_scope,
+      entry.request.request_id, entry.response->result.operation_id, entry.context.submitted_at});
+  FaultDiagnostic fault;
+  if (before_settlement_ && !containFault(FaultOrigin::Scheduler, FaultDomain::Request,
+      [&] { before_settlement_(ticket, *entry.response); }, &fault)) {
+    entry.response->result.ok = false;
+    entry.response->result.error_code = fault.error_code;
+    entry.response->result.diagnostic = fault;
   }
-  if (after_settlement_) after_settlement_(ticket);
+  auto& result = entry.response->result;
+  const auto context = currentFaultContext();
+  if (!result.ok && (!result.diagnostic ||
+      result.diagnostic->error_code != result.error_code ||
+      result.diagnostic->context.epoch != context.epoch ||
+      result.diagnostic->context.session_id != context.session_id ||
+      result.diagnostic->context.scope_id != context.scope_id ||
+      result.diagnostic->context.operation_id != context.operation_id ||
+      result.diagnostic->context.request_id != context.request_id)) {
+    // An idempotent replay shares the operation outcome, but has its own
+    // request identity. Log the response under the current invocation.
+    const auto previous = result.diagnostic;
+    result.diagnostic = recordFault(result.error_code,
+        previous ? previous->origin : FaultOrigin::Scheduler,
+        previous ? previous->domain : FaultDomain::Request,
+        previous ? previous->provider_id.data() : nullptr, context);
+  }
+  if (entry.completion) containFault(FaultOrigin::Scheduler, FaultDomain::Request,
+      [&] { entry.completion(std::move(*entry.response)); });
+  if (after_settlement_) containFault(FaultOrigin::Scheduler, FaultDomain::Request,
+      [&] { after_settlement_(ticket); });
 }
 void UiActionScheduler::dispatch(UINT message, UiMessageToken token) {
   checkThread();
@@ -218,10 +250,15 @@ void UiActionScheduler::executeRequest(UiMessageToken token) {
     }
   }
   if (!control) { settle(token); return; }
-  try { execute_(token, context, request, std::move(control)); }
-  catch (...) {
+  DiagnosticScope scope({context.connection.application_epoch, context.connection.generation,
+      context.action.result_scope, request.request_id, 0, context.submitted_at});
+  FaultDiagnostic fault;
+  if (!containFault(FaultOrigin::Scheduler, FaultDomain::Request,
+      [&] { execute_(token, context, request, std::move(control)); }, &fault)) {
     AutomationResponse response;
-    response.result.error_code = ErrorCode::kUnknown;
+    response.result.error_code = fault.error_code;
+    response.result.failure_stage = "scheduler";
+    response.result.diagnostic = fault;
     complete(token, std::move(response));
   }
 }
@@ -253,6 +290,12 @@ void UiActionScheduler::drain() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (draining_) return;
+    // Allocate before changing drain state, so an allocation failure cannot
+    // leave future wakes permanently blocked by draining_.
+    if (!containFault(FaultOrigin::Scheduler, FaultDomain::Request, [&] {
+          ready.reserve(entries_.size());
+          queued.reserve(entries_.size());
+        })) return;
     // Also retire a lost/stale posted wake when housekeeping recovers work.
     channel_.discard(wake_token_);
     wake_token_ = 0;
@@ -276,7 +319,8 @@ void UiActionScheduler::drain() {
     std::lock_guard<std::mutex> lock(mutex_);
     draining_ = false;
     notifyLocked();
-    throw;
+    recordFault(ErrorCode::kUnknown, FaultOrigin::Scheduler, FaultDomain::Request);
+    return;
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);

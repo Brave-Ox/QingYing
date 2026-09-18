@@ -1,5 +1,6 @@
 # Build functional modules before the application target.
 
+add_subdirectory(diagnostics)
 add_subdirectory(action)
 add_subdirectory(window)
 add_subdirectory(smart_region)

@@ -3,6 +3,8 @@
 #include "qingying/capture/capture_types.hpp"
 #include "qingying/automation/status_types.hpp"
 #include "qingying/window/window_types.hpp"
+#include "qingying/diagnostics/fault_types.hpp"
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -25,6 +27,7 @@ struct ActionResult {
   std::string failure_stage;
   int failure_frame{0};
   ActionOutput output{};
+  std::optional<FaultDiagnostic> diagnostic;
 };
 
 }  // namespace qingying

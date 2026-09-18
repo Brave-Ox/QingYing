@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "qingying/longshot/longshot_plugin_api.h"
+#include "qingying/diagnostics/fault_boundary.h"
+#include <atomic>
 
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +26,32 @@ class LongShotPluginHost {
     const std::wstring& path() const noexcept { return path_; }
     const QingYingLongShotPluginV1& api() const noexcept { return api_; }
 
+    bool faulted() const noexcept { return faulted_.load(); }
+    // C++ exception containment, not isolation from access violations or hangs.
+    // Cleanup is still allowed after quarantine; normal callbacks are rejected.
+    template <typename Function>
+    std::int32_t invoke(Function&& function, bool cleanup = false) const noexcept {
+      const auto started = std::chrono::steady_clock::now();
+      const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(started.time_since_epoch()).count();
+      if (!cleanup && (faulted() || milliseconds < cooldown_until_.load()))
+        return QINGYING_LONGSHOT_STATUS_FAILED;
+      std::int32_t status = QINGYING_LONGSHOT_STATUS_FAILED;
+      if (!containFault(FaultOrigin::Plugin, FaultDomain::Provider,
+          [&] { status = function(); }, nullptr, api_.id_utf8)) {
+        faulted_.store(true);
+        return QINGYING_LONGSHOT_STATUS_FAILED;
+      }
+      const auto elapsed = std::chrono::steady_clock::now() - started;
+      if (!cleanup && elapsed >= std::chrono::milliseconds{500}) {
+        cooldown_until_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count() + 30000);
+        auto context = currentFaultContext(); context.started_at = started;
+        recordFault(ErrorCode::kTimeout, FaultOrigin::Plugin, FaultDomain::Provider, api_.id_utf8, context);
+        return QINGYING_LONGSHOT_STATUS_FAILED;
+      }
+      return status;
+    }
+
     bool isDescendant(std::uint64_t owner_window,
                       std::uint64_t candidate_window) const noexcept {
       return host_api_ != nullptr && host_api_->is_descendant != nullptr &&
@@ -46,6 +74,8 @@ class LongShotPluginHost {
     void* module_{nullptr};
     const QingYingLongShotHostV1* host_api_{nullptr};
     QingYingLongShotPluginV1 api_{};
+    mutable std::atomic<bool> faulted_{false};
+    mutable std::atomic<std::int64_t> cooldown_until_{0};
   };
 
   using PluginList = std::vector<std::unique_ptr<LoadedPlugin>>;

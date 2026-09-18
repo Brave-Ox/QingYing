@@ -82,12 +82,14 @@ bool sameProfileResult(const LongShotProfileResult& left,
          left.content.height == right.content.height;
 }
 
-void closePluginSession(const PluginApi& plugin, SessionApi*& session) noexcept {
+void closePluginSession(const LongShotPluginHost::LoadedPlugin& loaded, SessionApi*& session) noexcept {
+  const auto& plugin = loaded.api();
   if (session != nullptr) {
-    if (plugin.close_session != nullptr) {
-      plugin.close_session(session);
-    }
+    auto* closing = session;
     session = nullptr;
+    if (plugin.close_session != nullptr) {
+      loaded.invoke([&] { plugin.close_session(closing); return QINGYING_LONGSHOT_STATUS_OK; }, true);
+    }
   }
 }
 
@@ -109,9 +111,8 @@ struct DllLongShotProfile::Impl {
                  : loaded_plugin.api().id_utf8) {}
 
   ~Impl() noexcept {
-    const PluginApi& plugin_api = plugin->api();
     for (auto& entry : sessions) {
-      closePluginSession(plugin_api, entry.second.session);
+      closePluginSession(*plugin, entry.second.session);
     }
   }
 
@@ -160,13 +161,13 @@ bool DllLongShotProfile::resolve(const LongShotRequest& request,
   ProbeApi probe{};
   probe.struct_size = sizeof(probe);
   const std::int32_t probe_status =
-      plugin.probe(plugin.plugin_context, &plugin_request, &probe);
+      impl_->plugin->invoke([&] { return plugin.probe(plugin.plugin_context, &plugin_request, &probe); });
   if (probe_status != QINGYING_LONGSHOT_STATUS_OK ||
       probe.struct_size < sizeof(probe) ||
       (probe.flags & QINGYING_LONGSHOT_PROBE_ACCEPTED) == 0) {
     auto existing = impl_->sessions.find(key);
     if (existing != impl_->sessions.end()) {
-      closePluginSession(plugin, existing->second.session);
+      closePluginSession(*impl_->plugin, existing->second.session);
       impl_->sessions.erase(existing);
     }
     return false;
@@ -176,9 +177,9 @@ bool DllLongShotProfile::resolve(const LongShotRequest& request,
   if (inserted) {
     SessionApi* session = nullptr;
     const std::int32_t open_status =
-        plugin.open(plugin.plugin_context, &plugin_request, &session);
+        impl_->plugin->invoke([&] { return plugin.open(plugin.plugin_context, &plugin_request, &session); });
     if (open_status != QINGYING_LONGSHOT_STATUS_OK || session == nullptr) {
-      closePluginSession(plugin, session);
+      closePluginSession(*impl_->plugin, session);
       impl_->sessions.erase(session_it);
       return false;
     }
@@ -188,13 +189,13 @@ bool DllLongShotProfile::resolve(const LongShotRequest& request,
   TargetApi plugin_target{};
   plugin_target.struct_size = sizeof(plugin_target);
   const std::int32_t resolve_status =
-      plugin.resolve(session_it->second.session, &plugin_request, &plugin_target);
+      impl_->plugin->invoke([&] { return plugin.resolve(session_it->second.session, &plugin_request, &plugin_target); });
   LongShotProfileResult core_target;
   if (resolve_status != QINGYING_LONGSHOT_STATUS_OK ||
       !toCoreTarget(plugin_target, core_target) ||
       !impl_->plugin->isDescendant(plugin_request.owner_window,
                                    plugin_target.scroll_target)) {
-    closePluginSession(plugin, session_it->second.session);
+    closePluginSession(*impl_->plugin, session_it->second.session);
     impl_->sessions.erase(session_it);
     return false;
   }
@@ -225,8 +226,8 @@ bool DllLongShotProfile::scrollDown(
     return false;
   }
 
-  return plugin.scroll_down(session_it->second.session, &plugin_request,
-                            &session_it->second.target) ==
+  return impl_->plugin->invoke([&] { return plugin.scroll_down(session_it->second.session, &plugin_request,
+                            &session_it->second.target); }) ==
          QINGYING_LONGSHOT_STATUS_OK;
 }
 
@@ -244,8 +245,8 @@ bool DllLongShotProfile::queryScrollState(
 
   StateApi state{};
   state.struct_size = sizeof(state);
-  const std::int32_t status = plugin.query_scroll_state(
-      session->session, &session->target, &state);
+  const std::int32_t status = impl_->plugin->invoke([&] { return plugin.query_scroll_state(
+      session->session, &session->target, &state); });
   if (status != QINGYING_LONGSHOT_STATUS_OK ||
       state.struct_size < sizeof(state) ||
       (state.flags & QINGYING_LONGSHOT_SCROLL_STATE_VALID) == 0) {
@@ -269,12 +270,7 @@ void DllLongShotProfile::cancel() const noexcept {
   if (plugin.struct_size < kCancelFieldEnd || plugin.cancel == nullptr) {
     return;
   }
-  try {
-    plugin.cancel(plugin.plugin_context);
-  } catch (...) {
-    // A plugin must not throw across the C ABI. Keep cancellation fail-closed
-    // if a non-conforming module does so anyway.
-  }
+  impl_->plugin->invoke([&] { plugin.cancel(plugin.plugin_context); return QINGYING_LONGSHOT_STATUS_OK; }, true);
 }
 
 std::size_t addDllLongShotProfiles(const LongShotPluginHost& host,

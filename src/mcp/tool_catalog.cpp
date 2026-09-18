@@ -1,5 +1,6 @@
 ﻿#include "tool_catalog.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "automation_wire_codec.h"
 #include "action_catalog_codec.h"
 #include <Windows.h>
@@ -68,8 +69,26 @@ Json Tool::encode(const AutomationResponse& response, const Json& arguments, con
           {"busy", nullptr}, {"limits", nullptr}, {"connection_reason", response.result.message.empty()
               ? std::string(errorCodeSymbol(response.result.error_code)) : response.result.message}}, false);
     if (kind != ToolKind::CaptureWindow ||
-        !std::holds_alternative<WindowCandidates>(response.result.output))
-      return toolFailure(response.result.error_code, response.result.message);
+        !std::holds_alternative<WindowCandidates>(response.result.output)) {
+      auto failure = toolFailure(response.result.error_code, response.result.message);
+      if (response.connection.valid()) {
+        ipc::WireResponse wire; wire.response = response;
+        if (!wire.response.result.diagnostic) {
+          const auto origin = response.result.failure_stage == "handler" ? FaultOrigin::Handler
+              : response.result.failure_stage == "scheduler" ? FaultOrigin::Scheduler : FaultOrigin::Pipe;
+          wire.response.result.diagnostic = recordFault(response.result.error_code, origin,
+              FaultDomain::Request, nullptr, {response.connection.application_epoch,
+              response.connection.generation, 0, response.result.request_id, response.result.operation_id});
+        }
+        const auto frame = ipc::encodeFrame(wire, limits);
+        if (frame) {
+          auto data = failure.at("structuredContent");
+          data["error"]["diagnostic"] = Json::parse(frame.bytes.substr(4)).at("result").at("diagnostic");
+          return result(std::move(data), true);
+        }
+      }
+      return failure;
+    }
     const auto& output = std::get<WindowCandidates>(response.result.output);
     if (output.candidates.size() > 64)
       return toolFailure(ErrorCode::kUnknown, "Invalid window candidates");

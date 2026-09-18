@@ -65,6 +65,8 @@ save.path 是现有内部 SaveRequest 的完整路径，不是公共 Tool 的 pa
 
 `response` 必填 rpc_id、result、control；可选 result_handle/operation_handle。result 包含 request_id、operation_id（未分配可为零）、ok、error_code、message、data、failure_stage、failure_frame、output。未知非负 error_code 数值保留；ok 必须与 error_code 是否为零一致。
 
+异常边界使用稳定 failure_stage（例如 handler、scheduler、pipe_submit），不发送原始异常文本。服务端普通诊断的 correlation_id 为 `a<application_epoch>-s<connection_generation>-r<request_id>`；这些身份来自可信握手与请求，不授予访问权限。在线 Pipe 输出不增加 diagnostic 字段，保持旧 strict wire v1 客户端兼容；codec 的可选 diagnostic 扩展供内部/MCP 包装使用，不表示 Pipe 已协商该扩展。重试标志只是诊断建议，不能替代幂等键、operation 状态或提交权限判断。
+
 output 通过 kind 标记区分 none/status/captured/saved/copied/pinned/window_candidates，对应中立 ActionOutput；不包含 Image、像素或平台窗口句柄。status 保留未知布尔字段的 null，包含实际能力及可选 limits/resources/queues；队列计数校验 queued+running 与 ordinary+control 相等。候选列表最多 64 项，每项只含 title/process_id/bounds/window_token，进程号只是候选元数据。
 
 control 通过 kind 区分 none/operation/cancellation/released。operation 含 OperationSnapshot；cancellation 含互斥 target、operation_id、state、cancellation_requested；released 含 result_id、already_released。控制结果的 operation_id 与外层结果一致，release 的外层 operation_id 为零。查询失败操作时，外层查询仍可成功，原失败存在 snapshot.outcome 内。

@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/action_handlers.hpp"
 
 #include "qingying/action/i_async_action_handler.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/app/export_executor.h"
 #include "qingying/app/result_action_service.h"
 #include "qingying/operation/operation_types.hpp"
@@ -129,6 +130,8 @@ class AsyncSaveHandler final : public IAsyncActionHandler {
           } catch (...) {
             result = failure(ErrorCode::kExportFailed,
                              "save worker threw an exception", "encode");
+            result.diagnostic = recordFault(ErrorCode::kExportFailed,
+                FaultOrigin::Worker, FaultDomain::Request, "save");
           }
           normalizeCommitRejection(state->request, executor_, result);
           state->complete(std::move(result));

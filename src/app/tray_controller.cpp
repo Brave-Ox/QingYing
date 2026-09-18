@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/tray_controller.hpp"
 
 #include "qingying/app/app_messages.hpp"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/app/autostart_settings.hpp"
 #include "qingying/app/tray_context_menu.hpp"
 #include "qingying/app/tray_notify_icon.hpp"
@@ -353,7 +354,15 @@ LRESULT CALLBACK TrayController::WndProc(HWND hwnd, UINT msg, WPARAM wparam,
   }
 
   if (self != nullptr) {
-    const auto result = self->handleMessage(msg, wparam, lparam);
+    LRESULT result = 0;
+    if (!containFault(FaultOrigin::Ui, FaultDomain::Request, [&] {
+          result = self->handleMessage(msg, wparam, lparam);
+        })) {
+      if (msg == WM_NCCREATE) result = FALSE;
+      if (msg == WM_CREATE) result = -1;
+      if (msg == WM_PAINT) ValidateRect(hwnd, nullptr);
+      if (msg == WM_DESTROY) PostQuitMessage(1);
+    }
     if (msg == WM_NCDESTROY) {
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       self->hwnd_ = nullptr;
@@ -413,7 +422,17 @@ void TrayController::showContextMenu() {
 LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
   if (message_filter_) {
     LRESULT filtered = 0;
-    if (message_filter_(msg, wparam, lparam, &filtered)) {
+    bool handled = false;
+    const bool succeeded = containFault(FaultOrigin::Ui, FaultDomain::Request, [&] {
+      handled = message_filter_(msg, wparam, lparam, &filtered);
+    });
+    if (!succeeded) {
+      if (msg == WM_NCCREATE) return FALSE;
+      if (msg == WM_CREATE) return -1;
+      if (msg == WM_PAINT) ValidateRect(hwnd_, nullptr);
+      filtered = 0;
+    }
+    if (handled || (!succeeded && msg != WM_DESTROY && msg != WM_NCDESTROY)) {
       return filtered;
     }
   }

@@ -1,6 +1,9 @@
 # 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
+  fault_boundary_test.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp
   mcp_process_integration_test.cpp
   mcp_result_lifecycle_integration_test.cpp
   application_shutdown_coordinator_test.cpp
@@ -151,6 +154,7 @@ target_include_directories(qingying_tests
     ${CMAKE_SOURCE_DIR}/src/smart_region
     ${CMAKE_SOURCE_DIR}/src/ipc
     ${CMAKE_SOURCE_DIR}/src/mcp
+    ${CMAKE_SOURCE_DIR}/res
 )
 
 target_link_libraries(qingying_tests

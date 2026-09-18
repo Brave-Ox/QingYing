@@ -3,6 +3,7 @@
 #include "qingying/capture/capture_types.hpp"
 #include "qingying/automation/status_request.hpp"
 #include "qingying/operation/operation_types.hpp"
+#include "qingying/diagnostics/fault_types.hpp"
 #include <chrono>
 #include <memory>
 #include <utility>
@@ -58,6 +59,7 @@ struct ActionRequest {
   ActionContext context{};
   // Trusted admission control, never populated from external payload fields.
   std::shared_ptr<IOperationControl> operation_control;
+  FaultContext diagnostic_context;
 
   ActionRequest() = default;
 

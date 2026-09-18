@@ -1,5 +1,6 @@
 ﻿#include "qingying/automation/operation_registry.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/diagnostics/fault_boundary.h"
 
 #include <algorithm>
 #include <array>
@@ -190,6 +191,11 @@ std::optional<ActionResult> OperationControl::settle(ActionResult outcome, bool 
     outcome.message = "operation aborted before commit";
     outcome.output = std::monostate{};
     outcome.data.clear();
+    if (outcome.diagnostic) {
+      const auto previous = *outcome.diagnostic;
+      outcome.diagnostic = recordFault(outcome.error_code, FaultOrigin::Scheduler,
+          FaultDomain::Request, previous.provider_id.data(), previous.context);
+    }
   } else if (outcome.ok && requires_commit && !status_.committed) {
     outcome = failure(ErrorCode::kConflict, "success requires commit permission");
   }

@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/application.hpp"
 
 #include "qingying/action/action_dispatcher.hpp"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/app/action_handlers.hpp"
 #include "qingying/app/application_shutdown_coordinator.h"
 #include "qingying/app/automation_runtime.h"
@@ -310,7 +311,7 @@ struct Application::Impl {
                                   LRESULT* result) -> bool {
       if (msg == WM_QINGYING_RESULT_ACTION_COMPLETE) {
         auto task = result_action_messages_.take<ActionTask>(static_cast<UiMessageToken>(lparam));
-        if (task && *task) { try { (*task)(); } catch (...) {} }
+        if (task && *task) containFault(FaultOrigin::Ui, FaultDomain::Request, [&] { (*task)(); });
         *result = 0;
         return true;
       }

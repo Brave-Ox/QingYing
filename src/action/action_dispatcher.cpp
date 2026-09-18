@@ -1,5 +1,6 @@
 ﻿#include "qingying/action/action_dispatcher.hpp"
 
+#include "qingying/diagnostics/fault_boundary.h"
 #include <atomic>
 #include <memory>
 #include <type_traits>
@@ -32,9 +33,21 @@ void correlate(const ActionRequest& request, ActionResult& result) noexcept {
   result.operation_id = request.operation_id;
 }
 
-ActionResult handlerFailure(const ActionRequest& request) {
-  return requestFailure(request, ErrorCode::kUnknown,
-                        "action handler threw an exception");
+ActionResult handlerFailure(const ActionRequest& request, const FaultDiagnostic& fault) {
+  auto result = requestFailure(request, fault.error_code,
+      fault.error_code == ErrorCode::kResourceLimit ? "resource limit" : "action handler threw an exception");
+  result.diagnostic = fault;
+  result.failure_stage = "handler";
+  return result;
+}
+
+FaultContext requestDiagnosticContext(const ActionRequest& request) {
+  auto context = request.diagnostic_context;
+  context.request_id = request.request_id;
+  context.operation_id = request.operation_id;
+  context.scope_id = request.context.result_scope;
+  context.started_at = request.submitted_at;
+  return context;
 }
 
 struct CompletionState {
@@ -45,7 +58,9 @@ struct CompletionState {
 ActionCompletion atMostOnce(ActionCompletion completion) {
   auto state = std::make_shared<CompletionState>();
   state->callback = std::move(completion);
-  return [state](ActionResult result) mutable {
+  const auto context = currentFaultContext();
+  return [state, context](ActionResult result) mutable {
+    DiagnosticScope scope(context);
     if (state->delivered.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
@@ -57,6 +72,7 @@ ActionCompletion atMostOnce(ActionCompletion completion) {
     try {
       state->callback(std::move(result));
     } catch (...) {
+      recordFault(ErrorCode::kUnknown, FaultOrigin::Handler, FaultDomain::Request);
     }
   };
 }
@@ -149,6 +165,7 @@ void ActionDispatcher::setExecutor(ActionExecutor executor) {
 }
 
 ActionResult ActionDispatcher::dispatch(const ActionRequest& request) const {
+  DiagnosticScope diagnostic_scope(requestDiagnosticContext(request));
   const ActionValidationResult validation = validateActionRequest(request);
   if (!validation.valid) {
     return requestFailure(request, ErrorCode::kInvalidArgument,
@@ -171,10 +188,11 @@ ActionResult ActionDispatcher::dispatch(const ActionRequest& request) const {
   }
 
   ActionResult result;
-  try {
+  FaultDiagnostic fault;
+  if (!containFault(FaultOrigin::Handler, FaultDomain::Request, [&] {
     result = it->second->handle(request);
-  } catch (...) {
-    return handlerFailure(request);
+  }, &fault)) {
+    return handlerFailure(request, fault);
   }
   // Cancellation and deadlines are admission guards. Once a synchronous
   // handler has run, its result represents the side effects it committed.
@@ -184,6 +202,7 @@ ActionResult ActionDispatcher::dispatch(const ActionRequest& request) const {
 
 void ActionDispatcher::submit(const ActionRequest& request,
                               ActionCompletion completion) const {
+  DiagnosticScope diagnostic_scope(requestDiagnosticContext(request));
   ActionCompletion complete = atMostOnce(
       [request, completion = std::move(completion)](ActionResult result) mutable {
         correlate(request, result);
@@ -212,14 +231,15 @@ void ActionDispatcher::submit(const ActionRequest& request,
   const Key key = static_cast<Key>(request.type());
   const auto async_it = async_handlers_.find(key);
   if (async_it != async_handlers_.end() && async_it->second) {
-    try {
+    FaultDiagnostic fault;
+    if (!containFault(FaultOrigin::Handler, FaultDomain::Request, [&] {
       // Copy the guarded callback so a handler may retain and invoke it later;
       // all copies share the same once state.
       async_it->second->handleAsync(request, complete, executor_);
-    } catch (...) {
+    }, &fault)) {
       // If the handler completed before throwing, atMostOnce suppresses this
       // fallback and preserves the already delivered result.
-      complete(handlerFailure(request));
+      complete(handlerFailure(request, fault));
     }
     return;
   }
@@ -231,12 +251,13 @@ void ActionDispatcher::submit(const ActionRequest& request,
     return;
   }
 
-  try {
+  FaultDiagnostic fault;
+  if (!containFault(FaultOrigin::Handler, FaultDomain::Request, [&] {
     ActionResult result = it->second->handle(request);
     correlate(request, result);
     complete(std::move(result));
-  } catch (...) {
-    complete(handlerFailure(request));
+  }, &fault)) {
+    complete(handlerFailure(request, fault));
   }
 }
 

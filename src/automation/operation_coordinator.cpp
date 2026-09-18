@@ -1,5 +1,6 @@
 ﻿#include "qingying/automation/operation_coordinator.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/automation/action_catalog.h"
 
 
@@ -239,6 +240,8 @@ void OperationCoordinator::execute(UiMessageToken ticket,
   dispatched.submitted_at = context.submitted_at;
   dispatched.timeout = automationTimeout(request, limits_);
   dispatched.operation_control = submission.control;
+  dispatched.diagnostic_context = {context.connection.application_epoch, context.connection.generation,
+      context.action.result_scope, request.request_id, submission.operation_id, context.submitted_at};
   // Completion may come from a worker; only scheduler.complete is thread-safe.
   // The handler acknowledges worker/overlay/pin cleanup before calling back.
   operations_.submit(dispatched, [scheduler = &scheduler_, ticket](ActionResult result) {

@@ -1,5 +1,6 @@
 ﻿#include "qingying/ipc/pipe_automation_client.h"
 #include "qingying/automation/automation_contract.h"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "pipe_io.h"
 
 #include <atomic>
@@ -10,7 +11,11 @@
 namespace qingying::ipc {
 namespace {
 void deliver(AutomationCompletion completion, AutomationResponse response) noexcept {
-  if (completion) { try { completion(std::move(response)); } catch (...) {} }
+  DiagnosticScope scope({response.connection.application_epoch,
+      response.connection.generation, 0, response.result.request_id,
+      response.result.operation_id});
+  if (completion) containFault(FaultOrigin::Pipe, FaultDomain::Request,
+      [&] { completion(std::move(response)); }, nullptr, "pipe_client_callback");
 }
 AutomationResponse failure(AutomationConnection connection, RequestId id, int code) {
   AutomationResponse response;
@@ -136,6 +141,9 @@ struct PipeAutomationClient::ConnectionLifetime {
       reader_exception = true;
       close_reason = ClientCloseReason::ReaderException;
       error = ERROR_NOT_ENOUGH_MEMORY;
+      recordFault(ErrorCode::kUnknown, FaultOrigin::Pipe, FaultDomain::Session,
+          "pipe_reader", {connection.application_epoch, connection.generation,
+          0, last_frame_request});
     }
     stream.cancel();
     stream.joinWriter();
@@ -280,6 +288,8 @@ void PipeAutomationClient::submit(AutomationRequest request, AutomationCompletio
     state->stream.cancel();
     if (inserted) state->pending.erase(id);
     code = ErrorCode::kResourceLimit;
+    recordFault(code, FaultOrigin::Pipe, FaultDomain::Request, "pipe_client_submit",
+        {identity.application_epoch, identity.generation, 0, id});
   }
   lock.unlock();
   deliver(std::move(completion), failure(identity, id, code));

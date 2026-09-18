@@ -20,7 +20,9 @@ struct PipeOptions {
 // endpoint continues to allocate unique generations.
 // Construct/start/drain/stop on the owner (UI) thread. drain() never waits for
 // I/O. Drain on Hooks::wake; low-frequency housekeeping recovers lost wakes.
-// Hooks must not throw or reenter this server. connect/submit/disconnect run
+// Hooks must not reenter this server. Exceptions are contained per request or
+// session; revoke/disconnect failures are recorded and cleanup is attempted once.
+// connect/submit/disconnect run
 // on the owner; revoke runs on an I/O thread (or owner during stop) and MUST
 // synchronously revoke scheduler admission, without waiting for UI work.
 // Typical bindings: Endpoint::connectAuthenticated, Scheduler::submit,

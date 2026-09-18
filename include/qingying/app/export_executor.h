@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <condition_variable>
+#include "qingying/diagnostics/fault_types.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,7 @@ class ExportExecutor final {
     Task reject;
     std::uint64_t request_id{0};
     std::string operation;
+    FaultContext diagnostic_context;
   };
   void run() noexcept;
 

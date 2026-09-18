@@ -58,7 +58,7 @@ enum class RegionQueryLane { Combined, Discovery, Accessibility };
 
 using UiaRegionQueryFunction = void (*)(
     const UiaRegionQueryRequest& request, UiaRegionQueryResult& result,
-    void* context) noexcept;
+    void* context);
 
 // Submission is strictly scoped to the current request and session generation.
 bool isUiaQueryResultApplicable(

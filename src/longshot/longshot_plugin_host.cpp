@@ -87,7 +87,7 @@ std::int32_t QINGYING_LONGSHOT_PLUGIN_CALL hostIsDescendant(
 
 std::int32_t QINGYING_LONGSHOT_PLUGIN_CALL hostSendWheelDown(
     void* /*user_data*/, const QingYingLongShotRequestV1* request,
-    const QingYingLongShotTargetV1* target) {
+    const QingYingLongShotTargetV1* target) try {
   if (request == nullptr || target == nullptr) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
@@ -104,11 +104,15 @@ std::int32_t QINGYING_LONGSHOT_PLUGIN_CALL hostSendWheelDown(
   return longshot_detail::sendWheelDown(core_request, core_target)
              ? QINGYING_LONGSHOT_STATUS_OK
              : QINGYING_LONGSHOT_STATUS_FAILED;
+} catch (...) {
+  recordFault(ErrorCode::kUnknown, FaultOrigin::Plugin,
+              FaultDomain::Provider, "host_wheel");
+  return QINGYING_LONGSHOT_STATUS_FAILED;
 }
 
 std::int32_t QINGYING_LONGSHOT_PLUGIN_CALL hostQueryScrollState(
     void* /*user_data*/, const QingYingLongShotTargetV1* target,
-    QingYingLongShotScrollStateV1* state) {
+    QingYingLongShotScrollStateV1* state) try {
   if (target == nullptr || state == nullptr ||
       !hasStructSize(state->struct_size, sizeof(*state))) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
@@ -135,6 +139,10 @@ std::int32_t QINGYING_LONGSHOT_PLUGIN_CALL hostQueryScrollState(
     state->flags |= QINGYING_LONGSHOT_SCROLL_STATE_AT_BOTTOM;
   }
   return QINGYING_LONGSHOT_STATUS_OK;
+} catch (...) {
+  recordFault(ErrorCode::kUnknown, FaultOrigin::Plugin,
+              FaultDomain::Provider, "host_scroll");
+  return QINGYING_LONGSHOT_STATUS_FAILED;
 }
 
 void QINGYING_LONGSHOT_PLUGIN_CALL hostLog(void* /*user_data*/, int32_t level,
@@ -143,12 +151,9 @@ void QINGYING_LONGSHOT_PLUGIN_CALL hostLog(void* /*user_data*/, int32_t level,
     return;
   }
 
-  OutputDebugStringA("[QingYing LongShot Plugin] ");
-  if (level != 0) {
-    OutputDebugStringA("[level] ");
-  }
-  OutputDebugStringA(message_utf8);
-  OutputDebugStringA("\n");
+  // Plugin text is untrusted and may contain titles/paths. Retain only a
+  // sampled failure event; plugin diagnostics identify the owning provider.
+  if (level != 0) recordFault(ErrorCode::kUnknown, FaultOrigin::Plugin, FaultDomain::Provider, "plugin_log");
 }
 
 QingYingLongShotHostV1 makeHostApi() {
@@ -194,8 +199,26 @@ std::wstring joinPath(const std::wstring& directory,
 }
 
 bool hasValidPluginId(const PluginApi& plugin) {
-  return plugin.id_utf8 != nullptr && plugin.id_utf8[0] != '\0';
+  if (!plugin.id_utf8 || !plugin.id_utf8[0]) return false;
+  for (std::size_t i = 0; i < 64; ++i) {
+    const char c = plugin.id_utf8[i];
+    if (!c) return true;
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) return false;
+  }
+  return false;
 }
+
+struct PluginLoadGuard {
+  HMODULE module;
+  PluginApi& api;
+  ~PluginLoadGuard() {
+    if (!module) return;
+    if (api.shutdown) containFault(FaultOrigin::Plugin, FaultDomain::Provider,
+        [&] { api.shutdown(api.plugin_context); }, nullptr, "plugin_shutdown");
+    FreeLibrary(module);
+  }
+};
 
 bool hasRequiredCallbacks(const PluginApi& plugin) {
   if (plugin.probe == nullptr || plugin.open == nullptr ||
@@ -293,7 +316,7 @@ std::size_t LongShotPluginHost::loadDirectory(
   return loaded_count;
 }
 
-bool LongShotPluginHost::loadFile(const std::wstring& plugin_path) {
+bool LongShotPluginHost::loadFile(const std::wstring& plugin_path) try {
   const std::wstring full_path = makeFullPath(plugin_path);
   if (full_path.empty()) {
     return false;
@@ -312,30 +335,26 @@ bool LongShotPluginHost::loadFile(const std::wstring& plugin_path) {
   if (module == nullptr) {
     return false;
   }
+  PluginApi plugin{};
+  plugin.struct_size = sizeof(plugin);
+  PluginLoadGuard load_guard{module, plugin};
 
   const FARPROC symbol = GetProcAddress(
       module, QINGYING_LONGSHOT_PLUGIN_ENTRY_SYMBOL_V1);
   if (symbol == nullptr) {
-    FreeLibrary(module);
     return false;
   }
 
   const auto entry = reinterpret_cast<QingYingLongShotEntryFnV1>(symbol);
-  PluginApi plugin{};
-  plugin.struct_size = sizeof(plugin);
-  const std::int32_t status = entry(&impl_->host_api, &plugin);
+  std::int32_t status = QINGYING_LONGSHOT_STATUS_FAILED;
+  containFault(FaultOrigin::Plugin, FaultDomain::Provider,
+      [&] { status = entry(&impl_->host_api, &plugin); }, nullptr, "plugin_entry");
   if (status != QINGYING_LONGSHOT_STATUS_OK || !isValidPlugin(plugin)) {
-    if (plugin.shutdown != nullptr) {
-      plugin.shutdown(plugin.plugin_context);
-    }
-    FreeLibrary(module);
     return false;
   }
 
   for (const auto& loaded : impl_->plugins) {
     if (loaded != nullptr && samePluginId(loaded->api(), plugin)) {
-      plugin.shutdown(plugin.plugin_context);
-      FreeLibrary(module);
       return false;
     }
   }
@@ -343,7 +362,16 @@ bool LongShotPluginHost::loadFile(const std::wstring& plugin_path) {
   impl_->plugins.push_back(std::unique_ptr<LoadedPlugin>(
       new LoadedPlugin(full_path, reinterpret_cast<void*>(module),
                        &impl_->host_api, plugin)));
+  load_guard.module = nullptr;
   return true;
+}
+catch (const std::bad_alloc&) {
+  recordFault(ErrorCode::kResourceLimit, FaultOrigin::Plugin, FaultDomain::Provider, "plugin_load");
+  return false;
+}
+catch (...) {
+  recordFault(ErrorCode::kUnknown, FaultOrigin::Plugin, FaultDomain::Provider, "plugin_load");
+  return false;
 }
 
 void LongShotPluginHost::unloadAll() noexcept {
@@ -355,7 +383,7 @@ void LongShotPluginHost::unloadAll() noexcept {
     if (*it != nullptr) {
       LoadedPlugin& plugin = **it;
       if (plugin.api_.shutdown != nullptr) {
-        plugin.api_.shutdown(plugin.api_.plugin_context);
+        plugin.invoke([&] { plugin.api_.shutdown(plugin.api_.plugin_context); return QINGYING_LONGSHOT_STATUS_OK; }, true);
         plugin.api_.shutdown = nullptr;
       }
       plugin.api_.cancel = nullptr;

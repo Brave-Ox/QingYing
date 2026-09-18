@@ -1,9 +1,43 @@
 ﻿#include "qingying/automation/ui_action_scheduler.h"
 #include <gtest/gtest.h>
+#include "qingying/diagnostics/fault_boundary.h"
+#include <stdexcept>
 #include <thread>
 
 namespace qingying {
 namespace {
+TEST(UiActionSchedulerFaultTest, ReplayedFailureUsesCurrentRequestIdentity) {
+  OperationRegistry registry{417};
+  const auto context = *registry.connect(2);
+  UiActionScheduler* owner = nullptr;
+  UiActionScheduler scheduler{[](UINT, UiMessageToken) { return true; },
+      [&](UiMessageToken token, const TrustedAutomationContext&, const AutomationRequest&,
+          std::shared_ptr<OperationControl>) {
+        AutomationResponse response;
+        response.result.error_code = ErrorCode::kUnknown;
+        response.result.diagnostic = recordFault(ErrorCode::kUnknown,
+            FaultOrigin::Handler, FaultDomain::Request, "fake.provider",
+            {417, context.connection.generation, 2, 1, 99});
+        owner->complete(token, std::move(response));
+      }};
+  owner = &scheduler;
+  ASSERT_TRUE(scheduler.connect(context));
+  AutomationRequest request;
+  request.request_id = 2;
+  request.payload = ExecuteActionRequest{StatusRequest{}, std::nullopt};
+  int completed = 0;
+  scheduler.submit(context, request, [&](AutomationResponse response) {
+    ++completed;
+    ASSERT_TRUE(response.result.diagnostic);
+    EXPECT_STREQ(response.result.diagnostic->correlation_id.data(), "a417-s1-r2");
+    EXPECT_STREQ(response.result.diagnostic->provider_id.data(), "fake.provider");
+    EXPECT_EQ(response.result.diagnostic->origin, FaultOrigin::Handler);
+  });
+  scheduler.drain();
+  EXPECT_EQ(completed, 1);
+  EXPECT_EQ(scheduler.pending(), 0u);
+  scheduler.shutdown();
+}
 class UiActionSchedulerTest : public ::testing::Test {
  protected:
   std::chrono::steady_clock::time_point now{};
@@ -53,6 +87,51 @@ class UiActionSchedulerTest : public ::testing::Test {
     for (auto message : batch) scheduler.dispatch(message.first, message.second);
   }
 };
+TEST(UiActionSchedulerFaultTest, ExecutionAndConsumerFailuresDoNotAbortTheBatch) {
+  OperationRegistry registry(217);
+  const auto context = *registry.connect(23);
+  UiActionScheduler* target = nullptr;
+  int callbacks = 0;
+  UiActionScheduler scheduler([](UINT, UiMessageToken) { return true; },
+      [&](UiMessageToken token, const TrustedAutomationContext&, const AutomationRequest& request,
+          std::shared_ptr<OperationControl>) {
+        if (request.request_id == 1) throw std::runtime_error("task");
+        AutomationResponse response; response.result.ok = true; response.result.error_code = ErrorCode::kOk;
+        target->complete(token, std::move(response));
+      });
+  target = &scheduler;
+  ASSERT_TRUE(scheduler.connect(context));
+  for (RequestId id : {1, 2}) {
+    AutomationRequest request; request.request_id = id;
+    scheduler.submit(context, request, [&](AutomationResponse response) {
+      ++callbacks;
+      if (response.result.request_id == 1) {
+        EXPECT_EQ(response.result.error_code, ErrorCode::kUnknown);
+        ASSERT_TRUE(response.result.diagnostic);
+        EXPECT_STREQ(response.result.diagnostic->correlation_id.data(), "a217-s1-r1");
+        throw std::runtime_error("consumer");
+      }
+      EXPECT_TRUE(response.result.ok);
+    });
+  }
+  EXPECT_NO_THROW(scheduler.drain());
+  EXPECT_EQ(callbacks, 2);
+  EXPECT_EQ(scheduler.pending(), 0u);
+  EXPECT_NO_THROW(scheduler.shutdown());
+}
+TEST_F(UiActionSchedulerTest, SettlementHookExceptionsStillRunCompletionAndCleanup) {
+  int cleaned = 0;
+  scheduler.setSettlementHooks([](UiMessageToken, AutomationResponse&) { throw std::runtime_error("settle"); },
+      [&](UiMessageToken) { ++cleaned; throw std::runtime_error("cleanup"); });
+  submit(1);
+  pump();
+  ASSERT_TRUE(scheduler.complete(running, {}));
+  EXPECT_NO_THROW(pump());
+  EXPECT_EQ(completions, 1);
+  EXPECT_EQ(last_error, ErrorCode::kUnknown);
+  EXPECT_EQ(cleaned, 1);
+  EXPECT_EQ(scheduler.pending(), 0u);
+}
 TEST_F(UiActionSchedulerTest, FullOrdinaryLaneStillAdmitsControlAndCancellation) {
   for (int i = 1; i <= 8; ++i) submit(i);
   submit(9);

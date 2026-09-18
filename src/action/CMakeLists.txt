@@ -1,6 +1,7 @@
 add_library(qingying_action STATIC
   action_dispatcher.cpp
 )
+target_link_libraries(qingying_action PUBLIC qingying_diagnostics)
 
 target_include_directories(qingying_action
   PUBLIC ${PROJECT_SOURCE_DIR}/include

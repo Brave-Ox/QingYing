@@ -1,5 +1,6 @@
 ﻿#include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_diagnostics.hpp"
+#include "qingying/diagnostics/fault_boundary.h"
 #include "smart_region_visual_cache.hpp"
 #include "uia_region_query_worker.hpp"
 #include "qingying/app/app_messages.hpp"
@@ -77,7 +78,7 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
                         UiaRegionLocatorSession& session,
                         SmartRegionVisualResultCache& visual_cache,
                         RegionQueryLane lane,
-                        const std::function<void(const UiaRegionQueryResult&)>& progress) noexcept
+                        const std::function<void(const UiaRegionQueryResult&)>& progress)
 {
   result.request_id = request.request_id;
   result.root_window = request.root_window;
@@ -263,6 +264,7 @@ struct UiaRegionQueryWorker::Impl
       }
 
       UiaRegionQueryResult query_result;
+      bool provider_failed = false;
       const std::uint64_t begin_ms = GetTickCount64();
       if (use_cached_result)
       {
@@ -280,6 +282,12 @@ struct UiaRegionQueryWorker::Impl
       }
       else
       {
+        FaultContext context;
+        context.session_id = request.value.generation;
+        context.request_id = request.value.request_id;
+        context.started_at = std::chrono::steady_clock::now();
+        DiagnosticScope scope(context);
+        const bool provider_ok = containFault(FaultOrigin::Worker, FaultDomain::Provider, [&] {
         if (query_function != nullptr)
         {
           query_function(request.value, query_result, query_context);
@@ -313,6 +321,12 @@ struct UiaRegionQueryWorker::Impl
             }
           });
         }
+        }, nullptr, laneName());
+        if (!provider_ok) {
+          provider_failed = true;
+          query_result = UiaRegionQueryResult{};
+          query_result.succeeded = false;
+        }
       }
       query_result.generation = request.value.generation;
       query_result.process_id = request.value.process_id;
@@ -327,6 +341,12 @@ struct UiaRegionQueryWorker::Impl
       query_result.timed_out = query_result.timed_out ||
           (query_result.deadline_ms && query_result.completed_at_ms >= query_result.deadline_ms);
       if (query_result.timed_out) query_result.succeeded = false;
+      if (query_result.timed_out && !suppress_for_cooldown) {
+        FaultContext context; context.session_id = request.value.generation;
+        context.request_id = request.value.request_id;
+        context.started_at = std::chrono::steady_clock::now() - std::chrono::milliseconds(query_result.elapsed_ms);
+        recordFault(ErrorCode::kTimeout, FaultOrigin::Worker, FaultDomain::Provider, laneName(), context);
+      }
 
       {
         std::lock_guard<std::mutex> lock(mutex);
@@ -361,7 +381,7 @@ struct UiaRegionQueryWorker::Impl
               failure_process_id = request.value.process_id;
               failure_point = request.value.screen_point;
               failure_at_ms = query_result.timed_out ? query_result.completed_at_ms : request.value.requested_at_ms;
-              failure_cooldown_ms = query_result.timed_out ? 2000 :
+              failure_cooldown_ms = (query_result.timed_out || provider_failed) ? 2000 :
                                    query_result.browser_semantic_miss
                                         ? kBrowserSemanticMissCooldownMs
                                         : kFailureCooldownMs;

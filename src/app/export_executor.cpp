@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/export_executor.h"
 
 #include <stdexcept>
+#include "qingying/diagnostics/fault_boundary.h"
 #include <utility>
 #include <vector>
 
@@ -21,8 +22,10 @@ bool ExportExecutor::submit(Task execute, Task reject,
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (stopping_ || jobs_.size() >= max_queued_) return false;
+    auto context = currentFaultContext();
+    if (request_id) context.request_id = request_id;
     jobs_.push(Job{std::move(execute), std::move(reject), request_id,
-                   std::move(operation)});
+                   std::move(operation), context});
     last_progress_ = "queued";
   }
   wake_.notify_one();
@@ -35,7 +38,7 @@ void ExportExecutor::shutdown() noexcept {
 }
 
 void ExportExecutor::requestStop() noexcept {
-  std::vector<Task> rejected;
+  std::vector<Job> rejected;
   {
     std::lock_guard<std::mutex> shutdown_lock(shutdown_mutex_);
     {
@@ -43,7 +46,7 @@ void ExportExecutor::requestStop() noexcept {
       if (!stopping_) stopping_ = true;
       while (!jobs_.empty()) {
         if (jobs_.front().reject) {
-          rejected.push_back(std::move(jobs_.front().reject));
+          rejected.push_back(std::move(jobs_.front()));
         }
         jobs_.pop();
       }
@@ -51,8 +54,9 @@ void ExportExecutor::requestStop() noexcept {
                                 : "queued_work_rejected";
     }
   }
-  for (auto& reject : rejected) {
-    try { reject(); } catch (...) {}
+  for (auto& job : rejected) {
+    DiagnosticScope scope(job.diagnostic_context);
+    containFault(FaultOrigin::Worker, FaultDomain::Request, [&] { job.reject(); });
   }
   wake_.notify_all();
 }
@@ -116,9 +120,10 @@ void ExportExecutor::run() noexcept {
       active_operation_ = job.operation;
       last_progress_ = "callback_started";
     }
-    try { job.execute(); } catch (...) {
+    DiagnosticScope scope(job.diagnostic_context);
+    if (!containFault(FaultOrigin::Worker, FaultDomain::Request, [&] { job.execute(); })) {
       if (job.reject) {
-        try { job.reject(); } catch (...) {}
+        containFault(FaultOrigin::Worker, FaultDomain::Request, [&] { job.reject(); });
       }
     }
     {

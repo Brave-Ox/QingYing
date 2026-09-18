@@ -1,6 +1,7 @@
 ﻿#include "annotate/annotation_editor_host.hpp"
 
 #include <algorithm>
+#include "qingying/diagnostics/ui_message_boundary.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -188,7 +189,7 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
 
 LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                LPARAM lparam)
-{
+try {
   AnnotationEditorHost* data = reinterpret_cast<AnnotationEditorHost*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -721,6 +722,7 @@ LRESULT CALLBACK editorWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
+catch (...) { return recoverUiMessage(hwnd, msg, wparam, lparam); }
 
 bool registerEditorClass(HINSTANCE instance)
 {

@@ -672,16 +672,55 @@ ActionOutput readOutput(const Json& value, const AutomationLimits& limits, WireC
   }
   throw Failure{WireError::InvalidMessage};
 }
+const std::vector<std::pair<FaultOrigin, const char*>> fault_origins{
+    {FaultOrigin::Ui, "ui"}, {FaultOrigin::Scheduler, "scheduler"}, {FaultOrigin::Pipe, "pipe"},
+    {FaultOrigin::Handler, "handler"}, {FaultOrigin::Plugin, "plugin"}, {FaultOrigin::Worker, "worker"}};
+const std::vector<std::pair<FaultDomain, const char*>> fault_domains{
+    {FaultDomain::Request, "request"}, {FaultDomain::Session, "session"},
+    {FaultDomain::Provider, "provider"}, {FaultDomain::Application, "application"}};
+template <std::size_t N> Json diagnosticToken(const std::array<char, N>& value, bool empty) {
+  const auto end = std::find(value.begin(), value.end(), '\0');
+  require(end != value.end());
+  const std::string text(value.begin(), end);
+  require((empty || !text.empty()) && text.find_first_not_of(
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-") == std::string::npos);
+  return text;
+}
+Json diagnosticJson(const FaultDiagnostic& value) {
+  return {{"correlation_id", diagnosticToken(value.correlation_id, false)},
+      {"origin", enumName(value.origin, fault_origins)}, {"domain", enumName(value.domain, fault_domains)},
+      {"retryable", value.retryable}, {"provider_id", diagnosticToken(value.provider_id, true)},
+      {"elapsed_ms", value.elapsed_ms}};
+}
+FaultDiagnostic readDiagnostic(const Json& value, int error_code) {
+  fields(value, {"correlation_id", "origin", "domain", "retryable", "provider_id", "elapsed_ms"});
+  FaultDiagnostic result; result.error_code = error_code;
+  const auto correlation = string(value.at("correlation_id"), result.correlation_id.size() - 1, false);
+  const auto provider = string(value.at("provider_id"), result.provider_id.size() - 1);
+  std::copy(correlation.begin(), correlation.end(), result.correlation_id.begin());
+  std::copy(provider.begin(), provider.end(), result.provider_id.begin());
+  result.origin = readEnum(value.at("origin"), fault_origins);
+  result.domain = readEnum(value.at("domain"), fault_domains);
+  result.retryable = boolean(value.at("retryable"));
+  result.elapsed_ms = uint(value.at("elapsed_ms"));
+  (void)diagnosticJson(result);
+  return result;
+}
 Json resultJson(const ActionResult& value, const AutomationLimits& limits, WireClock::time_point now) {
-  return {{"request_id", value.request_id}, {"operation_id", value.operation_id},
+  Json result{{"request_id", value.request_id}, {"operation_id", value.operation_id},
       {"ok", value.ok}, {"error_code", value.error_code},
       {"message", textJson(value.message, limits.max_frame_bytes)},
       {"data", textJson(value.data, limits.max_frame_bytes)},
       {"failure_stage", textJson(value.failure_stage, 1024)}, {"failure_frame", value.failure_frame},
       {"output", outputJson(value.output, limits, now)}};
+  if (value.diagnostic) {
+    require(!value.ok && value.diagnostic->error_code == value.error_code);
+    result["diagnostic"] = diagnosticJson(*value.diagnostic);
+  }
+  return result;
 }
 ActionResult readResult(const Json& value, const AutomationLimits& limits, WireClock::time_point now) {
-  fields(value, {"request_id", "operation_id", "ok", "error_code", "message", "data", "failure_stage", "failure_frame", "output"});
+  fields(value, {"request_id", "operation_id", "ok", "error_code", "message", "data", "failure_stage", "failure_frame", "output"}, {"diagnostic"});
   ActionResult result;
   result.request_id = id(value.at("request_id"));
   result.operation_id = uint(value.at("operation_id"));
@@ -693,6 +732,10 @@ ActionResult readResult(const Json& value, const AutomationLimits& limits, WireC
   result.failure_stage = string(value.at("failure_stage"), 1024);
   result.failure_frame = static_cast<int>(uint(value.at("failure_frame"), INT32_MAX));
   result.output = readOutput(value.at("output"), limits, now);
+  if (value.contains("diagnostic")) {
+    require(!result.ok);
+    result.diagnostic = readDiagnostic(value.at("diagnostic"), result.error_code);
+  }
   return result;
 }
 Json snapshotJson(const OperationSnapshot& value, const AutomationLimits& limits, WireClock::time_point now) {

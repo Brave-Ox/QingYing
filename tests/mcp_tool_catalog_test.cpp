@@ -6,6 +6,22 @@
 using namespace qingying;
 using namespace qingying::mcp;
 using namespace qingying::mcp::test;
+TEST(McpToolCatalogTest, FailureDiagnosticUsesTrustedResponseCorrelation) {
+  AutomationResponse response;
+  response.connection = {317, 4};
+  response.result.request_id = 17;
+  response.result.error_code = ErrorCode::kUnknown;
+  response.result.failure_stage = "handler";
+  const auto output = findTool("crop_center")->encode(
+      response, {{"width", 32}, {"height", 24}}, {});
+  const auto& diagnostic = output["structuredContent"]["error"]["diagnostic"];
+  EXPECT_EQ(diagnostic["correlation_id"], "a317-s4-r17");
+  EXPECT_EQ(diagnostic["origin"], "handler");
+  EXPECT_EQ(diagnostic["provider_id"], "");
+  EXPECT_FALSE(diagnostic.contains("scope_id"));
+  EXPECT_EQ(Json::parse(output["content"][0]["text"].get<std::string>()),
+            output["structuredContent"]);
+}
 TEST(McpToolCatalogTest, OnlyImplementedToolsAreRegistered) {
   ASSERT_EQ(tools().size(), 9);
   for (const auto& tool : tools()) {

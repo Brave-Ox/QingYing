@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/application_shutdown_coordinator.h"
 
 #include <algorithm>
+#include "qingying/diagnostics/fault_boundary.h"
 #include <exception>
 #include <utility>
 
@@ -68,12 +69,16 @@ ApplicationShutdownReport ApplicationShutdownCoordinator::shutdown() noexcept {
         report_.completed = false;
         destructive_cleanup_blocked = true;
       }
-    } catch (const std::exception& error) {
-      diagnostic.detail = error.what();
+    } catch (const std::exception&) {
+      diagnostic.detail = "participant exception";
+      recordFault(ErrorCode::kUnknown, FaultOrigin::Ui, FaultDomain::Application, step.participant.c_str());
       report_.completed = false;
+      destructive_cleanup_blocked = true;
     } catch (...) {
       diagnostic.detail = "unknown exception";
+      recordFault(ErrorCode::kUnknown, FaultOrigin::Ui, FaultDomain::Application, step.participant.c_str());
       report_.completed = false;
+      destructive_cleanup_blocked = true;
     }
 
     if (step.snapshot) {
@@ -85,17 +90,19 @@ ApplicationShutdownReport ApplicationShutdownCoordinator::shutdown() noexcept {
           }
           diagnostic.detail += snapshot;
         }
-      } catch (const std::exception& error) {
+      } catch (const std::exception&) {
         if (!diagnostic.detail.empty()) {
           diagnostic.detail += "; ";
         }
         diagnostic.detail += "snapshot: ";
-        diagnostic.detail += error.what();
+        diagnostic.detail += "exception";
+        recordFault(ErrorCode::kUnknown, FaultOrigin::Ui, FaultDomain::Application, step.participant.c_str());
       } catch (...) {
         if (!diagnostic.detail.empty()) {
           diagnostic.detail += "; ";
         }
         diagnostic.detail += "snapshot: unknown exception";
+        recordFault(ErrorCode::kUnknown, FaultOrigin::Ui, FaultDomain::Application, step.participant.c_str());
       }
     }
 
@@ -111,6 +118,7 @@ ApplicationShutdownReport ApplicationShutdownCoordinator::shutdown() noexcept {
       try {
         options_.on_diagnostic(report_.diagnostics.back());
       } catch (...) {
+        recordFault(ErrorCode::kUnknown, FaultOrigin::Ui, FaultDomain::Application, "shutdown_diagnostic");
         // Diagnostics must never prevent the remaining shutdown steps.
       }
     }

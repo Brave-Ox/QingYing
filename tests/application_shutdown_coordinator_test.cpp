@@ -82,8 +82,9 @@ TEST(ApplicationShutdownCoordinatorTest, RecordsBudgetOverrunAndSnapshot) {
             std::string::npos);
 }
 
-TEST(ApplicationShutdownCoordinatorTest, ContinuesAfterParticipantException) {
+TEST(ApplicationShutdownCoordinatorTest, StopsDestructionAfterParticipantException) {
   bool second_called = false;
+  bool cleanup_called = false;
   ApplicationShutdownCoordinator coordinator(
       {
           {ApplicationShutdownPhase::RejectNewWork, "throws",
@@ -91,20 +92,23 @@ TEST(ApplicationShutdownCoordinatorTest, ContinuesAfterParticipantException) {
              throw std::runtime_error("test shutdown failure");
            },
            {}},
-          {ApplicationShutdownPhase::DrainAndDestroy, "continues",
+          {ApplicationShutdownPhase::CancelAndWait, "continues",
            [&](ApplicationShutdownDeadline) {
              second_called = true;
              return true;
            },
            {}},
+          {ApplicationShutdownPhase::DrainAndDestroy, "cleanup",
+           [&](ApplicationShutdownDeadline) { cleanup_called = true; return true; }, {}},
       });
 
   const auto report = coordinator.shutdown();
 
   EXPECT_FALSE(report.completed);
   EXPECT_TRUE(second_called);
+  EXPECT_FALSE(cleanup_called);
   ASSERT_EQ(report.diagnostics.size(), 2u);
-  EXPECT_NE(report.diagnostics.front().detail.find("test shutdown failure"),
+  EXPECT_EQ(report.diagnostics.front().detail.find("test shutdown failure"),
             std::string::npos);
 }
 

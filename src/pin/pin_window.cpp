@@ -1,6 +1,7 @@
 ﻿#include "qingying/pin/pin_window.hpp"
 
 #include <algorithm>
+#include "qingying/diagnostics/ui_message_boundary.h"
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -421,7 +422,7 @@ void PinWindow::handleDestroyed() {
 }
 
 LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
-                                       WPARAM wparam, LPARAM lparam) {
+                                       WPARAM wparam, LPARAM lparam) try {
   PinWindow* self = reinterpret_cast<PinWindow*>(
       GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -527,5 +528,6 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
 
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
+catch (...) { return recoverUiMessage(hwnd, message, wparam, lparam); }
 
 }  // namespace qingying

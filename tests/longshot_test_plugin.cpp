@@ -1,5 +1,8 @@
 ﻿#include "qingying/longshot/longshot_plugin_api.h"
 
+#include <atomic>
+#include <stdexcept>
+
 struct QingYingLongShotSessionV1 {
   int marker{0};
 };
@@ -8,10 +11,15 @@ namespace {
 
 QingYingLongShotSessionV1 g_session;
 bool g_cancelled = false;
+std::atomic<int> g_fault_stage{0};
+void fault(int stage) {
+  if (g_fault_stage.load() == stage) throw std::runtime_error("private plugin payload");
+}
 
 int32_t QINGYING_LONGSHOT_PLUGIN_CALL probe(
     void* /*plugin_context*/, const QingYingLongShotRequestV1* request,
     QingYingLongShotProbeResultV1* result) {
+  fault(1);
   if (request == nullptr || result == nullptr ||
       request->struct_size < sizeof(*request) ||
       result->struct_size < sizeof(*result)) {
@@ -25,6 +33,7 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL probe(
 int32_t QINGYING_LONGSHOT_PLUGIN_CALL open(
     void* /*plugin_context*/, const QingYingLongShotRequestV1* request,
     QingYingLongShotSessionV1** session) {
+  fault(2);
   if (request == nullptr || session == nullptr ||
       request->struct_size < sizeof(*request)) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
@@ -38,6 +47,7 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL resolve(
     QingYingLongShotSessionV1* session,
     const QingYingLongShotRequestV1* request,
     QingYingLongShotTargetV1* target) {
+  fault(3);
   if (session == nullptr || request == nullptr || target == nullptr ||
       request->struct_size < sizeof(*request) ||
       target->struct_size < sizeof(*target)) {
@@ -57,6 +67,7 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL scrollDown(
     QingYingLongShotSessionV1* session,
     const QingYingLongShotRequestV1* request,
     const QingYingLongShotTargetV1* target) {
+  fault(4);
   if (session == nullptr || request == nullptr || target == nullptr) {
     return QINGYING_LONGSHOT_STATUS_INVALID_ARGUMENT;
   }
@@ -70,15 +81,17 @@ int32_t QINGYING_LONGSHOT_PLUGIN_CALL queryScrollState(
     QingYingLongShotSessionV1* /*session*/,
     const QingYingLongShotTargetV1* /*target*/,
     QingYingLongShotScrollStateV1* /*state*/) {
+  fault(5);
   return QINGYING_LONGSHOT_STATUS_NOT_SUPPORTED;
 }
 
 void QINGYING_LONGSHOT_PLUGIN_CALL closeSession(
-    QingYingLongShotSessionV1* /*session*/) {}
+    QingYingLongShotSessionV1* /*session*/) { fault(6); }
 
-void QINGYING_LONGSHOT_PLUGIN_CALL shutdown(void* /*plugin_context*/) {}
+void QINGYING_LONGSHOT_PLUGIN_CALL shutdown(void* /*plugin_context*/) { fault(7); }
 
 void QINGYING_LONGSHOT_PLUGIN_CALL cancel(void* /*plugin_context*/) {
+  fault(8);
   g_cancelled = true;
 }
 
@@ -88,6 +101,7 @@ extern "C" QINGYING_LONGSHOT_PLUGIN_EXPORT int32_t
 QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
     const QingYingLongShotHostV1* host,
     QingYingLongShotPluginV1* plugin) {
+  fault(9);
   if (host == nullptr || plugin == nullptr ||
       host->struct_size < sizeof(*host) ||
       host->abi_version != QINGYING_LONGSHOT_HOST_ABI_VERSION_V1 ||
@@ -110,4 +124,9 @@ QINGYING_LONGSHOT_PLUGIN_CALL qingying_longshot_plugin_entry_v1(
   plugin->shutdown = &shutdown;
   plugin->cancel = &cancel;
   return QINGYING_LONGSHOT_STATUS_OK;
+}
+
+extern "C" QINGYING_LONGSHOT_PLUGIN_EXPORT void
+QINGYING_LONGSHOT_PLUGIN_CALL qingying_test_set_fault_stage(int stage) {
+  g_fault_stage.store(stage);
 }
