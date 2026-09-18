@@ -8,11 +8,44 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <string>
 #include <thread>
 #include <utility>
 
 namespace qingying {
+
+LongShotResultQuality LongShotOutcome::quality() const noexcept {
+  if (accepted_frames <= 0 || image.width <= 0 || image.height <= 0) {
+    return LongShotResultQuality::None;
+  }
+  const auto width = static_cast<std::size_t>(image.width);
+  const auto height = static_cast<std::size_t>(image.height);
+  if (height > std::numeric_limits<std::size_t>::max() / width ||
+      image.pixels.size() != width * height) {
+    return LongShotResultQuality::None;
+  }
+  return accepted_frames == 1 ? LongShotResultQuality::SingleFrame
+                             : LongShotResultQuality::VerifiedComposite;
+}
+
+bool LongShotOutcome::hasExportableResult() const noexcept {
+  return stop_reason != LongShotStopReason::NotStarted &&
+         stop_reason != LongShotStopReason::RequestRejected &&
+         stop_reason != LongShotStopReason::Cancelled &&
+         quality() != LongShotResultQuality::None;
+}
+
+bool LongShotOutcome::isComplete() const noexcept {
+  return hasExportableResult() &&
+         stop_reason == LongShotStopReason::ReachedBottom;
+}
+
+bool LongShotOutcome::isPartial() const noexcept {
+  return hasExportableResult() &&
+         quality() == LongShotResultQuality::VerifiedComposite &&
+         !isComplete();
+}
 
 const char* longShotFailureStageName(LongShotFailureStage stage) noexcept {
   switch (stage) {

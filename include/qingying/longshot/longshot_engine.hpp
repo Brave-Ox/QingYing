@@ -58,6 +58,49 @@ enum class LongShotFailureStage : std::uint8_t {
 
 const char* longShotFailureStageName(LongShotFailureStage stage) noexcept;
 
+// 图像质量和停止原因相互独立：失败也可能留下可靠图像。
+enum class LongShotResultQuality : std::uint8_t {
+  None,
+  SingleFrame,
+  VerifiedComposite,
+};
+
+enum class LongShotStopReason : std::uint8_t {
+  NotStarted,
+  RequestRejected,
+  ReachedBottom,
+  NoProgress,
+  UserStopped,
+  LimitReached,
+  MatchFailed,
+  InputUnavailable,
+  TargetInvalid,
+  CaptureFailed,
+  StitchFailed,
+  Cancelled,
+};
+
+// 内部 C++ 完成载荷，不属于 profile DLL 的 C ABI。image 只能包含已接受的
+// 帧；accepted_frames 不计重采或拒绝的帧。尺寸直接取 image，避免重复元数据。
+// C02 将捕获循环接入此模型，旧 ActionResult + Image 入口继续兼容。
+struct LongShotOutcome {
+  Image image;
+  int accepted_frames{0};
+  LongShotStopReason stop_reason{LongShotStopReason::NotStarted};
+  std::string strategy;
+  LongShotFailureStage failure_stage{LongShotFailureStage::None};
+  ActionResult diagnostic;
+
+  // 根据有效像素载荷和接受帧数推导质量，不根据 diagnostic.ok 推断。
+  LongShotResultQuality quality() const noexcept;
+  // 取消、未启动和请求被拒绝都不能交付结果，即使仍持有内部图像。
+  bool hasExportableResult() const noexcept;
+  // 只有确定到底才称为完整；无进展、主动停止和限额结束都不证明完整。
+  bool isComplete() const noexcept;
+  // 只有首帧时仍称为普通截图，不称为部分长图。
+  bool isPartial() const noexcept;
+};
+
 class LongShotEngine {
  public:
   explicit LongShotEngine(CaptureEngine& capture, LongShotLimits limits = {});

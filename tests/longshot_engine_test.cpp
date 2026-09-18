@@ -157,6 +157,85 @@ TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
   EXPECT_EQ(limits.max_output_height, 30000);
 }
 
+TEST(LongShotOutcomeTest, DefaultAndNoImageFailureHaveNoResult) {
+  LongShotOutcome outcome;
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::NotStarted);
+  EXPECT_EQ(outcome.quality(), LongShotResultQuality::None);
+  EXPECT_FALSE(outcome.hasExportableResult());
+  outcome.stop_reason = LongShotStopReason::CaptureFailed;
+  EXPECT_FALSE(outcome.hasExportableResult());
+  EXPECT_FALSE(outcome.isComplete());
+  EXPECT_FALSE(outcome.isPartial());
+}
+
+TEST(LongShotOutcomeTest, SingleFrameRemainsOrdinaryScreenshotOnNoProgress) {
+  LongShotOutcome outcome;
+  outcome.image = makeStrip(20, 32, 0);
+  outcome.accepted_frames = 1;
+  outcome.stop_reason = LongShotStopReason::NoProgress;
+  EXPECT_EQ(outcome.quality(), LongShotResultQuality::SingleFrame);
+  EXPECT_TRUE(outcome.hasExportableResult());
+  EXPECT_FALSE(outcome.isComplete());
+  EXPECT_FALSE(outcome.isPartial());
+  outcome.stop_reason = LongShotStopReason::ReachedBottom;
+  EXPECT_TRUE(outcome.isComplete());
+}
+
+TEST(LongShotOutcomeTest, InterruptedCompositeIsExportableButNotComplete) {
+  const LongShotStopReason reasons[] = {
+      LongShotStopReason::NoProgress, LongShotStopReason::UserStopped,
+      LongShotStopReason::LimitReached, LongShotStopReason::MatchFailed,
+      LongShotStopReason::InputUnavailable, LongShotStopReason::TargetInvalid,
+      LongShotStopReason::CaptureFailed, LongShotStopReason::StitchFailed};
+  LongShotOutcome outcome;
+  outcome.image = makeStrip(20, 48, 0);
+  outcome.accepted_frames = 2;
+  outcome.strategy = "test.scripted";
+  outcome.failure_stage = LongShotFailureStage::OverlapDetection;
+  outcome.diagnostic.ok = false;
+  for (const auto reason : reasons) {
+    SCOPED_TRACE(static_cast<int>(reason));
+    outcome.stop_reason = reason;
+    EXPECT_EQ(outcome.quality(), LongShotResultQuality::VerifiedComposite);
+    EXPECT_TRUE(outcome.hasExportableResult());
+    EXPECT_TRUE(outcome.isPartial());
+    EXPECT_FALSE(outcome.isComplete());
+  }
+  outcome.stop_reason = LongShotStopReason::ReachedBottom;
+  EXPECT_TRUE(outcome.isComplete());
+  EXPECT_FALSE(outcome.isPartial());
+}
+
+TEST(LongShotOutcomeTest, CancellationNeverExportsRetainedImage) {
+  LongShotOutcome outcome;
+  outcome.image = makeStrip(20, 48, 0);
+  outcome.accepted_frames = 2;
+  for (const auto reason : {LongShotStopReason::Cancelled,
+                            LongShotStopReason::NotStarted,
+                            LongShotStopReason::RequestRejected}) {
+    outcome.stop_reason = reason;
+    EXPECT_EQ(outcome.quality(), LongShotResultQuality::VerifiedComposite);
+    EXPECT_FALSE(outcome.hasExportableResult());
+    EXPECT_FALSE(outcome.isComplete());
+    EXPECT_FALSE(outcome.isPartial());
+  }
+}
+
+TEST(LongShotOutcomeTest, MalformedPayloadCannotBecomeExportable) {
+  LongShotOutcome outcome;
+  outcome.stop_reason = LongShotStopReason::ReachedBottom;
+  outcome.image = makeStrip(20, 32, 0);
+  EXPECT_EQ(outcome.quality(), LongShotResultQuality::None);
+  outcome.accepted_frames = -1;
+  EXPECT_FALSE(outcome.hasExportableResult());
+  outcome.accepted_frames = 2;
+  outcome.image.pixels.pop_back();
+  EXPECT_EQ(outcome.quality(), LongShotResultQuality::None);
+  EXPECT_FALSE(outcome.isComplete());
+  outcome.image.width = -20;
+  EXPECT_FALSE(outcome.hasExportableResult());
+}
+
 TEST(LongShotLimitsTest, InitialPairRequiresAtLeastTwoFrames) {
   LongShotLimits limits;
   limits.max_frames = 1;
