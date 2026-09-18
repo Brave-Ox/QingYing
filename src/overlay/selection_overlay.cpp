@@ -45,6 +45,7 @@ enum class DragKind { None, Create, Resize, Move };
 // SelectionController 等 UI 状态通过窗口属性（WindowLongPtr）附加到窗口，
 // 供 WndProc 在处理消息时访问，避免全局/静态可变量。
 struct OverlayWindowData {
+  OverlayRenderer renderer;
   SelectionController controller;
   SelectionCallback callback;
   SelectionClosedCallback closed_callback;
@@ -361,6 +362,7 @@ void releaseImagePayload(OverlayWindowData* data) noexcept {
     return;
   }
   data->background.reset();
+  data->renderer.reset();
   data->longshot_preview = Image{};
 }
 
@@ -1063,7 +1065,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   const std::uint64_t render_begin_ms =
       diagnostics_enabled ? GetTickCount64() : 0;
   const bool rendered =
-      OverlayRenderer::render(hwnd, data->screen, render_state);
+      data->renderer.render(hwnd, data->screen, render_state);
   if (diagnostics_enabled) {
     ++data->smart_region_overlay_render_count;
     static_cast<void>(

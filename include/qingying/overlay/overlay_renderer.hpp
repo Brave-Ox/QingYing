@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "qingying/action/image.hpp"
@@ -46,19 +47,29 @@ struct OverlayRenderState {
 
 class OverlayRenderer {
  public:
+  OverlayRenderer();
+  ~OverlayRenderer();
+  OverlayRenderer(const OverlayRenderer&) = delete;
+  OverlayRenderer& operator=(const OverlayRenderer&) = delete;
+  void reset() noexcept;
   // Compose the overlay frame and present it in a layered window.
-  static bool render(HWND hwnd, const coord::VirtualScreenRect& screen,
+  bool render(HWND hwnd, const coord::VirtualScreenRect& screen,
                      const OverlayRenderState& state);
 
   // Pure pixel composition used by render() and by off-screen tests. On
-  // failure, out_pixels is left unchanged.
+  // failure, out_pixels is left unchanged. Optional dimmed pixels must be the
+  // precomposed full-screen mask of the same immutable background.
   static bool renderPixels(int width, int height,
                            const OverlayRenderState& state,
-                           std::vector<std::uint32_t>& out_pixels);
+                           std::vector<std::uint32_t>& out_pixels,
+                           const std::vector<std::uint32_t>* dimmed = nullptr);
 
   // Build the bounded nearest-neighbour preview shown during long-shot
   // capture. Empty input returns an empty image.
   static Image makeLongShotPreviewImage(const Image& source);
+ private:
+  struct Resources;
+  std::unique_ptr<Resources> resources_;
 };
 
 }  // namespace qingying

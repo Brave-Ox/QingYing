@@ -274,3 +274,74 @@ TEST(OverlayRendererTest, KeepsLongShotPreviewPanelAtStablePosition) {
 }
 
 }  // namespace qingying
+
+namespace qingying {
+TEST(OverlayRendererCacheTest, CachedBackgroundMatchesUncachedAcrossModes) {
+  Image background = makeSolidImage(100, 80, 0xFF3864A0u);
+  for (std::size_t i = 0; i < background.pixels.size(); ++i)
+    background.pixels[i] = 0xFF000000u | static_cast<std::uint32_t>(i * 7919u & 0xFFFFFFu);
+  Image empty, preview = makeSolidImage(8, 20, 0xFF123456u);
+  OverlayClientRect none{}, selection{10, 12, 40, 30}, hover{20, 20, 30, 20};
+  OverlayRenderState base(none, none, background, empty, OverlayPhase::Sniffing,
+                          false, 4, false, false);
+  std::vector<std::uint32_t> dimmed, expected, actual;
+  ASSERT_TRUE(OverlayRenderer::renderPixels(100, 80, base, dimmed));
+  for (bool passthrough : {false, true}) {
+    for (bool show_hover : {false, true}) {
+      for (bool handles : {false, true}) {
+        for (bool has_preview : {false, true}) {
+          OverlayRenderState state(selection, hover, background,
+              has_preview ? preview : empty,
+              show_hover ? OverlayPhase::Sniffing : OverlayPhase::Selected,
+              handles, 4, show_hover, passthrough);
+          ASSERT_TRUE(OverlayRenderer::renderPixels(100, 80, state, expected));
+          ASSERT_TRUE(OverlayRenderer::renderPixels(100, 80, state, actual, &dimmed));
+          EXPECT_EQ(actual, expected);
+        }
+      }
+    }
+  }
+  dimmed.pop_back();
+  actual = {123u};
+  EXPECT_FALSE(OverlayRenderer::renderPixels(100, 80, base, actual, &dimmed));
+  EXPECT_EQ(actual, std::vector<std::uint32_t>{123u});
+}
+
+TEST(OverlayRendererCacheTest, ReusesGdiResourcesAndReleasesBudgetOnReset) {
+  HWND window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+      L"STATIC", L"", WS_POPUP, 0, 0, 100, 80, nullptr, nullptr,
+      GetModuleHandleW(nullptr), nullptr);
+  ASSERT_NE(window, nullptr);
+  struct WindowCleanup {
+    HWND window;
+    ~WindowCleanup() { DestroyWindow(window); }
+  } cleanup{window};
+  Image background = makeSolidImage(100, 80, 0xFF3864A0u), empty;
+  OverlayClientRect selection{10, 12, 40, 30}, hover{};
+  coord::VirtualScreenRect screen{0, 0, 100, 80};
+  OverlayRenderState state(selection, hover, background, empty,
+                          OverlayPhase::Selected, true, 4, false, false);
+  auto budget = ImageMemoryBudget::global();
+  const auto before = budget.snapshot().used_bytes;
+  OverlayRenderer renderer;
+  ASSERT_TRUE(renderer.render(window, screen, state));
+  const auto retained = budget.snapshot().used_bytes;
+  EXPECT_EQ(retained - before, 100u * 80u * 4u * 3u);
+  const auto objects = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+  for (int i = 0; i < 20; ++i) {
+    selection.x = 10 + i;
+    ASSERT_TRUE(renderer.render(window, screen, state));
+    ASSERT_TRUE(renderer.render(window, screen, state));
+    EXPECT_EQ(budget.snapshot().used_bytes, retained);
+    EXPECT_EQ(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), objects);
+  }
+  // Invalid HWND must fail, without treating a failed submission as cached.
+  EXPECT_FALSE(renderer.render(reinterpret_cast<HWND>(1), screen, state));
+  ASSERT_TRUE(renderer.render(window, screen, state));
+  renderer.reset();
+  EXPECT_EQ(budget.snapshot().used_bytes, before);
+  ASSERT_TRUE(renderer.render(window, screen, state));
+  renderer.reset();
+  EXPECT_EQ(budget.snapshot().used_bytes, before);
+}
+} // namespace qingying

@@ -11,6 +11,7 @@ namespace qingying {
 
 namespace {
 
+constexpr std::uint32_t kFullscreenMaskPixel = 0x59000000u;
 constexpr std::uint32_t kHandlePixel = 0xFFFFFFFFu;  // 手柄：不透明白
 constexpr std::uint32_t kHoverPixel = 0xFF00B4FFu;   // 窗口吸附悬停高亮：亮蓝
 constexpr std::uint32_t kHoverGlowPixel = 0x70204C70u;
@@ -44,14 +45,6 @@ struct DibDeleter {
   }
 };
 
-// GetDC 的 HDC RAII：ReleaseDC。
-struct ScreenHdcDeleter {
-  void operator()(HDC hdc) const noexcept {
-    if (hdc != nullptr) {
-      ReleaseDC(nullptr, hdc);
-    }
-  }
-};
 
 // 像素缓冲写点（越界跳过）。
 void setOverlayPixel(std::vector<std::uint32_t>& pixels, int width, int height,
@@ -388,14 +381,15 @@ void drawLongShotPreview(std::vector<std::uint32_t>& pixels, int width,
 
 }  // namespace
 
-bool OverlayRenderer::renderPixels(
+namespace {
+bool composeFrame(
     int width, int height, const OverlayRenderState& state,
-    std::vector<std::uint32_t>& out_pixels) {
+    std::vector<std::uint32_t>& pixels,
+    const std::vector<std::uint32_t>* dimmed) {
   if (width <= 0 || height <= 0) {
     return false;
   }
 
-  std::vector<std::uint32_t> pixels;
   mask::renderFullscreenMask(width, height, state.selection, pixels);
   const std::size_t num_pixels = static_cast<std::size_t>(width) *
                                  static_cast<std::size_t>(height);
@@ -444,78 +438,125 @@ bool OverlayRenderer::renderPixels(
   // 被包含在截图里，在遮罩界面中保持可见，不再被实时 topmost 窗口物理盖住。
   // 无背景（截屏失败）时退回纯遮罩，保留原 premultiplied alpha 行为。
   if (!state.capture_passthrough && !state.background.empty()) {
-    std::vector<std::uint32_t> composed;
-    if (!mask::composeBackground(state.background, pixels, composed)) {
-      return false;
+    if (state.background.pixels.size() != pixels.size() ||
+        (dimmed && dimmed->size() != pixels.size())) return false;
+    for (std::size_t i = 0; i < pixels.size(); ++i) {
+      const auto mk = pixels[i];
+      if (dimmed && mk == kFullscreenMaskPixel) {
+        pixels[i] = (*dimmed)[i];
+      } else {
+        const auto bg = state.background.pixels[i];
+        const auto inv = 255u - (mk >> 24);
+        const auto b = (bg & 255u) * inv / 255u + (mk & 255u);
+        const auto g = ((bg >> 8) & 255u) * inv / 255u + ((mk >> 8) & 255u);
+        const auto red = ((bg >> 16) & 255u) * inv / 255u + ((mk >> 16) & 255u);
+        pixels[i] = 0xFF000000u | (red << 16) | (g << 8) | b;
+      }
     }
-    pixels.swap(composed);
   }
+  return true;
+}
+} // namespace
 
+bool OverlayRenderer::renderPixels(
+    int width, int height, const OverlayRenderState& state,
+    std::vector<std::uint32_t>& out_pixels,
+    const std::vector<std::uint32_t>* dimmed) {
+  std::vector<std::uint32_t> pixels;
+  if (!composeFrame(width, height, state, pixels, dimmed)) return false;
   out_pixels.swap(pixels);
   return true;
 }
 
+struct OverlayRenderer::Resources {
+  ImageMemoryBudget::Token memory;
+  std::unique_ptr<HDC__, CompatibleDcDeleter> dc;
+  std::unique_ptr<HBITMAP__, DibDeleter> dib;
+  HGDIOBJ old_bitmap{nullptr};
+  void* bits{nullptr};
+  int width{0}, height{0};
+  const Image* background{nullptr};
+  std::vector<std::uint32_t> dimmed, pixels;
+  HWND hwnd{nullptr};
+  int x{0}, y{0};
+  OverlayClientRect selection, hover;
+  OverlayPhase phase{OverlayPhase::Sniffing};
+  bool handles{false}, show_hover{false}, passthrough{false}, committed{false};
+  int radius{0};
+  ~Resources() {
+    if (old_bitmap != nullptr) SelectObject(dc.get(), old_bitmap);
+  }
+};
+
+OverlayRenderer::OverlayRenderer() = default;
+OverlayRenderer::~OverlayRenderer() = default;
+void OverlayRenderer::reset() noexcept { resources_.reset(); }
+
 bool OverlayRenderer::render(HWND hwnd, const coord::VirtualScreenRect& screen,
                              const OverlayRenderState& state) {
-  if (hwnd == nullptr || screen.width <= 0 || screen.height <= 0) {
-    return false;
+  if (hwnd == nullptr || screen.width <= 0 || screen.height <= 0) return false;
+  if (!resources_ || resources_->width != screen.width ||
+      resources_->height != screen.height ||
+      resources_->background != &state.background) {
+    reset();
+    auto next = std::make_unique<Resources>();
+    next->memory = ImageMemoryBudget::global().reserve(
+        static_cast<std::uint64_t>(screen.width) * screen.height * 4 * 3,
+        ImageMemoryKind::InFlight);
+    if (!next->memory) return false;
+    next->dc.reset(CreateCompatibleDC(nullptr));
+    if (!next->dc) return false;
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = screen.width;
+    bmi.bmiHeader.biHeight = -screen.height;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    next->dib.reset(CreateDIBSection(next->dc.get(), &bmi, DIB_RGB_COLORS,
+                                    &next->bits, nullptr, 0));
+    if (!next->dib || !next->bits) return false;
+    const HGDIOBJ old = SelectObject(next->dc.get(), next->dib.get());
+    if (old == nullptr || old == HGDI_ERROR) return false;
+    next->old_bitmap = old;
+    next->width = screen.width;
+    next->height = screen.height;
+    next->background = &state.background;
+    if (!state.background.empty()) {
+      mask::renderFullscreenMask(screen.width, screen.height, {}, next->pixels);
+      if (!mask::composeBackground(state.background, next->pixels, next->dimmed))
+        return false;
+    }
+    resources_ = std::move(next);
   }
+  auto& r = *resources_;
+  // Frozen backgrounds are immutable for the lifetime of an overlay session.
+  // Preview images can change in place, so never suppress their submissions.
+  if (r.committed && state.longshot_preview.empty() &&
+      r.hwnd == hwnd && r.x == screen.x && r.y == screen.y &&
+      r.selection == state.selection && r.hover == state.hover_rect &&
+      r.phase == state.phase && r.handles == state.show_handles &&
+      r.radius == state.handle_radius && r.show_hover == state.show_hover &&
+      r.passthrough == state.capture_passthrough) return true;
 
-  std::unique_ptr<HDC__, ScreenHdcDeleter> screen_dc(GetDC(nullptr));
-  if (screen_dc == nullptr) {
-    return false;
-  }
-  std::unique_ptr<HDC__, CompatibleDcDeleter> mem_dc(
-      CreateCompatibleDC(screen_dc.get()));
-  if (mem_dc == nullptr) {
-    return false;
-  }
-
-  auto render_memory = ImageMemoryBudget::global().reserve(
-      static_cast<std::uint64_t>(screen.width) * screen.height * 4 * 3,
-      ImageMemoryKind::InFlight);
-  if (!render_memory) return false;
-  BITMAPINFO bmi{};
-  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  bmi.bmiHeader.biWidth = screen.width;
-  bmi.bmiHeader.biHeight = -screen.height;  // 顶向下
-  bmi.bmiHeader.biPlanes = 1;
-  bmi.bmiHeader.biBitCount = 32;
-  bmi.bmiHeader.biCompression = BI_RGB;
-
-  void* dib_bits = nullptr;
-  std::unique_ptr<HBITMAP__, DibDeleter> dib(CreateDIBSection(
-      mem_dc.get(), &bmi, DIB_RGB_COLORS, &dib_bits, nullptr, 0));
-  if (dib == nullptr || dib_bits == nullptr) {
-    return false;
-  }
-
-  std::vector<std::uint32_t> pixels;
-  if (!renderPixels(screen.width, screen.height, state, pixels)) {
-    return false;
-  }
-
-  // DIB 与像素缓冲同布局（BGRA，顶向下），直接拷贝。
-  std::copy(pixels.begin(), pixels.end(),
-            reinterpret_cast<std::uint32_t*>(dib_bits));
-
-  POINT dst{screen.x, screen.y};
+  r.committed = false;
+  if (!composeFrame(screen.width, screen.height, state, r.pixels,
+                    r.dimmed.empty() ? nullptr : &r.dimmed)) return false;
+  std::copy(r.pixels.begin(), r.pixels.end(),
+            reinterpret_cast<std::uint32_t*>(r.bits));
+  POINT dst{screen.x, screen.y}, src{0, 0};
   SIZE size{screen.width, screen.height};
-  POINT pt_src{0, 0};
-  BLENDFUNCTION blend{};
-  blend.BlendOp = AC_SRC_OVER;
-  blend.SourceConstantAlpha = 255;
-  blend.AlphaFormat = AC_SRC_ALPHA;  // per-pixel alpha（premultiplied）
-
-  const HGDIOBJ old_bitmap = SelectObject(mem_dc.get(), dib.get());
-  if (old_bitmap == nullptr || old_bitmap == HGDI_ERROR) {
-    return false;
-  }
-  const BOOL ok = UpdateLayeredWindow(hwnd, screen_dc.get(), &dst, &size,
-                                      mem_dc.get(), &pt_src, 0, &blend,
-                                      ULW_ALPHA);
-  SelectObject(mem_dc.get(), old_bitmap);
-  return ok != FALSE;
+  BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+  if (!UpdateLayeredWindow(hwnd, nullptr, &dst, &size, r.dc.get(), &src,
+                           0, &blend, ULW_ALPHA)) return false;
+  r.hwnd = hwnd;
+  r.x = screen.x; r.y = screen.y;
+  r.selection = state.selection; r.hover = state.hover_rect;
+  r.phase = state.phase; r.handles = state.show_handles;
+  r.radius = state.handle_radius; r.show_hover = state.show_hover;
+  r.passthrough = state.capture_passthrough;
+  r.committed = state.longshot_preview.empty();
+  return true;
 }
 
 Image OverlayRenderer::makeLongShotPreviewImage(const Image& source) {
