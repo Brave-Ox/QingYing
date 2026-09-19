@@ -14,6 +14,46 @@ constexpr UINT kScrollDispatchTimeoutMs = 500;
 
 }  // 匿名命名空间
 
+bool windowBelongsToOwner(std::uintptr_t owner_window,
+                          std::uintptr_t target_window) noexcept {
+  const HWND owner = reinterpret_cast<HWND>(owner_window);
+  const HWND target = reinterpret_cast<HWND>(target_window);
+  return owner != nullptr && target != nullptr &&
+         (owner == target || IsChild(owner, target));
+}
+
+bool windowClientScreenRect(std::uintptr_t window,
+                            ScreenPhysicalRect& out) noexcept {
+  out = {};
+  const HWND target = reinterpret_cast<HWND>(window);
+  if (target == nullptr || !IsWindow(target)) return false;
+  RECT client{};
+  if (!GetClientRect(target, &client)) return false;
+  POINT top_left{client.left, client.top};
+  POINT bottom_right{client.right, client.bottom};
+  if (!ClientToScreen(target, &top_left) ||
+      !ClientToScreen(target, &bottom_right)) {
+    return false;
+  }
+  const auto width = static_cast<std::int64_t>(bottom_right.x) - top_left.x;
+  const auto height = static_cast<std::int64_t>(bottom_right.y) - top_left.y;
+  if (width <= 0 || height <= 0 ||
+      width > (std::numeric_limits<int>::max)() ||
+      height > (std::numeric_limits<int>::max)()) {
+    return false;
+  }
+  out = {top_left.x, top_left.y, static_cast<int>(width),
+         static_cast<int>(height)};
+  return true;
+}
+
+std::uint32_t windowProcessId(std::uintptr_t window) noexcept {
+  DWORD process_id = 0;
+  const HWND target = reinterpret_cast<HWND>(window);
+  if (target != nullptr) GetWindowThreadProcessId(target, &process_id);
+  return static_cast<std::uint32_t>(process_id);
+}
+
 bool sendWheelDown(const LongShotRequest& request,
                    const LongShotProfileResult& profile) {
   const HWND scroll_target = reinterpret_cast<HWND>(profile.scroll_target);

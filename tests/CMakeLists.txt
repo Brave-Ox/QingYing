@@ -82,6 +82,7 @@ add_executable(qingying_tests
   browser_longshot_profile_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
+  generic_scroll_target_resolver_test.cpp
   window_detector_test.cpp
   window_resolver_test.cpp
   smart_region_detector_test.cpp
