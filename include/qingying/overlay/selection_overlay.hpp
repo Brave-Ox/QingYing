@@ -57,6 +57,7 @@ class SelectionOverlay {
   // 设置新会话时释放旧预览载荷；已排队的旧 token 不再显示。
   void setLongShotSession(std::uint64_t session_id) noexcept;
   bool postLongShotFinished(bool success);
+  bool postLongShotRecoverable(LongShotRecoveryState recovery);
 
   bool isVisible() const noexcept;
 

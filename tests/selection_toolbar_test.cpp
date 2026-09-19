@@ -1,7 +1,9 @@
-#include "qingying/overlay/selection_toolbar.hpp"
+﻿#include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/ui/shortcut_types.hpp"
 
 #include <gtest/gtest.h>
+
+#include "qingying/ui/toolbar_model.h"
 
 namespace qingying {
 
@@ -99,6 +101,64 @@ TEST(SelectionToolbarTest, FinishingPhaseDisablesEveryCommand) {
   for (const SelectionToolbarItemModel& item : items) {
     EXPECT_FALSE(item.enabled);
   }
+}
+
+TEST(SelectionToolbarTest, RecoverableWithoutImageDisablesResultAcceptance) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::None, LongShotRecoveryCause::InputUnavailable};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotRecoverable, recovery);
+
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::RetryLongShot).enabled);
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::AdjustLongShotSelection).enabled);
+  EXPECT_FALSE(
+      itemFor(items, SelectionToolbarCommand::KeepLongShotFrame).enabled);
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::CancelLongShot).enabled);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotRecoverable,
+                                   recovery),
+            SelectionToolbarStatus::Recoverable);
+}
+
+TEST(SelectionToolbarTest, SingleFrameIsPresentedAsOrdinaryCapture) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::SingleFrame, LongShotRecoveryCause::NoProgress};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotResultPending, recovery);
+
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::KeepLongShotFrame).enabled);
+  EXPECT_EQ(items[2].command, SelectionToolbarCommand::KeepLongShotFrame);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotResultPending,
+                                   recovery),
+            SelectionToolbarStatus::SingleFramePending);
+}
+
+TEST(SelectionToolbarTest, VerifiedCompositeEnablesPartialResultAcceptance) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::PartialResult,
+      LongShotRecoveryCause::MatchFailed};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotResultPending, recovery);
+
+  EXPECT_TRUE(itemFor(items,
+                      SelectionToolbarCommand::AcceptLongShotPartial)
+                  .enabled);
+  EXPECT_EQ(items[2].command,
+            SelectionToolbarCommand::AcceptLongShotPartial);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotResultPending,
+                                   recovery),
+            SelectionToolbarStatus::PartialResultPending);
+}
+
+TEST(SelectionToolbarTest, LongShotLifecycleHasDistinctStatusTextStates) {
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotRunning),
+            SelectionToolbarStatus::Running);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotPaused),
+            SelectionToolbarStatus::Paused);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotFinishing),
+            SelectionToolbarStatus::Finishing);
 }
 
 TEST(SelectionToolbarTest, ShortcutsMatchEnabledToolbarCommands)
@@ -231,6 +291,29 @@ TEST(SelectionToolbarTest, InitialAndHoverFramesUseAtomicLayeredPresentation)
 
   toolbar.hide();
   EXPECT_FALSE(toolbar.visible());
+}
+
+TEST(SelectionToolbarTest, StatusToolbarUsesSideSpaceBeforeCoveringSelection)
+{
+  SelectionToolbar toolbar;
+  const SelectionToolbarPlacement placement{
+      400, 10, 400, 980, 0, 0, 1200, 1000};
+  ASSERT_TRUE(toolbar.show(nullptr, placement,
+                           OverlayPhase::LongShotRecoverable,
+                           [](SelectionToolbarCommand) {},
+                           {LongShotRecoveryResult::None,
+                            LongShotRecoveryCause::InputUnavailable}));
+
+  const HWND hwnd = findCurrentThreadToolbarWindow();
+  ASSERT_NE(hwnd, nullptr);
+  RECT rect{};
+  ASSERT_TRUE(GetWindowRect(hwnd, &rect));
+  EXPECT_GT(rect.bottom - rect.top,
+            modernToolbarHeight(DefaultModernToolbarMetrics));
+  EXPECT_TRUE(rect.left >= placement.selection_x + placement.selection_width ||
+              rect.right <= placement.selection_x);
+
+  toolbar.hide();
 }
 
 }  // namespace qingying

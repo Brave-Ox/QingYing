@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cwchar>
+#include <vector>
 
 #include "qingying/app/app_messages.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
@@ -64,6 +65,11 @@ void dispatchCurrentThreadMessages()
   }
 }
 
+void dispatchPendingMessages()
+{
+  dispatchCurrentThreadMessages();
+}
+
 void selectRegion(HWND hwnd)
 {
   SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(20, 30));
@@ -98,7 +104,6 @@ class ScopedThreadHotkey
   int m_hotkey_id{0};
   bool m_registered{false};
 };
-
 TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   SelectionOverlay overlay;
   bool callback_invoked = false;
@@ -317,6 +322,39 @@ TEST(SelectionOverlayTest, SessionChangeDiscardsOldPreviewAndRejectsOldProducer)
   EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline + 4);
   overlay.hide();
   EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline);
+}
+
+TEST(SelectionOverlayTest, RecoverableStatusStaysNonModalUntilUserCancels) {
+  SelectionOverlay overlay;
+  SelectionIntent initial;
+  initial.cancelled = false;
+  initial.x = 20;
+  initial.y = 20;
+  initial.width = 160;
+  initial.height = 120;
+  std::vector<LongShotControl> controls;
+  ASSERT_TRUE(overlay.show(
+      Image{}, [](const SelectionIntent&) {},
+      [&controls](LongShotControl control) { controls.push_back(control); },
+      initial));
+  dispatchPendingMessages();
+
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  SendMessageW(hwnd, WM_HOTKEY, SelectionToolbarLongShotHotkeyId, 0);
+  ASSERT_TRUE(overlay.postLongShotRecoverable(
+      {LongShotRecoveryResult::None,
+       LongShotRecoveryCause::InputUnavailable}));
+  dispatchPendingMessages();
+
+  EXPECT_TRUE(overlay.isVisible());
+  EXPECT_TRUE(controls.empty());
+
+  SendMessageW(hwnd, WM_HOTKEY, 2, 0);
+  dispatchPendingMessages();
+  ASSERT_EQ(controls.size(), 1u);
+  EXPECT_EQ(controls.front(), LongShotControl::Cancel);
+  EXPECT_FALSE(overlay.isVisible());
 }
 
 TEST(SelectionOverlayTest, WindowDestroyedBeforeOwnerIsSafe) {

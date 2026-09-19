@@ -3,6 +3,7 @@
 #include "qingying/action/image.hpp"
 #include "qingying/action/action_result.hpp"
 #include "qingying/longshot/longshot_engine.hpp"
+#include "qingying/overlay/selection_types.h"
 
 #include <Windows.h>
 
@@ -61,6 +62,8 @@ struct SelectionOverlayLongShotPreviewMessage {
 
 struct SelectionOverlayLongShotFinishedMessage {
   bool success{false};
+  bool recoverable{false};
+  LongShotRecoveryState recovery;
 };
 
 namespace HotkeyIds {
