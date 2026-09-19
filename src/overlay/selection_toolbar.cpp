@@ -40,7 +40,8 @@ SelectionToolbarItems buildRecoveryItems(
 }  // namespace
 
 SelectionToolbarItems buildSelectionToolbarItems(
-    OverlayPhase phase, LongShotRecoveryState recovery) noexcept {
+    OverlayPhase phase, LongShotRecoveryState recovery,
+    LongShotResultNotice) noexcept {
   if (isRecoveryPhase(phase)) {
     return buildRecoveryItems(recovery);
   }
@@ -75,7 +76,12 @@ SelectionToolbarItems buildSelectionToolbarItems(
 }
 
 SelectionToolbarStatus selectionToolbarStatus(
-    OverlayPhase phase, LongShotRecoveryState recovery) noexcept {
+    OverlayPhase phase, LongShotRecoveryState recovery,
+    LongShotResultNotice notice) noexcept {
+  if (phase == OverlayPhase::Selected &&
+      notice == LongShotResultNotice::CopyFailed) {
+    return SelectionToolbarStatus::CopyFailed;
+  }
   switch (phase) {
     case OverlayPhase::LongShotRunning:
       return SelectionToolbarStatus::Running;
@@ -171,6 +177,8 @@ const wchar_t* statusText(SelectionToolbarStatus status) noexcept {
       return L"\x4EC5\x4FDD\x7559\x9996\x5E27\xFF0C\x53EF\x4F5C\x4E3A\x666E\x901A\x622A\x56FE";
     case SelectionToolbarStatus::PartialResultPending:
       return L"\x672A\x5B8C\x6574\xFF0C\x5DF2\x4FDD\x7559\x53EF\x9760\x7684\x957F\x56FE\x5185\x5BB9";
+    case SelectionToolbarStatus::CopyFailed:
+      return L"\x5DF2\x4FDD\x7559\x7ED3\x679C\xFF0C\x590D\x5236\x5931\x8D25\xFF0C\x53EF\x91CD\x8BD5";
     case SelectionToolbarStatus::None:
       return L"";
   }
@@ -235,11 +243,12 @@ struct SelectionToolbar::Impl {
   int divider_x{0};
   OverlayPhase phase{OverlayPhase::Sniffing};
   LongShotRecoveryState recovery;
+  LongShotResultNotice notice{LongShotResultNotice::None};
   SelectionToolbarPlacement placement;
   CommandCallback callback;
 
   int statusHeight() const noexcept {
-    return selectionToolbarStatus(phase, recovery) ==
+    return selectionToolbarStatus(phase, recovery, notice) ==
                    SelectionToolbarStatus::None
                ? 0
                : kStatusRowHeight;
@@ -311,7 +320,7 @@ struct SelectionToolbar::Impl {
                   (height - statusHeight() - metrics.item_size) / 2;
     int x = metrics.bar_padding;
     const SelectionToolbarItems model_items =
-        buildSelectionToolbarItems(phase, recovery);
+        buildSelectionToolbarItems(phase, recovery, notice);
     for (std::size_t i = 0; i < items.size(); ++i) {
       items[i].model = model_items[i];
       items[i].rect = {x, y, x + metrics.item_size, y + metrics.item_size};
@@ -351,11 +360,13 @@ struct SelectionToolbar::Impl {
   }
 
   void refresh(OverlayPhase next_phase,
-               LongShotRecoveryState next_recovery = {}) {
+               LongShotRecoveryState next_recovery = {},
+               LongShotResultNotice next_notice = LongShotResultNotice::None) {
     phase = next_phase;
     recovery = next_recovery;
+    notice = next_notice;
     const SelectionToolbarItems model_items =
-        buildSelectionToolbarItems(phase, recovery);
+        buildSelectionToolbarItems(phase, recovery, notice);
     for (std::size_t i = 0; i < items.size(); ++i) {
       items[i].model = model_items[i];
     }
@@ -412,7 +423,7 @@ struct SelectionToolbar::Impl {
                        client.top + statusHeight() + divider_pad,
                        client.bottom - divider_pad);
     const SelectionToolbarStatus status =
-        selectionToolbarStatus(phase, recovery);
+        selectionToolbarStatus(phase, recovery, notice);
     if (status != SelectionToolbarStatus::None) {
       RECT status_rect{DefaultModernToolbarMetrics.bar_padding, 4,
                        client.right - DefaultModernToolbarMetrics.bar_padding,
@@ -559,7 +570,8 @@ SelectionToolbar::~SelectionToolbar() { hide(); }
 bool SelectionToolbar::show(HWND owner_window,
                             const SelectionToolbarPlacement& placement,
                             OverlayPhase phase, CommandCallback callback,
-                            LongShotRecoveryState recovery) {
+                            LongShotRecoveryState recovery,
+                            LongShotResultNotice notice) {
   hide();
   if (!impl_->registerWindowClass()) {
     return false;
@@ -567,6 +579,7 @@ bool SelectionToolbar::show(HWND owner_window,
 
   impl_->phase = phase;
   impl_->recovery = recovery;
+  impl_->notice = notice;
   impl_->placement = placement;
   impl_->callback = std::move(callback);
 
@@ -602,8 +615,9 @@ bool SelectionToolbar::show(HWND owner_window,
 }
 
 void SelectionToolbar::update(OverlayPhase phase,
-                              LongShotRecoveryState recovery) {
-  impl_->refresh(phase, recovery);
+                              LongShotRecoveryState recovery,
+                              LongShotResultNotice notice) {
+  impl_->refresh(phase, recovery, notice);
 }
 
 void SelectionToolbar::hide() {

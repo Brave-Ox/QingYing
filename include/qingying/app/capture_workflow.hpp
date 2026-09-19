@@ -36,6 +36,24 @@ CaptureWorkflowRoute decideCaptureWorkflowRoute(
     bool longshot_result_ready,
     bool annotated_result_ready = false) noexcept;
 
+enum class LongShotWorkflowDisposition {
+  Discard,
+  PublishAndCopy,
+  AwaitConfirmation,
+};
+
+struct LongShotWorkflowDecision {
+  LongShotWorkflowDisposition disposition{
+      LongShotWorkflowDisposition::Discard};
+  LongShotRecoveryState recovery;
+};
+
+// Maps engine quality/reason facts to workflow behavior. Only complete output
+// is auto-published and copied; every other exportable result is confirmed by
+// the user first, while cancellation is discarded.
+LongShotWorkflowDecision decideLongShotWorkflow(
+    const LongShotOutcome& outcome) noexcept;
+
 // Owns one interactive capture workflow. Overlay windows are non-modal; this
 // object keeps the small continuation state machine that advances selection,
 // annotation, and result actions from the application's message loop.

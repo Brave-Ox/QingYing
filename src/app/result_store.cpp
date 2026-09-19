@@ -41,8 +41,10 @@ ResultStore::ResultStore(AutomationLimits limits, Clock clock)
 }
 
 ResultBudget::Reservation ResultStore::reserve(
-    ResultScopeId scope, int width, int height, bool ordinary_capture) {
-  return budget_.reserve(scope, width, height, ordinary_capture);
+    ResultScopeId scope, int width, int height, bool ordinary_capture,
+    std::uint64_t capacity_bytes) {
+  return budget_.reserve(scope, width, height, ordinary_capture,
+                         capacity_bytes);
 }
 
 bool ResultStore::isValidImage(const Image& image) noexcept {

@@ -64,6 +64,7 @@ struct SelectionOverlayLongShotFinishedMessage {
   bool success{false};
   bool recoverable{false};
   LongShotRecoveryState recovery;
+  LongShotResultNotice notice{LongShotResultNotice::None};
 };
 
 namespace HotkeyIds {

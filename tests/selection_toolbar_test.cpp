@@ -161,6 +161,19 @@ TEST(SelectionToolbarTest, LongShotLifecycleHasDistinctStatusTextStates) {
             SelectionToolbarStatus::Finishing);
 }
 
+TEST(SelectionToolbarTest, CopyFailureKeepsPublishedResultActionsEnabled) {
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::Selected, {}, LongShotResultNotice::CopyFailed);
+
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Copy).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Save).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Edit).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Pin).enabled);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::Selected, {},
+                                   LongShotResultNotice::CopyFailed),
+            SelectionToolbarStatus::CopyFailed);
+}
+
 TEST(SelectionToolbarTest, ShortcutsMatchEnabledToolbarCommands)
 {
   SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;

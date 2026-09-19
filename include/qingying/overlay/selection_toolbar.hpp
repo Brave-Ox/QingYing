@@ -56,6 +56,7 @@ enum class SelectionToolbarStatus {
   Recoverable,
   SingleFramePending,
   PartialResultPending,
+  CopyFailed,
 };
 
 inline constexpr std::size_t SelectionToolbarItemCount = 6;
@@ -65,11 +66,13 @@ using SelectionToolbarItems =
 // 纯状态映射：Win32 工具栏只消费该描述，不自行推导业务状态。
 SelectionToolbarItems buildSelectionToolbarItems(
     OverlayPhase phase,
-    LongShotRecoveryState recovery = {}) noexcept;
+    LongShotRecoveryState recovery = {},
+    LongShotResultNotice notice = LongShotResultNotice::None) noexcept;
 
 SelectionToolbarStatus selectionToolbarStatus(
     OverlayPhase phase,
-    LongShotRecoveryState recovery = {}) noexcept;
+    LongShotRecoveryState recovery = {},
+    LongShotResultNotice notice = LongShotResultNotice::None) noexcept;
 
 bool selectionToolbarShortcutCommand(
     OverlayPhase phase, const SelectionShortcutSettings& shortcuts,
@@ -105,8 +108,10 @@ class SelectionToolbar {
   bool show(HWND owner_window,
             const SelectionToolbarPlacement& placement, OverlayPhase phase,
             CommandCallback callback,
-            LongShotRecoveryState recovery = {});
-  void update(OverlayPhase phase, LongShotRecoveryState recovery = {});
+            LongShotRecoveryState recovery = {},
+            LongShotResultNotice notice = LongShotResultNotice::None);
+  void update(OverlayPhase phase, LongShotRecoveryState recovery = {},
+              LongShotResultNotice notice = LongShotResultNotice::None);
   void hide();
   bool visible() const noexcept;
 

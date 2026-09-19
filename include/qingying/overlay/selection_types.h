@@ -55,6 +55,11 @@ struct LongShotRecoveryState {
   }
 };
 
+enum class LongShotResultNotice {
+  None,
+  CopyFailed,
+};
+
 struct SelectionIntent : ScreenPhysicalRect {
   bool cancelled{true};
   SelectionAction action{SelectionAction::None};
