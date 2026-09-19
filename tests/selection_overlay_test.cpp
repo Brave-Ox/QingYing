@@ -303,6 +303,22 @@ TEST(SelectionOverlayTest, ExpiredPendingPreviewReturnsPixelBudgetInsteadOfDispl
   overlay.hide();
 }
 
+TEST(SelectionOverlayTest, SessionChangeDiscardsOldPreviewAndRejectsOldProducer) {
+  SelectionOverlay overlay;
+  ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));
+  Image preview{1, 1, {0xFFFFFFFFu}};
+  const auto baseline = ImageMemoryBudget::global().snapshot().used_bytes;
+  overlay.setLongShotSession(10);
+  ASSERT_TRUE(overlay.postLongShotPreview(preview, 10));
+  overlay.setLongShotSession(11);
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline);
+  EXPECT_FALSE(overlay.postLongShotPreview(preview, 10));
+  ASSERT_TRUE(overlay.postLongShotPreview(preview, 11));
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline + 4);
+  overlay.hide();
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline);
+}
+
 TEST(SelectionOverlayTest, WindowDestroyedBeforeOwnerIsSafe) {
   SelectionOverlay overlay;
   ASSERT_TRUE(overlay.show(Image{}, [](const SelectionResult&) {}));

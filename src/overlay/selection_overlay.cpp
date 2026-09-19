@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <strsafe.h>
 #include <utility>
@@ -60,6 +61,7 @@ struct OverlayWindowData {
   std::array<int, kMaximumOverlayHotkeys> registered_hotkey_ids{};
   std::size_t registered_hotkey_count{0};
   HWND overlay{nullptr};
+  std::atomic<std::uint64_t>* longshot_session{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
   OverlayPhase phase{OverlayPhase::Sniffing};
@@ -1194,6 +1196,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
             data->message_channel->take<SelectionOverlayLongShotPreviewMessage>(
                 static_cast<UiMessageToken>(lparam));
         if (message.has_value()) {
+          if (!data->longshot_session || message->session_id !=
+              data->longshot_session->load()) return 0;
           if (std::chrono::steady_clock::now() - message->created_at > std::chrono::seconds{2}) return 0;
           data->longshot_preview = std::move(message->image);
           updateOverlay(hwnd, data);
@@ -1648,6 +1652,8 @@ struct SelectionOverlay::Impl {
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<UiMessageToken> preview_token{0};
+  std::atomic<std::uint64_t> longshot_session{0};
+  std::mutex preview_mutex;
   std::atomic<bool> accepting_messages{false};
 };
 
@@ -1709,6 +1715,7 @@ bool SelectionOverlay::show(
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->preview_token = &impl_->preview_token;
+  data->longshot_session = &impl_->longshot_session;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
   if (!background.classifyMemory(ImageMemoryKind::VisualCache)) background = Image{};
   data->background = std::make_shared<const Image>(std::move(background));  // 空背景降级到纯遮罩。
@@ -1797,13 +1804,29 @@ bool SelectionOverlay::show(
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
+  return postLongShotPreview(image, impl_->longshot_session.load());
+}
+
+void SelectionOverlay::setLongShotSession(std::uint64_t session_id) noexcept {
+  std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+  impl_->longshot_session.store(session_id);
+  const auto previous = impl_->preview_token.exchange(0);
+  if (previous) impl_->messages.discard(previous);
+}
+
+bool SelectionOverlay::postLongShotPreview(const Image& image,
+                                           std::uint64_t session_id) {
+  if (session_id != impl_->longshot_session.load()) return false;
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
   try {
     SelectionOverlayLongShotPreviewMessage message;
+    message.session_id = session_id;
     message.image = OverlayRenderer::makeLongShotPreviewImage(image);
+    std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+    if (session_id != impl_->longshot_session.load()) return false;
     const auto token = impl_->messages.push(std::move(message));
     if (!token.has_value()) {
       return false;

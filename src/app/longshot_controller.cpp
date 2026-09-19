@@ -41,9 +41,12 @@ struct LongShotController::Impl {
     const LongShotLimits limits = limits_provider.snapshot();
 
     stop_requested.store(false);
+    cancelled.store(false);
     paused.store(false);
     const std::uint64_t diagnostic_request_id = next_request_id.fetch_add(1);
     active_request_id.store(diagnostic_request_id);
+    current_session.store(diagnostic_request_id);
+    overlay.setLongShotSession(diagnostic_request_id);
     progress_frames.store(0);
     const HWND completion_window = owner_window;
     active.store(true);
@@ -55,33 +58,41 @@ struct LongShotController::Impl {
     try {
       auto context = currentFaultContext();
       if (!context.request_id) context.request_id = diagnostic_request_id;
-      worker = std::thread([this, request, limits, completion_window, context]
-      {
+      worker = std::thread([this, request, limits, completion_window, context,
+                            diagnostic_request_id] {
         DiagnosticScope scope(context);
         struct WorkerDone final {
           Impl* owner;
           ~WorkerDone() { owner->markWorkerDone(); }
         } done{this};
-        Image image;
-        ActionResult result;
+        LongShotOutcome outcome;
         FaultDiagnostic fault;
         if (!containFault(FaultOrigin::Worker, FaultDomain::Request, [&] {
-          result = engine.captureSelection(
-            request, image,
-            [this](const Image& preview) {
+          engine.captureSelection(
+            request, outcome,
+            [this, diagnostic_request_id](const Image& preview) {
+              if (cancelled.load() || shutting_down.load() ||
+                  current_session.load() != diagnostic_request_id) return;
               progress_frames.fetch_add(1);
-              (void)overlay.postLongShotPreview(preview);
+              (void)overlay.postLongShotPreview(preview, diagnostic_request_id);
             },
             [this] {
-              while (paused.load() && !stop_requested.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(40));
-              }
+              std::unique_lock<std::mutex> lock(worker_mutex);
+              control_condition.wait(lock, [this] {
+                return !paused.load() || stop_requested.load();
+              });
               return !stop_requested.load();
             }, limits);
         }, &fault)) {
-          result.error_code = fault.error_code;
-          result.diagnostic = fault;
-          result.failure_stage = "longshot_worker";
+          outcome.stop_reason = LongShotStopReason::CaptureFailed;
+          outcome.diagnostic.ok = false;
+          outcome.diagnostic.error_code = fault.error_code;
+          outcome.diagnostic.diagnostic = fault;
+          outcome.diagnostic.failure_stage = "longshot_worker";
+        }
+
+        if (cancelled.load()) {
+          outcome = cancelledOutcome();
         }
 
         if (shutting_down.load()) {
@@ -90,24 +101,24 @@ struct LongShotController::Impl {
 
         if (!containFault(FaultOrigin::Worker, FaultDomain::Request, [&] {
           LongShotCompletionMessage completion;
-          completion.result = result;
-          completion.image = std::move(image);
-          completion.image.classifyMemory(ImageMemoryKind::WorkerQueue);
+          completion.session_id = diagnostic_request_id;
+          completion.outcome = std::move(outcome);
+          completion.outcome.image.classifyMemory(ImageMemoryKind::WorkerQueue);
           const std::optional<UiMessageToken> token =
               messages.push(std::move(completion));
           if (!token.has_value()) {
-            postCompletionFailure(completion_window);
+            postCompletionFailure(completion_window, diagnostic_request_id);
             return;
           }
           if (!PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0,
                             static_cast<LPARAM>(*token))) {
             messages.discard(*token);
-            (void)overlay.postLongShotFinished(false);
             return;
           }
         })) {
           containFault(FaultOrigin::Worker, FaultDomain::Request,
-                       [&] { postCompletionFailure(completion_window); });
+                       [&] { postCompletionFailure(completion_window,
+                                                   diagnostic_request_id); });
         }
       });
     } catch (...) {
@@ -116,36 +127,57 @@ struct LongShotController::Impl {
       active_request_id.store(0);
       stop_requested.store(true);
       paused.store(false);
+      current_session.store(0);
+      overlay.setLongShotSession(0);
       return false;
     }
     return true;
   }
 
   void handleControl(LongShotControl control) noexcept {
+    std::lock_guard<std::mutex> lock(worker_mutex);
     if (control == LongShotControl::TogglePause) {
       paused.store(!paused.load());
     } else if (control == LongShotControl::Stop) {
       stop_requested.store(true);
       paused.store(false);
     }
+    control_condition.notify_all();
   }
 
   bool handleCompletion(UiMessageToken token, ActionResult& result,
                         Image& image) {
+    LongShotOutcome outcome;
+    if (!handleCompletion(token, outcome)) return false;
+    result = std::move(outcome.diagnostic);
+    image = result.ok ? std::move(outcome.image) : Image{};
+    return true;
+  }
+
+  bool handleCompletion(UiMessageToken token, LongShotOutcome& outcome) {
     auto completion =
         messages.take<LongShotCompletionMessage>(token);
-    join();
-    if (shutting_down.load() || !completion.has_value()) {
+    if (shutting_down.load() || !completion.has_value() ||
+        completion->session_id != current_session.load()) {
       return false;
     }
-    result = std::move(completion->result);
-    image = std::move(completion->image);
+    join();
+    outcome = cancelled.load() ? cancelledOutcome()
+                               : std::move(completion->outcome);
+    current_session.store(0);
+    // 完成后允许同会话的最后一份预览显示；新会话/取消会将它清理。
     return true;
   }
 
   void cancel() noexcept {
-    stop_requested.store(true);
-    paused.store(false);
+    {
+      std::lock_guard<std::mutex> lock(worker_mutex);
+      cancelled.store(true);
+      stop_requested.store(true);
+      paused.store(false);
+    }
+    control_condition.notify_all();
+    overlay.setLongShotSession(0);
     engine.cancel();
   }
 
@@ -199,7 +231,11 @@ struct LongShotController::Impl {
            std::to_string(progress_frames.load());
   }
 
-  void drainMessages() noexcept { messages.drain(); }
+  void drainMessages() noexcept {
+    messages.drain();
+    current_session.store(0);
+    overlay.setLongShotSession(0);
+  }
 
  private:
   void markWorkerDone() noexcept {
@@ -211,12 +247,24 @@ struct LongShotController::Impl {
     worker_done_condition.notify_all();
   }
 
-  void postCompletionFailure(HWND completion_window) {
-    if (completion_window != nullptr &&
-        PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE, 0, 0)) {
-      return;
-    }
-    (void)overlay.postLongShotFinished(false);
+  static LongShotOutcome cancelledOutcome() {
+    LongShotOutcome outcome;
+    outcome.stop_reason = LongShotStopReason::Cancelled;
+    outcome.diagnostic.error_code = ErrorCode::kCancelled;
+    outcome.diagnostic.message = "longshot: capture cancelled";
+    return outcome;
+  }
+
+  void postCompletionFailure(HWND completion_window, std::uint64_t session) {
+    LongShotCompletionMessage completion;
+    completion.session_id = session;
+    completion.outcome.stop_reason = LongShotStopReason::CaptureFailed;
+    completion.outcome.diagnostic.error_code = ErrorCode::kCaptureFailed;
+    completion.outcome.diagnostic.failure_stage = "longshot_completion";
+    const auto token = messages.push(std::move(completion));
+    if (token && !PostMessageW(completion_window, WM_QINGYING_LONGSHOT_COMPLETE,
+                               0, static_cast<LPARAM>(*token)))
+      messages.discard(*token);
   }
 
   LongShotEngine& engine;
@@ -226,9 +274,12 @@ struct LongShotController::Impl {
   std::thread worker;
   std::mutex worker_mutex;
   std::condition_variable worker_done_condition;
+  std::condition_variable control_condition;
   bool worker_done{true};
   UiMessageChannel messages;
   std::atomic<bool> stop_requested{false};
+  std::atomic<bool> cancelled{false};
+  std::atomic<std::uint64_t> current_session{0};
   std::atomic<bool> paused{false};
   std::atomic<bool> shutting_down{false};
   std::atomic<bool> active{false};
@@ -262,6 +313,11 @@ bool LongShotController::handleCompletion(UiMessageToken token,
                                           ActionResult& result,
                                           Image& image) {
   return impl_->handleCompletion(token, result, image);
+}
+
+bool LongShotController::handleCompletion(UiMessageToken token,
+                                          LongShotOutcome& outcome) {
+  return impl_->handleCompletion(token, outcome);
 }
 
 void LongShotController::cancel() noexcept { impl_->cancel(); }

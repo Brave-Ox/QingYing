@@ -339,13 +339,7 @@ void showSelectionOverlay() {
       return;
     }
     if (!completion_received) {
-      longshot_result_ready = false;
-      pending_overlay_error = L"长截图失败，请重新框选后再试。";
-      if (!selection_overlay.postLongShotFinished(false)) {
-        selection_overlay.hide();
-        selection_closed = true;
-        postContinuation();
-      }
+      // 过期、重复或已清理的完成 token 不得终止当前截图会话。
       return;
     }
 
