@@ -11,6 +11,7 @@ namespace longshot_detail {
 namespace {
 
 constexpr UINT kScrollDispatchTimeoutMs = 500;
+constexpr UINT kGenericScrollDispatchTimeoutMs = 200;
 
 }  // 匿名命名空间
 
@@ -52,6 +53,30 @@ std::uint32_t windowProcessId(std::uintptr_t window) noexcept {
   const HWND target = reinterpret_cast<HWND>(window);
   if (target != nullptr) GetWindowThreadProcessId(target, &process_id);
   return static_cast<std::uint32_t>(process_id);
+}
+
+bool sendBoundedWheelDown(std::uintptr_t owner_window,
+                          std::uintptr_t target_window, int screen_x,
+                          int screen_y) noexcept {
+  if (!windowBelongsToOwner(owner_window, target_window)) return false;
+  if (screen_x < (std::numeric_limits<SHORT>::min)() ||
+      screen_x > (std::numeric_limits<SHORT>::max)() ||
+      screen_y < (std::numeric_limits<SHORT>::min)() ||
+      screen_y > (std::numeric_limits<SHORT>::max)()) {
+    return false;
+  }
+  const HWND target = reinterpret_cast<HWND>(target_window);
+  if (target == nullptr || !IsWindow(target)) return false;
+
+  const WORD wheel_delta = static_cast<WORD>(static_cast<SHORT>(-WHEEL_DELTA));
+  const WPARAM wheel_parameters = MAKEWPARAM(0, wheel_delta);
+  const LPARAM screen_point =
+      MAKELPARAM(static_cast<WORD>(screen_x), static_cast<WORD>(screen_y));
+  DWORD_PTR message_result = 0;
+  return SendMessageTimeoutW(
+             target, WM_MOUSEWHEEL, wheel_parameters, screen_point,
+             SMTO_ABORTIFHUNG | SMTO_BLOCK, kGenericScrollDispatchTimeoutMs,
+             &message_result) != 0;
 }
 
 bool sendWheelDown(const LongShotRequest& request,

@@ -7,6 +7,7 @@ add_library(qingying_longshot STATIC
   longshot_profile_registry.cpp
   win32_scroll_helpers.cpp
   generic_scroll_target_resolver.cpp
+  generic_wheel_longshot_profile.cpp
   browser_longshot_resolver.cpp
 )
 

@@ -13,6 +13,12 @@ bool sendWheelDown(const LongShotRequest& request,
 bool queryVerticalScrollState(const LongShotProfileResult& profile,
                               LongShotScrollState& out);
 
+// Sends exactly one wheel message. A timeout is a failure and is never
+// followed by a queued duplicate input.
+bool sendBoundedWheelDown(std::uintptr_t owner_window,
+                          std::uintptr_t target_window, int screen_x,
+                          int screen_y) noexcept;
+
 bool windowBelongsToOwner(std::uintptr_t owner_window,
                           std::uintptr_t target_window) noexcept;
 bool windowClientScreenRect(std::uintptr_t window,

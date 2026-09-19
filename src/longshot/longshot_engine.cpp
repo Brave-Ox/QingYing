@@ -3,6 +3,8 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/image_stitcher.hpp"
 
+#include "generic_wheel_longshot_profile.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -118,6 +120,8 @@ ActionResult withFailureContext(ActionResult result,
 
 ActionResult validateRequest(const LongShotRequest& request,
                              const LongShotProfileRegistry& profiles,
+                             longshot_detail::GenericWheelLongShotProfile&
+                                 generic_fallback,
                              const LongShotProfile*& profile,
                              LongShotProfileResult& profile_result) {
   profile = nullptr;
@@ -129,9 +133,14 @@ ActionResult validateRequest(const LongShotRequest& request,
 
   profile = profiles.resolve(request, profile_result);
   if (profile == nullptr) {
-    return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: target application is not supported",
-                       LongShotFailureStage::ProfileResolution);
+    if (generic_fallback.resolve(request, profile_result)) {
+      profile = &generic_fallback;
+    } else {
+      return makeFailure(
+          ErrorCode::kLongShotUnsupported,
+          "longshot: no profile matched and generic target is unsafe",
+          LongShotFailureStage::ProfileResolution);
+    }
   }
   return makeSuccess();
 }
@@ -580,7 +589,9 @@ ActionResult LongShotEngine::captureSelection(
 
   const LongShotProfile* profile = nullptr;
   LongShotProfileResult current_profile;
-  ActionResult result = validateRequest(request, impl_->profiles, profile,
+  longshot_detail::GenericWheelLongShotProfile generic_fallback;
+  ActionResult result = validateRequest(request, impl_->profiles,
+                                        generic_fallback, profile,
                                         current_profile);
   if (!result.ok) {
     return finish(result, failureReason(result));
@@ -801,7 +812,9 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
 
   const LongShotProfile* profile = nullptr;
   LongShotProfileResult before_profile;
-  ActionResult result = validateRequest(request, impl_->profiles, profile,
+  longshot_detail::GenericWheelLongShotProfile generic_fallback;
+  ActionResult result = validateRequest(request, impl_->profiles,
+                                        generic_fallback, profile,
                                         before_profile);
   if (!result.ok) {
     return result;
