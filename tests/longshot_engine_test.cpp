@@ -180,6 +180,35 @@ class BottomLongShotProfile final : public LongShotProfile
   }
 };
 
+class NeverSettlesLongShotProfile final : public LongShotProfile {
+ public:
+  const char* name() const noexcept override { return "test.never-settles"; }
+
+  bool resolve(const LongShotRequest& request,
+               LongShotProfileResult& out) const override {
+    if (scrolled_) return false;
+    out = LongShotProfileResult{1, request.selectionRect()};
+    return true;
+  }
+
+  bool scrollDown(const LongShotRequest&,
+                  const LongShotProfileResult&) const override {
+    scrolled_ = true;
+    return true;
+  }
+
+  bool queryScrollState(const LongShotProfileResult&,
+                        LongShotScrollState& out) const override {
+    out.position = 0;
+    out.last_position = 10;
+    out.valid = true;
+    return true;
+  }
+
+ private:
+  mutable bool scrolled_{false};
+};
+
 }  // namespace
 
 TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
@@ -188,8 +217,33 @@ TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
   EXPECT_TRUE(limits.valid());
   EXPECT_EQ(limits.max_frames, 30);
   EXPECT_EQ(limits.max_output_height, 30000);
+  EXPECT_EQ(limits.max_input_attempts, 64);
+  EXPECT_EQ(limits.max_frame_recaptures, 5);
+  EXPECT_EQ(limits.max_scroll_settle_polls, 20);
+  EXPECT_EQ(limits.max_working_bytes, 512ULL * 1024 * 1024);
+  EXPECT_EQ(limits.max_duration, std::chrono::minutes(3));
   EXPECT_FALSE(limits.fixed_edges.enabled());
   EXPECT_TRUE(limits.fixed_edges.valid());
+}
+
+TEST(LongShotLimitsTest, RejectsInvalidResourceBudgets) {
+  LongShotLimits limits;
+  limits.max_input_attempts = 0;
+  EXPECT_FALSE(limits.valid());
+  limits.max_input_attempts = 1;
+  limits.max_frame_recaptures = -1;
+  EXPECT_FALSE(limits.valid());
+  limits.max_frame_recaptures = 0;
+  limits.max_scroll_settle_polls = 1;
+  EXPECT_FALSE(limits.valid());
+  limits.max_scroll_settle_polls = 2;
+  limits.max_working_bytes = 0;
+  EXPECT_FALSE(limits.valid());
+  limits.max_working_bytes = 1;
+  limits.max_duration = std::chrono::milliseconds(0);
+  EXPECT_FALSE(limits.valid());
+  limits.max_duration = std::chrono::minutes(31);
+  EXPECT_FALSE(limits.valid());
 }
 
 TEST(LongShotLimitsTest, RejectsNegativeFixedEdgeConfiguration) {
@@ -523,7 +577,64 @@ TEST(LongShotEngineTest, PersistentMotionStopsAtVisualSampleBudget) {
   EXPECT_EQ(outcome.accepted_frames, 1);
   EXPECT_EQ(outcome.input_attempts, 1);
   EXPECT_EQ(outcome.recapture_attempts, 5);
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::FrameRecaptures);
   EXPECT_EQ(captures, 7);
+  EXPECT_EQ(profile_ptr->wheelCount(), 1);
+}
+
+TEST(LongShotEngineTest, ScrollSettlePollingUsesConfiguredBudget) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<NeverSettlesLongShotProfile>());
+  LongShotLimits limits;
+  limits.max_scroll_settle_polls = 2;
+  int captures = 0;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    ++captures;
+    image = makeStrip(rect.width, rect.height, 0);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome outcome;
+
+  const auto result =
+      engine.captureSelection({1, 0, 0, 32, 40}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "scroll_settle");
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::ScrollSettlePolls);
+  EXPECT_EQ(outcome.accepted_frames, 1);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(captures, 1);
+}
+
+TEST(LongShotEngineTest, FrameRecaptureUsesConfiguredBudget) {
+  auto profile = std::make_unique<ScriptedLongShotProfile>(true);
+  auto* profile_ptr = profile.get();
+  LongShotProfileRegistry registry;
+  registry.add(std::move(profile));
+  LongShotLimits limits;
+  limits.max_frame_recaptures = 2;
+  int captures = 0;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    const int offsets[] = {0, 2, 4, 6};
+    image = makeStrip(rect.width, rect.height,
+                      offsets[(std::min)(captures, 3)]);
+    ++captures;
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome outcome;
+
+  const auto result =
+      engine.captureSelection({1, 0, 0, 32, 40}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "scroll_settle");
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::FrameRecaptures);
+  EXPECT_EQ(outcome.recapture_attempts, 2);
+  EXPECT_EQ(captures, 4);
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
 }
 
@@ -580,6 +691,31 @@ class SequenceProfile final : public LongShotProfile {
   bool queryScrollState(const LongShotProfileResult&,
                         LongShotScrollState&) const override { return false; }
 };
+}
+
+TEST(LongShotInitialPairTest, WorkingMemoryBudgetRejectsBeforeCapture) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  LongShotLimits limits;
+  limits.max_working_bytes = 9000;
+  int captures = 0;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    ++captures;
+    image = makeStrip(rect.width, rect.height, 0);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotFramePair pair;
+
+  const auto result =
+      engine.captureInitialPair({1, 0, 0, 32, 40}, pair);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kResourceLimit);
+  EXPECT_EQ(result.failure_stage, "safety_limit");
+  EXPECT_EQ(captures, 0);
+  EXPECT_FALSE(pair.valid());
 }
 
 TEST(LongShotOutcomeCaptureTest,
@@ -750,6 +886,9 @@ TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
     LongShotOutcome out;
     EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
     EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+    EXPECT_EQ(out.budget_reason,
+              height_limit ? LongShotBudgetReason::OutputHeight
+                           : LongShotBudgetReason::FrameCount);
     EXPECT_FALSE(out.isComplete());
     EXPECT_EQ(out.accepted_frames, height_limit ? 1 : 2);
     EXPECT_EQ(out.image.pixels, makeStrip(32, height_limit ? 40 : 50, 0).pixels);
@@ -757,6 +896,106 @@ TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
     EXPECT_EQ(out.recapture_attempts, 1);
     EXPECT_EQ(captures, 3);
   }
+}
+
+TEST(LongShotOutcomeCaptureTest, DurationBudgetKeepsInitialFrame) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  LongShotLimits limits;
+  limits.max_duration = std::chrono::milliseconds(2);
+  LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    image = makeStrip(rect.width, rect.height, 0);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome out;
+
+  const auto result = engine.captureSelection({1, 0, 0, 32, 40}, out);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::Duration);
+  EXPECT_EQ(out.accepted_frames, 1);
+  EXPECT_EQ(out.input_attempts, 0);
+  EXPECT_GE(out.initial_capture_ms, 2u);
+  EXPECT_GE(out.elapsed_ms, out.initial_capture_ms);
+}
+
+TEST(LongShotOutcomeCaptureTest, InputBudgetStopsBeforeAnotherWheel) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotLimits limits;
+  limits.max_input_attempts = 1;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome out;
+
+  EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::InputAttempts);
+  EXPECT_EQ(out.accepted_frames, 2);
+  EXPECT_EQ(out.input_attempts, 1);
+  EXPECT_EQ(sequence->inputs, 1);
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     WorkingMemoryBudgetRejectsAppendBeforeAllocation) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotLimits limits;
+  limits.max_working_bytes = 12000;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome out;
+
+  EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::WorkingMemory);
+  EXPECT_EQ(out.accepted_frames, 1);
+  EXPECT_EQ(out.image.pixels, makeStrip(32, 40, 0).pixels);
+  EXPECT_EQ(out.input_attempts, 1);
+  EXPECT_EQ(out.recapture_attempts, 1);
+  EXPECT_LE(out.peak_working_bytes, limits.max_working_bytes);
+}
+
+TEST(LongShotOutcomeCaptureTest, ReportsProcessingAndPreviewMetrics) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotLimits limits;
+  limits.max_frames = 2;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome out;
+  int previews = 0;
+
+  EXPECT_TRUE(engine.captureSelection(
+      {1, 0, 0, 32, 40}, out,
+      [&](const Image&) { ++previews; }).ok);
+  EXPECT_EQ(out.preview_publications, 2);
+  EXPECT_EQ(previews, 2);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::FrameCount);
+  EXPECT_GE(out.peak_working_bytes, 32u * 40u * 4u);
+  EXPECT_GE(out.elapsed_ms, out.initial_capture_ms);
 }
 
 TEST(LongShotOutcomeCaptureTest, StopKeepsImageButCancelDiscardsIt) {

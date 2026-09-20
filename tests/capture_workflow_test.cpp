@@ -149,6 +149,21 @@ TEST(CaptureWorkflowLongShotDecisionTest, CompositeFailureAwaitsExplicitAcceptan
   EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::MatchFailed);
 }
 
+TEST(CaptureWorkflowLongShotDecisionTest,
+     BudgetLimitKeepsReliableCompositeForConfirmation) {
+  LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::LimitReached, 3);
+  outcome.budget_reason = LongShotBudgetReason::WorkingMemory;
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result,
+            LongShotRecoveryResult::PartialResult);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::LimitReached);
+}
+
 }  // namespace qingying
 
 

@@ -5,6 +5,7 @@
 #include "qingying/longshot/longshot_profile.hpp"
 #include "qingying/longshot/longshot_profile_registry.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -28,10 +29,19 @@ struct LongShotFixedEdgeExclusions {
 struct LongShotLimits {
   int max_frames{30};
   int max_output_height{30000};
+  int max_input_attempts{64};
+  int max_frame_recaptures{5};
+  int max_scroll_settle_polls{20};
+  std::uint64_t max_working_bytes{512ULL * 1024 * 1024};
+  std::chrono::milliseconds max_duration{std::chrono::minutes{3}};
   LongShotFixedEdgeExclusions fixed_edges{};
 
   bool valid() const {
-    return max_frames >= 2 && max_output_height > 0 && fixed_edges.valid();
+    return max_frames >= 2 && max_output_height > 0 &&
+           max_input_attempts > 0 && max_frame_recaptures >= 0 &&
+           max_scroll_settle_polls >= 2 && max_working_bytes > 0 &&
+           max_duration.count() > 0 &&
+           max_duration <= std::chrono::minutes{30} && fixed_edges.valid();
   }
 };
 
@@ -91,6 +101,17 @@ enum class LongShotStopReason : std::uint8_t {
   Cancelled,
 };
 
+enum class LongShotBudgetReason : std::uint8_t {
+  None,
+  FrameCount,
+  OutputHeight,
+  Duration,
+  InputAttempts,
+  FrameRecaptures,
+  ScrollSettlePolls,
+  WorkingMemory,
+};
+
 // 内部 C++ 完成载荷，不属于 profile DLL 的 C ABI。image 只能包含已接受的
 // 帧；accepted_frames 不计重采或拒绝的帧。input_attempts 记录滚动调用，
 // recapture_attempts 记录同一次输入后的额外采样。尺寸直接取 image，避免重复
@@ -100,7 +121,13 @@ struct LongShotOutcome {
   int accepted_frames{0};
   int input_attempts{0};
   int recapture_attempts{0};
+  int preview_publications{0};
+  std::uint64_t elapsed_ms{0};
+  std::uint64_t initial_capture_ms{0};
+  std::uint64_t max_frame_processing_ms{0};
+  std::uint64_t peak_working_bytes{0};
   LongShotStopReason stop_reason{LongShotStopReason::NotStarted};
+  LongShotBudgetReason budget_reason{LongShotBudgetReason::None};
   std::string strategy;
   LongShotFailureStage failure_stage{LongShotFailureStage::None};
   ActionResult diagnostic;

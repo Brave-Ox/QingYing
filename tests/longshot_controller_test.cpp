@@ -368,7 +368,10 @@ TEST(LongShotControllerTest, StopPreservesFrameAndShutdownHonorsDeadline) {
       fixture.controller.beginShutdown();
       EXPECT_FALSE(fixture.controller.joinUntil(std::chrono::steady_clock::now()));
     } else {
+      const auto stop_started_at = std::chrono::steady_clock::now();
       fixture.controller.handleControl(LongShotControl::Stop);
+      EXPECT_LT(std::chrono::steady_clock::now() - stop_started_at,
+                std::chrono::milliseconds(200));
     }
     {
       std::lock_guard<std::mutex> lock(mutex);
