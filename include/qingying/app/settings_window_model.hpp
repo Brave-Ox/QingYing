@@ -55,16 +55,25 @@ class SettingsWindowModel final
   const SettingsDraft& draft() const noexcept;
   bool dirty() const noexcept;
   bool canApply() const noexcept;
+  bool canUseApplyButton() const noexcept;
   bool hasExternalChangeNotice() const noexcept;
   bool shouldWarnLongShotDuration() const noexcept;
   bool shouldWarnLongShotMemory() const noexcept;
 
   SettingsFieldError fieldError(SettingsWindowField field) const noexcept;
   std::wstring bannerMessage() const;
+  void recordNoChangesApply() noexcept;
   void recordApplyResult(const SettingsApplyResult& result);
   void refreshExternalState(const SettingsState& state) noexcept;
 
  private:
+  enum class ApplyNotice
+  {
+    None,
+    Applied,
+    NoChanges,
+  };
+
   void clearApplyErrors() noexcept;
 
   SettingsState m_baseline;
@@ -72,6 +81,7 @@ class SettingsWindowModel final
   SettingsPage m_current_page{SettingsPage::General};
   std::optional<SettingsShortcutField> m_recording_shortcut;
   SettingsApplyResult m_last_apply_result;
+  ApplyNotice m_apply_notice{ApplyNotice::None};
   bool m_has_apply_result{false};
   bool m_has_external_change_notice{false};
 };

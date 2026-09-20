@@ -23,6 +23,8 @@ constexpr int MinimumHeight = 500;
 constexpr int NavigationWidth = 168;
 constexpr int FooterHeight = 64;
 constexpr int ContentPadding = 32;
+constexpr COLORREF ErrorTextColor = RGB(180, 57, 45);
+constexpr COLORREF StatusTextColor = RGB(67, 82, 68);
 
 enum ControlId
 {
@@ -389,8 +391,8 @@ struct SettingsWindow::Impl
     MoveWindow(longshot_controls[5], content_x + scale(324, dpi), scale(190, dpi),
                scale(28, dpi), scale(28, dpi), TRUE);
     MoveWindow(banner, content_x, scale(94, dpi), content_width, scale(28, dpi), TRUE);
-    MoveWindow(field_error, content_x, scale(238, dpi), content_width,
-               scale(42, dpi), TRUE);
+    MoveWindow(field_error, content_x, scale(94, dpi), content_width,
+               scale(28, dpi), TRUE);
     MoveWindow(warning, content_x, scale(284, dpi), content_width,
                scale(44, dpi), TRUE);
     MoveWindow(restore_button, scale(20, dpi), footer_top + scale(16, dpi),
@@ -471,7 +473,7 @@ struct SettingsWindow::Impl
     ShowWindow(field_error, error.empty() ? SW_HIDE : SW_SHOW);
     std::wstring banner_text = model->bannerMessage();
     SetWindowTextW(banner, banner_text.c_str());
-    ShowWindow(banner, banner_text.empty() ? SW_HIDE : SW_SHOW);
+    ShowWindow(banner, !error.empty() || banner_text.empty() ? SW_HIDE : SW_SHOW);
     std::wstring warning_text;
     if (page == SettingsPage::LongShot && model->shouldWarnLongShotDuration())
     {
@@ -487,7 +489,7 @@ struct SettingsWindow::Impl
     }
     SetWindowTextW(warning, warning_text.c_str());
     ShowWindow(warning, warning_text.empty() ? SW_HIDE : SW_SHOW);
-    EnableWindow(apply_button, model->canApply() ? TRUE : FALSE);
+    EnableWindow(apply_button, model->canUseApplyButton() ? TRUE : FALSE);
     updating_controls = false;
     InvalidateRect(window, nullptr, TRUE);
   }
@@ -526,18 +528,53 @@ struct SettingsWindow::Impl
 
   bool apply()
   {
-    if (model == nullptr || !model->canApply())
+    if (model == nullptr || !model->canUseApplyButton())
     {
       return false;
     }
+    if (!model->dirty())
+    {
+      model->recordNoChangesApply();
+      refreshControls();
+      return true;
+    }
     const SettingsApplyResult result = service.apply(model->draft());
     model->recordApplyResult(result);
+    if (!result.m_committed)
+    {
+      focusFirstFieldError(result.m_field_errors);
+    }
     if (result.m_committed && applied_callback)
     {
       applied_callback(result.m_state);
     }
     refreshControls();
     return result.m_committed;
+  }
+
+  void focusFirstFieldError(const SettingsFieldErrors& errors) noexcept
+  {
+    HWND control = nullptr;
+    if (errors.m_capture_hotkey != SettingsFieldError::None)
+    {
+      control = hotkey_controls[0];
+    }
+    else if (errors.m_copy_shortcut != SettingsFieldError::None)
+    {
+      control = hotkey_controls[1];
+    }
+    else if (errors.m_toggle_longshot_shortcut != SettingsFieldError::None)
+    {
+      control = hotkey_controls[2];
+    }
+    else if (errors.m_longshot_limits != SettingsFieldError::None)
+    {
+      control = longshot_controls[0];
+    }
+    if (control != nullptr)
+    {
+      SetFocus(control);
+    }
   }
 
   bool requestClose()
@@ -723,6 +760,21 @@ struct SettingsWindow::Impl
       case WM_KEYDOWN:
         handleShortcutKey(static_cast<UINT>(wparam));
         return 0;
+      case WM_CTLCOLORSTATIC:
+      {
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        const HWND control = reinterpret_cast<HWND>(lparam);
+        SetBkMode(dc, TRANSPARENT);
+        if (control == field_error)
+        {
+          SetTextColor(dc, ErrorTextColor);
+        }
+        else if (control == banner)
+        {
+          SetTextColor(dc, StatusTextColor);
+        }
+        return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+      }
       case WM_PAINT:
       {
         PAINTSTRUCT paint{};

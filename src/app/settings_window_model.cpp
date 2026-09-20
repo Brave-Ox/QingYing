@@ -272,7 +272,12 @@ bool SettingsWindowModel::dirty() const noexcept
 
 bool SettingsWindowModel::canApply() const noexcept
 {
-  return dirty() && !m_recording_shortcut.has_value() &&
+  return dirty() && canUseApplyButton();
+}
+
+bool SettingsWindowModel::canUseApplyButton() const noexcept
+{
+  return !m_recording_shortcut.has_value() &&
          validationErrorForField(m_draft,
                                  SettingsWindowField::CaptureHotkey) ==
              SettingsFieldError::None &&
@@ -330,9 +335,26 @@ std::wstring SettingsWindowModel::bannerMessage() const
           m_last_apply_result.m_rollback_errors.front());
     }
   }
-  return m_has_external_change_notice
-      ? L"系统状态已在外部更改，应用将使用当前选择。"
-      : L"";
+  if (m_has_external_change_notice)
+  {
+    return L"系统状态已在外部更改，应用将使用当前选择。";
+  }
+  switch (m_apply_notice)
+  {
+    case ApplyNotice::Applied:
+      return L"设置已应用。";
+    case ApplyNotice::NoChanges:
+      return L"当前设置已生效，无需重复应用。";
+    case ApplyNotice::None:
+      return L"";
+  }
+  return L"";
+}
+
+void SettingsWindowModel::recordNoChangesApply() noexcept
+{
+  clearApplyErrors();
+  m_apply_notice = ApplyNotice::NoChanges;
 }
 
 void SettingsWindowModel::recordApplyResult(const SettingsApplyResult& result)
@@ -343,11 +365,13 @@ void SettingsWindowModel::recordApplyResult(const SettingsApplyResult& result)
     m_draft = makeSettingsDraft(result.m_state);
     m_has_apply_result = false;
     m_has_external_change_notice = false;
+    m_apply_notice = ApplyNotice::Applied;
     cancelShortcutRecording();
     return;
   }
   m_last_apply_result = result;
   m_has_apply_result = true;
+  m_apply_notice = ApplyNotice::None;
 }
 
 void SettingsWindowModel::refreshExternalState(const SettingsState& state) noexcept
@@ -426,6 +450,7 @@ void SettingsWindowModel::clearApplyErrors() noexcept
 {
   m_last_apply_result = SettingsApplyResult{};
   m_has_apply_result = false;
+  m_apply_notice = ApplyNotice::None;
 }
 
 }  // namespace qingying

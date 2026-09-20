@@ -25,6 +25,19 @@ TEST(SettingsWindowModelTest, StartsOnGeneralPageWithCleanDraft)
   EXPECT_FALSE(model.draft().m_agent_enabled);
 }
 
+TEST(SettingsWindowModelTest,
+     CleanDraftKeepsApplyControlAvailableAndExplainsNoOpApply)
+{
+  SettingsWindowModel model(makeState());
+
+  EXPECT_FALSE(model.canApply());
+  EXPECT_TRUE(model.canUseApplyButton());
+
+  model.recordNoChangesApply();
+
+  EXPECT_EQ(model.bannerMessage(), L"当前设置已生效，无需重复应用。");
+}
+
 TEST(SettingsWindowModelTest, RestoringCurrentPageChangesOnlyThatPageDraft)
 {
   SettingsWindowModel model(makeState());
@@ -83,6 +96,23 @@ TEST(SettingsWindowModelTest, InvalidLongShotInputShowsFieldErrorAndDisablesAppl
   EXPECT_EQ(model.fieldError(SettingsWindowField::LongShotLimits),
             SettingsFieldError::LongShotLimitsInvalid);
   EXPECT_FALSE(model.canApply());
+  EXPECT_FALSE(model.canUseApplyButton());
+}
+
+TEST(SettingsWindowModelTest,
+     GlobalShortcutConflictKeepsApplyControlAvailableForRetry)
+{
+  SettingsWindowModel model(makeState());
+  model.setLongShotMaxFrames(35);
+  SettingsApplyResult conflict;
+  conflict.m_field_errors.m_capture_hotkey =
+      SettingsFieldError::CaptureHotkeyUnavailable;
+
+  model.recordApplyResult(conflict);
+
+  EXPECT_EQ(model.fieldError(SettingsWindowField::CaptureHotkey),
+            SettingsFieldError::CaptureHotkeyUnavailable);
+  EXPECT_TRUE(model.canUseApplyButton());
 }
 
 TEST(SettingsWindowModelTest, InvalidCopyShortcutKeepsErrorOnCopyField)
