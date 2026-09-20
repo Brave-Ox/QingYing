@@ -61,7 +61,8 @@ struct SelectionOverlayLongShotFinishedMessage {
 };
 
 namespace HotkeyIds {
-constexpr int kCapture = 1;
+constexpr int kCapturePrimary = 1;
+constexpr int kCaptureSecondary = 2;
 }  // namespace HotkeyIds
 
 namespace HotkeyDefaults {

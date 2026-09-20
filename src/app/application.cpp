@@ -324,10 +324,12 @@ struct Application::Impl {
       }
       if (msg == WM_TIMER && wparam == kAutomationMaintenanceTimer) {
         automation_runtime_.tick();
+        hotkey_.maintenance(tray_.hwnd());
         *result = 0;
         return true;
       }
-      if (msg == WM_HOTKEY && wparam == HotkeyIds::kCapture) {
+      if (msg == WM_HOTKEY &&
+          hotkey_.isCurrentCaptureHotkeyId(static_cast<int>(wparam))) {
         onCaptureHotkey();
         *result = 0;
         return true;
@@ -416,7 +418,10 @@ struct Application::Impl {
       return 3;
     }
 
-    if (!hotkey_.registerCaptureHotkey(tray_.hwnd(), test_namespace_.empty() ? 'Q' : VK_F24)) {
+    const ShortcutBinding capture_hotkey{
+        HotkeyDefaults::kCaptureModifiers,
+        test_namespace_.empty() ? HotkeyDefaults::kCaptureVirtualKey : VK_F24};
+    if (!hotkey_.registerCaptureHotkey(tray_.hwnd(), capture_hotkey)) {
       if (!test_namespace_.empty()) { shutdown(); return 5; }
       MessageBoxW(
           tray_.hwnd(),
