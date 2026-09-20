@@ -899,7 +899,8 @@ ActionResult LongShotEngine::captureSelection(
     int planned_output_rows = 0;
     bool matched_overlap = false;
     bool full_overlap = false;
-    bool lost_overlap = false;
+    bool retryable_overlap = false;
+    bool fatal_overlap = false;
     bool interrupted = false;
     auto visual_retry_delay = kFrameRetryDelay;
     longshot_detail::VisualFrameSettler frame_settler(stitch_options);
@@ -931,6 +932,11 @@ ActionResult LongShotEngine::captureSelection(
       planned_output_rows = observation.output_rows;
       if (observation.decision ==
           longshot_detail::VisualFrameDecision::ObserveMore) {
+        // A valid but not-yet-stable sample supersedes an earlier transient
+        // overlap rejection. If the budget now expires, report settling rather
+        // than the stale rejection reason.
+        retryable_overlap = false;
+        last_frame_failure = makeSuccess();
         visual_retry_delay =
             observation.displacement_rows == 0
                 ? kFrameRetryDelay
@@ -947,8 +953,18 @@ ActionResult LongShotEngine::captureSelection(
         break;
       }
       if (observation.decision ==
-          longshot_detail::VisualFrameDecision::LostOverlap) {
-        lost_overlap = true;
+          longshot_detail::VisualFrameDecision::RetryableOverlap) {
+        retryable_overlap = true;
+        last_frame_failure = makeFailure(
+            ErrorCode::kCaptureFailed,
+            overlapFailureMessage(observation.reject_reason),
+            LongShotFailureStage::OverlapDetection, next_frame_number);
+        visual_retry_delay = kFrameRetryDelay;
+        continue;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::FatalOverlap) {
+        fatal_overlap = true;
         last_frame_failure = makeFailure(
             ErrorCode::kCaptureFailed,
             overlapFailureMessage(observation.reject_reason),
@@ -971,7 +987,9 @@ ActionResult LongShotEngine::captureSelection(
       break;
     }
     if (!matched_overlap) {
-      if (!lost_overlap && last_frame_failure.ok) {
+      if (retryable_overlap && !fatal_overlap) {
+        out.budget_reason = LongShotBudgetReason::FrameRecaptures;
+      } else if (!fatal_overlap && last_frame_failure.ok) {
         out.budget_reason = LongShotBudgetReason::FrameRecaptures;
         last_frame_failure = makeFailure(
             ErrorCode::kCaptureFailed,

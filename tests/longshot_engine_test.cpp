@@ -628,7 +628,7 @@ TEST(LongShotEngineTest, FrameRecaptureUsesConfiguredBudget) {
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
 }
 
-TEST(LongShotEngineTest, StopsImmediatelyWhenOverlapIsLost) {
+TEST(LongShotEngineTest, RetriesTransientLostOverlapWithoutAnotherInput) {
   constexpr int kWidth = 32;
   constexpr int kHeight = 30;
 
@@ -641,8 +641,13 @@ TEST(LongShotEngineTest, StopsImmediatelyWhenOverlapIsLost) {
   LongShotEngine engine(
       [&capture_count](const ScreenPhysicalRect& region, Image& out) {
         ++capture_count;
-        out = makeStrip(region.width, region.height,
-                        capture_count == 1 ? 0 : 100);
+        if (capture_count == 1) {
+          out = makeStrip(region.width, region.height, 0);
+        } else if (capture_count == 2) {
+          out = makeStrip(region.width, region.height, 100);
+        } else {
+          out = makeStrip(region.width, region.height, 10);
+        }
         ActionResult result;
         result.ok = true;
         result.error_code = ErrorCode::kOk;
@@ -654,13 +659,12 @@ TEST(LongShotEngineTest, StopsImmediatelyWhenOverlapIsLost) {
   Image out;
   const ActionResult result = engine.captureSelection(request, out);
 
-  EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error_code, ErrorCode::kCaptureFailed);
-  EXPECT_EQ(result.failure_stage, "overlap_detection");
-  EXPECT_EQ(result.failure_frame, 2);
-  EXPECT_EQ(capture_count, 2);
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kOk);
+  EXPECT_EQ(capture_count, 4);
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
-  EXPECT_TRUE(out.empty());
+  EXPECT_EQ(out.width, kWidth);
+  EXPECT_EQ(out.height, kHeight + 10);
 }
 
 namespace {
@@ -732,7 +736,8 @@ TEST(LongShotOutcomeCaptureTest,
   EXPECT_EQ(outcome.accepted_frames, 1);
   EXPECT_EQ(outcome.image.pixels, makePeriodicStrip(32, 40, 5).pixels);
   EXPECT_EQ(outcome.input_attempts, 1);
-  EXPECT_EQ(outcome.recapture_attempts, 0);
+  EXPECT_EQ(outcome.recapture_attempts, 5);
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::FrameRecaptures);
   EXPECT_EQ(sequence->inputs, 1);
 }
 
@@ -853,7 +858,7 @@ TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {
     EXPECT_EQ(result.failure_frame, 3);
     EXPECT_EQ(sequence->inputs, 2);
     EXPECT_EQ(out.input_attempts, 2);
-    EXPECT_EQ(out.recapture_attempts, failure == 1 ? 6 : 1);
+    EXPECT_EQ(out.recapture_attempts, failure == 2 ? 1 : 6);
   }
 }
 

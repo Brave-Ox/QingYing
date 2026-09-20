@@ -9,7 +9,8 @@ enum class VisualFrameDecision {
   ObserveMore,
   StableMovement,
   NoProgress,
-  LostOverlap,
+  RetryableOverlap,
+  FatalOverlap,
 };
 
 struct VisualFrameObservation {

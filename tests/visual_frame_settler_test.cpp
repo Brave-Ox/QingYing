@@ -148,16 +148,43 @@ TEST(VisualFrameSettlerTest,
             VisualFrameDecision::NoProgress);
 }
 
-TEST(VisualFrameSettlerTest, LostOverlapStopsImmediately) {
+TEST(VisualFrameSettlerTest, MissingOverlapIsRetryable) {
   const Image accumulated = stableStrip(0);
   Image unrelated = accumulated;
   for (auto& pixel : unrelated.pixels) pixel = 0xFF7F11E3u;
   VisualFrameSettler settler;
 
   const auto observation = settler.observe(accumulated, unrelated);
-  EXPECT_EQ(observation.decision, VisualFrameDecision::LostOverlap);
+  EXPECT_EQ(observation.decision, VisualFrameDecision::RetryableOverlap);
   EXPECT_EQ(observation.reject_reason, OverlapRejectReason::NoCandidate);
   EXPECT_EQ(settler.sampleCount(), 1);
+}
+
+TEST(VisualFrameSettlerTest, InvalidImageIsFatal) {
+  const Image accumulated = stableStrip(0);
+  VisualFrameSettler settler;
+
+  const auto observation = settler.observe(accumulated, Image{});
+
+  EXPECT_EQ(observation.decision, VisualFrameDecision::FatalOverlap);
+  EXPECT_EQ(observation.reject_reason, OverlapRejectReason::InvalidImage);
+}
+
+TEST(VisualFrameSettlerTest, RetryableOverlapBreaksMovementStability) {
+  const Image accumulated = stableStrip(0);
+  const Image moved = stableStrip(10);
+  Image unrelated = accumulated;
+  for (auto& pixel : unrelated.pixels) pixel = 0xFF7F11E3u;
+  VisualFrameSettler settler;
+
+  EXPECT_EQ(settler.observe(accumulated, moved).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, unrelated).decision,
+            VisualFrameDecision::RetryableOverlap);
+  EXPECT_EQ(settler.observe(accumulated, moved).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, moved).decision,
+            VisualFrameDecision::StableMovement);
 }
 
 }  // namespace qingying

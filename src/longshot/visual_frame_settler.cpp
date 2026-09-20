@@ -14,6 +14,12 @@ ImageStitchOptions stabilityOptions() {
   return options;
 }
 
+bool isFatalOverlapRejection(OverlapRejectReason reason) noexcept {
+  return reason == OverlapRejectReason::InvalidImage ||
+         reason == OverlapRejectReason::WidthMismatch ||
+         reason == OverlapRejectReason::InvalidEdgeExclusion;
+}
+
 }  // namespace
 
 VisualFrameSettler::VisualFrameSettler() : stitcher_(stabilityOptions()) {}
@@ -26,7 +32,13 @@ VisualFrameObservation VisualFrameSettler::observe(
   ++sample_count_;
   OverlapEvidence evidence;
   if (!stitcher_.findOverlap(accumulated, sample, evidence)) {
-    return {VisualFrameDecision::LostOverlap, 0, 0, 0,
+    movement_overlap_ = 0;
+    stable_movement_samples_ = 0;
+    unchanged_samples_ = 0;
+    return {isFatalOverlapRejection(evidence.reject_reason)
+                ? VisualFrameDecision::FatalOverlap
+                : VisualFrameDecision::RetryableOverlap,
+            0, 0, 0,
             evidence.reject_reason};
   }
   if (!evidence.accepted()) {
@@ -43,7 +55,13 @@ VisualFrameObservation VisualFrameSettler::observe(
               evidence.candidate_overlap_rows, 0, accumulated.height,
               evidence.reject_reason};
     }
-    return {VisualFrameDecision::LostOverlap, 0, 0, 0,
+    movement_overlap_ = 0;
+    stable_movement_samples_ = 0;
+    unchanged_samples_ = 0;
+    return {isFatalOverlapRejection(evidence.reject_reason)
+                ? VisualFrameDecision::FatalOverlap
+                : VisualFrameDecision::RetryableOverlap,
+            0, 0, 0,
             evidence.reject_reason};
   }
   const int overlap_rows = evidence.overlap_rows;
