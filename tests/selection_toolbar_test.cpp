@@ -1,4 +1,5 @@
 #include "qingying/overlay/selection_toolbar.hpp"
+#include "qingying/ui/shortcut_types.hpp"
 
 #include <gtest/gtest.h>
 
@@ -34,6 +35,13 @@ const SelectionToolbarItemModel& itemFor(const SelectionToolbarItems& items,
     }
   }
   return items.front();
+}
+
+SelectionShortcutSettings defaultSelectionShortcuts()
+{
+  return SelectionShortcutSettings{
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')},
+      ShortcutBinding{0, static_cast<UINT>('L')}};
 }
 
 }  // namespace
@@ -96,49 +104,82 @@ TEST(SelectionToolbarTest, FinishingPhaseDisablesEveryCommand) {
 TEST(SelectionToolbarTest, ShortcutsMatchEnabledToolbarCommands)
 {
   SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+  const SelectionShortcutSettings shortcuts = defaultSelectionShortcuts();
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
-                                              SelectionToolbarCopyShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::Copy);
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
-                                              SelectionToolbarLongShotShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('L')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
-                                               SelectionToolbarCopyShortcutVirtualKey,
-                                               command));
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
-                                               SelectionToolbarLongShotShortcutVirtualKey,
-                                               command));
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
-                                               true,
-                                               SelectionToolbarCopyShortcutVirtualKey,
-                                               command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('C')}, command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('L')}, command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::LongShotRunning, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')}, command));
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
-                                              false,
-                                              SelectionToolbarLongShotShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::LongShotRunning, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('L')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 }
 
 TEST(SelectionToolbarTest, HotkeysRouteWithoutKeyboardFocus)
 {
   SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+  const SelectionShortcutSettings shortcuts = defaultSelectionShortcuts();
 
   EXPECT_TRUE(selectionToolbarHotkeyCommand(
-      OverlayPhase::Selected, SelectionToolbarCopyHotkeyId, command));
+      OverlayPhase::Selected, shortcuts, SelectionToolbarCopyHotkeyId,
+      command));
   EXPECT_EQ(command, SelectionToolbarCommand::Copy);
 
   EXPECT_TRUE(selectionToolbarHotkeyCommand(
-      OverlayPhase::Selected, SelectionToolbarLongShotHotkeyId, command));
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 
-  EXPECT_FALSE(selectionToolbarHotkeyCommand(OverlayPhase::Selected, -1,
-                                             command));
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(OverlayPhase::Selected, shortcuts,
+                                             -1, command));
+}
+
+TEST(SelectionToolbarTest, CustomShortcutSnapshotRoutesConfiguredCommands)
+{
+  const SelectionShortcutSettings shortcuts{
+      ShortcutBinding{MOD_ALT, static_cast<UINT>('X')},
+      ShortcutBinding{MOD_SHIFT, static_cast<UINT>('Y')}};
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_ALT, static_cast<UINT>('X')}, command));
+  EXPECT_EQ(command, SelectionToolbarCommand::Copy);
+
+  EXPECT_TRUE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
+  EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
+}
+
+TEST(SelectionToolbarTest, EmptyConfiguredShortcutsDoNotRouteCommands)
+{
+  const SelectionShortcutSettings shortcuts{};
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarCopyHotkeyId,
+      command));
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
 }
 
 TEST(SelectionToolbarTest, InitialAndHoverFramesUseAtomicLayeredPresentation)

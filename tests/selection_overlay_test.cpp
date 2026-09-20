@@ -6,6 +6,8 @@
 
 #include "qingying/app/app_messages.hpp"
 #include "qingying/overlay/selection_overlay.hpp"
+#include "qingying/overlay/selection_toolbar.hpp"
+#include "qingying/ui/shortcut_types.hpp"
 
 namespace qingying {
 namespace {
@@ -52,6 +54,51 @@ HWND findCurrentProcessWindow(const wchar_t* class_name)
   return context.window;
 }
 
+void dispatchCurrentThreadMessages()
+{
+  MSG message{};
+  while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE)
+  {
+    TranslateMessage(&message);
+    DispatchMessageW(&message);
+  }
+}
+
+void selectRegion(HWND hwnd)
+{
+  SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(20, 30));
+  SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(180, 150));
+  SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(180, 150));
+}
+
+class ScopedThreadHotkey
+{
+ public:
+  ScopedThreadHotkey(int hotkey_id, UINT modifiers, UINT virtual_key)
+      : m_hotkey_id(hotkey_id),
+        m_registered(RegisterHotKey(nullptr, hotkey_id, modifiers,
+                                   virtual_key) != FALSE)
+  {
+  }
+
+  ~ScopedThreadHotkey()
+  {
+    if (m_registered)
+    {
+      static_cast<void>(UnregisterHotKey(nullptr, m_hotkey_id));
+    }
+  }
+
+  bool registered() const noexcept
+  {
+    return m_registered;
+  }
+
+ private:
+  int m_hotkey_id{0};
+  bool m_registered{false};
+};
+
 TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   SelectionOverlay overlay;
   bool callback_invoked = false;
@@ -66,6 +113,117 @@ TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   overlay.hide();
   EXPECT_FALSE(overlay.isVisible());
   EXPECT_FALSE(callback_invoked);
+}
+
+TEST(SelectionOverlayTest, CustomShortcutSnapshotRoutesCopyAction)
+{
+  SelectionOverlay overlay;
+  SelectionIntent result;
+  bool callback_invoked = false;
+  const SelectionShortcutSettings shortcuts{
+      ShortcutBinding{MOD_ALT, static_cast<UINT>('X')}, ShortcutBinding{}};
+
+  ASSERT_TRUE(overlay.show(
+      Image{},
+      [&result, &callback_invoked](const SelectionIntent& selection)
+      {
+        result = selection;
+        callback_invoked = true;
+      },
+      {}, {}, {}, false, shortcuts));
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  selectRegion(hwnd);
+  SendMessageW(hwnd, WM_HOTKEY,
+               static_cast<WPARAM>(SelectionToolbarCopyHotkeyId), 0);
+  dispatchCurrentThreadMessages();
+
+  ASSERT_TRUE(callback_invoked);
+  EXPECT_EQ(result.action, SelectionAction::Copy);
+}
+
+TEST(SelectionOverlayTest, EmptyShortcutSnapshotDoesNotInvokeToolbarAction)
+{
+  SelectionOverlay overlay;
+  bool callback_invoked = false;
+  const SelectionShortcutSettings shortcuts{};
+
+  ASSERT_TRUE(overlay.show(
+      Image{},
+      [&callback_invoked](const SelectionIntent&)
+      {
+        callback_invoked = true;
+      },
+      {}, {}, {}, false, shortcuts));
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  ScopedThreadHotkey available_hotkey(
+      96, MOD_ALT | MOD_NOREPEAT, VK_F24);
+  EXPECT_TRUE(available_hotkey.registered());
+
+  selectRegion(hwnd);
+  SendMessageW(hwnd, WM_HOTKEY,
+               static_cast<WPARAM>(SelectionToolbarCopyHotkeyId), 0);
+  dispatchCurrentThreadMessages();
+
+  EXPECT_TRUE(overlay.isVisible());
+  EXPECT_FALSE(callback_invoked);
+  overlay.hide();
+}
+
+TEST(SelectionOverlayTest, EmptyShortcutSnapshotPreservesEscapeBehavior)
+{
+  SelectionOverlay overlay;
+  bool callback_invoked = false;
+
+  ASSERT_TRUE(overlay.show(
+      Image{},
+      [&callback_invoked](const SelectionIntent&)
+      {
+        callback_invoked = true;
+      },
+      {}, {}, {}, false, SelectionShortcutSettings{}));
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+  dispatchCurrentThreadMessages();
+
+  EXPECT_FALSE(overlay.isVisible());
+  EXPECT_TRUE(callback_invoked);
+}
+
+TEST(SelectionOverlayTest, StolenLocalShortcutKeepsMouseSelectionUsable)
+{
+  constexpr int StolenHotkeyId = 97;
+  ScopedThreadHotkey stolen_hotkey(
+      StolenHotkeyId, MOD_ALT | MOD_NOREPEAT, VK_F24);
+  ASSERT_TRUE(stolen_hotkey.registered());
+
+  SelectionOverlay overlay;
+  bool callback_invoked = false;
+  const SelectionShortcutSettings shortcuts{
+      ShortcutBinding{MOD_ALT, VK_F24}, ShortcutBinding{}};
+  ASSERT_TRUE(overlay.show(
+      Image{},
+      [&callback_invoked](const SelectionIntent&)
+      {
+        callback_invoked = true;
+      },
+      {}, {}, {}, false, shortcuts));
+  const HWND hwnd = FindWindowW(L"QingYingSelectionOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  selectRegion(hwnd);
+  SendMessageW(hwnd, WM_HOTKEY,
+               static_cast<WPARAM>(SelectionToolbarCopyHotkeyId), 0);
+  dispatchCurrentThreadMessages();
+
+  EXPECT_TRUE(overlay.isVisible());
+  EXPECT_FALSE(callback_invoked);
+  overlay.hide();
 }
 
 TEST(SelectionOverlayTest, DestructorClosesVisibleOverlayWithoutCallback) {

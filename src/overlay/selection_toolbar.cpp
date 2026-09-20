@@ -41,16 +41,18 @@ SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept {
             stop_enabled}}};
 }
 
-bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
-                                     WPARAM key,
-                                     SelectionToolbarCommand& command) noexcept
+bool selectionToolbarShortcutCommand(
+    OverlayPhase phase, const SelectionShortcutSettings& shortcuts,
+    const ShortcutBinding& shortcut,
+    SelectionToolbarCommand& command) noexcept
 {
   SelectionToolbarCommand requested = SelectionToolbarCommand::Cancel;
-  if (control_down && key == SelectionToolbarCopyShortcutVirtualKey)
+  if (!shortcuts.m_copy.empty() && shortcut == shortcuts.m_copy)
   {
     requested = SelectionToolbarCommand::Copy;
   }
-  else if (!control_down && key == SelectionToolbarLongShotShortcutVirtualKey)
+  else if (!shortcuts.m_toggle_longshot.empty() &&
+           shortcut == shortcuts.m_toggle_longshot)
   {
     requested = SelectionToolbarCommand::ToggleLongShot;
   }
@@ -71,18 +73,20 @@ bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
   return false;
 }
 
-bool selectionToolbarHotkeyCommand(OverlayPhase phase, int hotkey_id,
+bool selectionToolbarHotkeyCommand(OverlayPhase phase,
+                                   const SelectionShortcutSettings& shortcuts,
+                                   int hotkey_id,
                                    SelectionToolbarCommand& command) noexcept
 {
   if (hotkey_id == SelectionToolbarCopyHotkeyId)
   {
-    return selectionToolbarShortcutCommand(
-        phase, true, SelectionToolbarCopyShortcutVirtualKey, command);
+    return selectionToolbarShortcutCommand(phase, shortcuts, shortcuts.m_copy,
+                                           command);
   }
   if (hotkey_id == SelectionToolbarLongShotHotkeyId)
   {
     return selectionToolbarShortcutCommand(
-        phase, false, SelectionToolbarLongShotShortcutVirtualKey, command);
+        phase, shortcuts, shortcuts.m_toggle_longshot, command);
   }
   return false;
 }

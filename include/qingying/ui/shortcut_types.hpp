@@ -67,6 +67,13 @@ struct SelectionShortcutSettings
   ShortcutBinding m_toggle_longshot;
 };
 
+constexpr SelectionShortcutSettings defaultSelectionShortcutSettings() noexcept
+{
+  return SelectionShortcutSettings{
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')},
+      ShortcutBinding{0, static_cast<UINT>('L')}};
+}
+
 constexpr bool shortcutIsReserved(const ShortcutBinding& binding) noexcept
 {
   if (!binding.valid() || binding.empty())

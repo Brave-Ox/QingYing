@@ -4,6 +4,7 @@
 #include "qingying/diagnostics/ui_message_boundary.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -33,6 +34,7 @@ const Image& emptyBackground() { static const Image empty; return empty; }
 constexpr int kEscapeHotkeyId = 2;
 constexpr int kCandidateNextHotkeyId = 7;
 constexpr int kCandidatePreviousHotkeyId = 8;
+constexpr std::size_t kMaximumOverlayHotkeys = 11;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
 constexpr UINT_PTR kUiaResultPollTimerId = 5;
@@ -54,6 +56,9 @@ struct OverlayWindowData {
   std::atomic<UiMessageToken>* preview_token{nullptr};
   UiMessageChannel* message_channel{nullptr};
   bool window_destroyed{false};
+  SelectionShortcutSettings selection_shortcuts;
+  std::array<int, kMaximumOverlayHotkeys> registered_hotkey_ids{};
+  std::size_t registered_hotkey_count{0};
   HWND overlay{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
@@ -289,13 +294,13 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
   }
 }
 
-void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
+bool registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
                            UINT virtual_key,
                            const wchar_t* description) noexcept
 {
   if (RegisterHotKey(hwnd, hotkey_id, modifiers, virtual_key) != FALSE)
   {
-    return;
+    return true;
   }
 
   wchar_t message[256]{};
@@ -308,6 +313,61 @@ void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
   {
     OutputDebugStringW(message);
   }
+  return false;
+}
+
+void registerTrackedOverlayHotkey(OverlayWindowData* data, int hotkey_id,
+                                  UINT modifiers, UINT virtual_key,
+                                  const wchar_t* description) noexcept
+{
+  if (data == nullptr ||
+      !registerOverlayHotkey(data->overlay, hotkey_id, modifiers, virtual_key,
+                             description))
+  {
+    return;
+  }
+
+  if (data->registered_hotkey_count < data->registered_hotkey_ids.size())
+  {
+    data->registered_hotkey_ids.at(data->registered_hotkey_count++) = hotkey_id;
+    return;
+  }
+
+  static_cast<void>(UnregisterHotKey(data->overlay, hotkey_id));
+  OutputDebugStringW(L"[QingYing] overlay hotkey tracking capacity exhausted\n");
+}
+
+bool overlayHotkeyWasRegistered(const OverlayWindowData* data,
+                                int hotkey_id) noexcept
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+
+  for (std::size_t index = 0; index < data->registered_hotkey_count; ++index)
+  {
+    if (data->registered_hotkey_ids.at(index) == hotkey_id)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void unregisterTrackedOverlayHotkeys(OverlayWindowData* data) noexcept
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  for (std::size_t index = 0; index < data->registered_hotkey_count; ++index)
+  {
+    static_cast<void>(
+        UnregisterHotKey(data->overlay, data->registered_hotkey_ids.at(index)));
+  }
+  data->registered_hotkey_count = 0;
 }
 
 void clearHover(OverlayWindowData* data) noexcept
@@ -1453,6 +1513,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         return 0;
       }
+      if (!overlayHotkeyWasRegistered(data, static_cast<int>(wparam)))
+      {
+        return 0;
+      }
       if (wparam == kCandidateNextHotkeyId)
       {
         static_cast<void>(cycleHoverCandidate(hwnd, data, 1));
@@ -1470,8 +1534,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
-      if (selectionToolbarHotkeyCommand(data->phase, static_cast<int>(wparam),
-                                        command))
+      if (selectionToolbarHotkeyCommand(data->phase, data->selection_shortcuts,
+                                        static_cast<int>(wparam), command))
       {
         handleToolbarCommand(data, command);
         return 0;
@@ -1535,17 +1599,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         if (data->message_channel != nullptr) {
           data->message_channel->drain();
         }
-        UnregisterHotKey(hwnd, kEscapeHotkeyId);
-        UnregisterHotKey(hwnd, kCandidateNextHotkeyId);
-        UnregisterHotKey(hwnd, kCandidatePreviousHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDetectElementsModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionWindowOnlyModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDisabledModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDetectElementsAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDisabledAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SelectionToolbarCopyHotkeyId);
-        UnregisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId);
+        unregisterTrackedOverlayHotkeys(data);
         if (callback && result.action != SelectionAction::LongShot) {
           callback(result);
         }
@@ -1609,7 +1663,21 @@ bool SelectionOverlay::show(Image background,
                                  longshot_control_callback,
                              const SelectionIntent& initial_selection,
                              SelectionClosedCallback closed_callback,
-                             bool initial_selection_locked) {
+                             bool initial_selection_locked)
+{
+  return show(std::move(background), std::move(callback),
+              std::move(longshot_control_callback), initial_selection,
+              std::move(closed_callback), initial_selection_locked,
+              defaultSelectionShortcutSettings());
+}
+
+bool SelectionOverlay::show(
+    Image background, SelectionCallback callback,
+    LongShotControlCallback longshot_control_callback,
+    const SelectionIntent& initial_selection,
+    SelectionClosedCallback closed_callback, bool initial_selection_locked,
+    const SelectionShortcutSettings& selection_shortcuts)
+{
   if (isVisible()) {
     return false;
   }
@@ -1647,6 +1715,7 @@ bool SelectionOverlay::show(Image background,
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
   data->longshot_control_callback = std::move(longshot_control_callback);
+  data->selection_shortcuts = selection_shortcuts;
   data->selection_locked = initial_selection_locked;
   data->owner_hwnd = &overlay_hwnd_;
   data->screen = coord::getVirtualScreen();
@@ -1684,30 +1753,43 @@ bool SelectionOverlay::show(Image background,
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
   // 键盘操作改由截图期间的临时热键提供，窗口销毁时统一注销。
-  (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
-  (void)RegisterHotKey(hwnd, kCandidateNextHotkeyId, MOD_NOREPEAT, VK_TAB);
-  (void)RegisterHotKey(hwnd, kCandidatePreviousHotkeyId,
-                       MOD_SHIFT | MOD_NOREPEAT, VK_TAB);
-  registerOverlayHotkey(hwnd, SmartRegionDetectElementsModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '1', L"Ctrl+1");
-  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '2', L"Ctrl+2");
-  registerOverlayHotkey(hwnd, SmartRegionDisabledModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '3', L"Ctrl+3");
-  registerOverlayHotkey(hwnd, SmartRegionDetectElementsAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '1',
-                        L"Ctrl+Shift+1");
-  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '2',
-                        L"Ctrl+Shift+2");
-  registerOverlayHotkey(hwnd, SmartRegionDisabledAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '3',
-                        L"Ctrl+Shift+3");
-  (void)RegisterHotKey(hwnd, SelectionToolbarCopyHotkeyId,
-                       MOD_CONTROL | MOD_NOREPEAT,
-                       SelectionToolbarCopyShortcutVirtualKey);
-  (void)RegisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId, MOD_NOREPEAT,
-                       SelectionToolbarLongShotShortcutVirtualKey);
+  OverlayWindowData* const overlay_data = impl_->window_data.get();
+  registerTrackedOverlayHotkey(overlay_data, kEscapeHotkeyId, 0, VK_ESCAPE,
+                               L"Escape");
+  registerTrackedOverlayHotkey(overlay_data, kCandidateNextHotkeyId,
+                               MOD_NOREPEAT, VK_TAB, L"Tab");
+  registerTrackedOverlayHotkey(overlay_data, kCandidatePreviousHotkeyId,
+                               MOD_SHIFT | MOD_NOREPEAT, VK_TAB, L"Shift+Tab");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionDetectElementsModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '1', L"Ctrl+1");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionWindowOnlyModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '2', L"Ctrl+2");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionDisabledModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '3', L"Ctrl+3");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionDetectElementsAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '1', L"Ctrl+Shift+1");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionWindowOnlyAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '2', L"Ctrl+Shift+2");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionDisabledAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '3', L"Ctrl+Shift+3");
+  if (!selection_shortcuts.m_copy.empty())
+  {
+    registerTrackedOverlayHotkey(
+        overlay_data, SelectionToolbarCopyHotkeyId,
+        selection_shortcuts.m_copy.m_modifiers | MOD_NOREPEAT,
+        selection_shortcuts.m_copy.m_virtual_key, L"selection copy");
+  }
+  if (!selection_shortcuts.m_toggle_longshot.empty())
+  {
+    registerTrackedOverlayHotkey(
+        overlay_data, SelectionToolbarLongShotHotkeyId,
+        selection_shortcuts.m_toggle_longshot.m_modifiers | MOD_NOREPEAT,
+        selection_shortcuts.m_toggle_longshot.m_virtual_key,
+        L"selection long shot");
+  }
 
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_READY, 0, 0);

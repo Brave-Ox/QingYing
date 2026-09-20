@@ -2,6 +2,7 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/overlay/selection_types.h"
+#include "qingying/ui/shortcut_types.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -39,6 +40,15 @@ class SelectionOverlay {
             const SelectionIntent& initial_selection = {},
             SelectionClosedCallback closed_callback = {},
             bool initial_selection_locked = false);
+
+  // Each visible overlay consumes an immutable shortcut snapshot. Subsequent
+  // settings changes take effect only when the next screenshot starts.
+  bool show(Image background, SelectionCallback callback,
+            LongShotControlCallback longshot_control_callback,
+            const SelectionIntent& initial_selection,
+            SelectionClosedCallback closed_callback,
+            bool initial_selection_locked,
+            const SelectionShortcutSettings& selection_shortcuts);
 
   // These methods are safe to call from the long-shot worker thread. Updates
   // are posted back to the overlay's UI thread.

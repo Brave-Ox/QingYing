@@ -42,10 +42,7 @@ inline UserSettings defaultUserSettings() noexcept
   UserSettings settings;
   settings.m_capture_hotkey =
       ShortcutBinding{MOD_CONTROL | MOD_SHIFT, static_cast<UINT>('Q')};
-  settings.m_selection_shortcuts.m_copy =
-      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')};
-  settings.m_selection_shortcuts.m_toggle_longshot =
-      ShortcutBinding{0, static_cast<UINT>('L')};
+  settings.m_selection_shortcuts = defaultSelectionShortcutSettings();
   settings.m_longshot_limits = LongShotLimits{30, 30000};
   return settings;
 }
