@@ -15,7 +15,7 @@ LongShotLimits LongShotLimitsProvider::snapshot() const
   return m_limits;
 }
 
-void LongShotLimitsProvider::update(const LongShotLimits& limits)
+void LongShotLimitsProvider::update(const LongShotLimits& limits) noexcept
 {
   std::lock_guard<std::mutex> lock(m_mutex);
   m_limits = limits;

@@ -14,7 +14,7 @@ class LongShotLimitsProvider
   explicit LongShotLimitsProvider(LongShotLimits limits = {});
 
   LongShotLimits snapshot() const;
-  void update(const LongShotLimits& limits);
+  void update(const LongShotLimits& limits) noexcept;
 
  private:
   mutable std::mutex m_mutex;

@@ -4,11 +4,13 @@ add_executable(qingying_tests
   user_settings_test.cpp
   user_settings_store_test.cpp
   hotkey_manager_test.cpp
+  settings_application_service_test.cpp
   image_memory_budget_test.cpp
   fault_boundary_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
   ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp
   ${PROJECT_SOURCE_DIR}/src/app/hotkey_manager.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/settings_application_service.cpp
   mcp_process_integration_test.cpp
   mcp_result_lifecycle_integration_test.cpp
   application_shutdown_coordinator_test.cpp
