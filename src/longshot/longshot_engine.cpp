@@ -810,16 +810,8 @@ ActionResult LongShotEngine::captureSelection(
       out.budget_reason = LongShotBudgetReason::Duration;
       break;
     }
-    if (frame_count >= limits.max_frames) {
-      out.budget_reason = LongShotBudgetReason::FrameCount;
-      break;
-    }
     if (stitched.height >= limits.max_output_height) {
       out.budget_reason = LongShotBudgetReason::OutputHeight;
-      break;
-    }
-    if (out.input_attempts >= limits.max_input_attempts) {
-      out.budget_reason = LongShotBudgetReason::InputAttempts;
       break;
     }
     if (!continue_capture()) {

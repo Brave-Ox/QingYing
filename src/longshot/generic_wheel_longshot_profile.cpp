@@ -31,7 +31,7 @@ bool genericWheelForegroundIsSafe(
 GenericWheelLongShotProfile::GenericWheelLongShotProfile()
     : GenericWheelLongShotProfile(
           {{static_cast<std::uint32_t>(GetCurrentProcessId())},
-           static_cast<std::uint32_t>(GetCurrentProcessId()), true, 64}) {}
+           static_cast<std::uint32_t>(GetCurrentProcessId()), true}) {}
 
 GenericWheelLongShotProfile::GenericWheelLongShotProfile(
     GenericWheelProfilePolicy policy)
@@ -91,8 +91,7 @@ bool GenericWheelLongShotProfile::scrollDown(
   if (cancelled_.load() || !sameRequest(request) || !target_.valid() ||
       profile.scroll_target != target_.target_window ||
       !sameRect(profile.content, target_.content) ||
-      input_count_ >= policy_.max_inputs || !foregroundIsSafe() ||
-      !validateGenericScrollTarget(request, target_,
+      !foregroundIsSafe() || !validateGenericScrollTarget(request, target_,
                                    policy_.target_policy)) {
     return false;
   }

@@ -12,7 +12,6 @@ struct GenericWheelProfilePolicy {
   GenericScrollTargetPolicy target_policy;
   std::uint32_t trusted_ui_process_id{0};
   bool enforce_foreground{true};
-  int max_inputs{64};
 };
 
 bool genericWheelForegroundIsSafe(

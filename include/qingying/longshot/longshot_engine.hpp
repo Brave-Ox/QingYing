@@ -25,7 +25,9 @@ struct LongShotFixedEdgeExclusions {
   bool enabled() const noexcept { return top_rows > 0 || bottom_rows > 0; }
 };
 
-// 一次长截图的安全限制。初始帧对已经占用两帧，因此 max_frames 至少为 2。
+// 一次长截图的安全限制。帧数和滚动输入次数不再作为引擎停止条件，由时长、
+// 输出高度、重采、稳定轮询和工作内存预算共同约束。两个旧字段暂时保留，
+// 仅用于兼容已有设置快照和持久化格式。
 struct LongShotLimits {
   int max_frames{30};
   int max_output_height{30000};
@@ -37,8 +39,7 @@ struct LongShotLimits {
   LongShotFixedEdgeExclusions fixed_edges{};
 
   bool valid() const {
-    return max_frames >= 2 && max_output_height > 0 &&
-           max_input_attempts > 0 && max_frame_recaptures >= 0 &&
+    return max_output_height > 0 && max_frame_recaptures >= 0 &&
            max_scroll_settle_polls >= 2 && max_working_bytes > 0 &&
            max_duration.count() > 0 &&
            max_duration <= std::chrono::minutes{30} && fixed_edges.valid();
@@ -103,10 +104,8 @@ enum class LongShotStopReason : std::uint8_t {
 
 enum class LongShotBudgetReason : std::uint8_t {
   None,
-  FrameCount,
   OutputHeight,
   Duration,
-  InputAttempts,
   FrameRecaptures,
   ScrollSettlePolls,
   WorkingMemory,

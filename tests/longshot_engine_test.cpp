@@ -215,9 +215,7 @@ TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
   const LongShotLimits limits;
 
   EXPECT_TRUE(limits.valid());
-  EXPECT_EQ(limits.max_frames, 30);
   EXPECT_EQ(limits.max_output_height, 30000);
-  EXPECT_EQ(limits.max_input_attempts, 64);
   EXPECT_EQ(limits.max_frame_recaptures, 5);
   EXPECT_EQ(limits.max_scroll_settle_polls, 20);
   EXPECT_EQ(limits.max_working_bytes, 512ULL * 1024 * 1024);
@@ -228,9 +226,6 @@ TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
 
 TEST(LongShotLimitsTest, RejectsInvalidResourceBudgets) {
   LongShotLimits limits;
-  limits.max_input_attempts = 0;
-  EXPECT_FALSE(limits.valid());
-  limits.max_input_attempts = 1;
   limits.max_frame_recaptures = -1;
   EXPECT_FALSE(limits.valid());
   limits.max_frame_recaptures = 0;
@@ -334,13 +329,6 @@ TEST(LongShotOutcomeTest, MalformedPayloadCannotBecomeExportable) {
   EXPECT_FALSE(outcome.hasExportableResult());
 }
 
-TEST(LongShotLimitsTest, InitialPairRequiresAtLeastTwoFrames) {
-  LongShotLimits limits;
-  limits.max_frames = 1;
-
-  EXPECT_FALSE(limits.valid());
-}
-
 TEST(LongShotEngineTest, ExplicitLimitsOverrideConstructionDefaults)
 {
   LongShotProfileRegistry registry;
@@ -356,9 +344,11 @@ TEST(LongShotEngineTest, ExplicitLimitsOverrideConstructionDefaults)
       std::move(registry));
   const LongShotRequest request{1, 0, 0, 8, 8};
   Image out;
+  LongShotLimits limits;
+  limits.max_output_height = 5;
 
   const ActionResult result = engine.captureSelection(
-      request, out, {}, {}, LongShotLimits{2, 5});
+      request, out, {}, {}, limits);
 
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error_code, ErrorCode::kInvalidArgument);
@@ -753,7 +743,6 @@ TEST(LongShotOutcomeCaptureTest,
   auto* sequence = profile.get();
   registry.add(std::move(profile));
   LongShotLimits limits;
-  limits.max_frames = 2;
   limits.fixed_edges.top_rows = 2;
   limits.fixed_edges.bottom_rows = 2;
   LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
@@ -773,10 +762,12 @@ TEST(LongShotOutcomeCaptureTest,
       engine.captureSelection({1, 0, 0, 32, 40}, outcome,
                               [&](const Image& image) {
                                 previews.push_back(image);
-                              });
+                              },
+                              [&] { return previews.size() < 2; });
 
   ASSERT_TRUE(result.ok);
-  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::UserStopped);
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::None);
   EXPECT_EQ(outcome.accepted_frames, 2);
   ASSERT_EQ(outcome.image.width, 32);
   ASSERT_EQ(outcome.image.height, 50);
@@ -866,36 +857,59 @@ TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {
   }
 }
 
-TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
-  for (bool height_limit : {false, true}) {
-    LongShotProfileRegistry registry;
-    auto profile = std::make_unique<SequenceProfile>();
-    auto* sequence = profile.get();
-    registry.add(std::move(profile));
-    int captures = 0;
-    LongShotLimits limits;
-    limits.max_frames = height_limit ? 30 : 2;
-    limits.max_output_height = height_limit ? 45 : 30000;
-    LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-      ++captures;
-      image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
-      ActionResult result;
-      result.ok = true;
-      return result;
-    }, std::move(registry), limits);
-    LongShotOutcome out;
-    EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
-    EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
-    EXPECT_EQ(out.budget_reason,
-              height_limit ? LongShotBudgetReason::OutputHeight
-                           : LongShotBudgetReason::FrameCount);
-    EXPECT_FALSE(out.isComplete());
-    EXPECT_EQ(out.accepted_frames, height_limit ? 1 : 2);
-    EXPECT_EQ(out.image.pixels, makeStrip(32, height_limit ? 40 : 50, 0).pixels);
-    EXPECT_EQ(out.input_attempts, 1);
-    EXPECT_EQ(out.recapture_attempts, 1);
-    EXPECT_EQ(captures, 3);
-  }
+TEST(LongShotOutcomeCaptureTest, OutputHeightLimitDoesNotClaimReachedBottom) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  int captures = 0;
+  LongShotLimits limits;
+  limits.max_output_height = 45;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    ++captures;
+    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome out;
+
+  EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::OutputHeight);
+  EXPECT_FALSE(out.isComplete());
+  EXPECT_EQ(out.accepted_frames, 1);
+  EXPECT_EQ(out.image.pixels, makeStrip(32, 40, 0).pixels);
+  EXPECT_EQ(out.input_attempts, 1);
+  EXPECT_EQ(out.recapture_attempts, 1);
+  EXPECT_EQ(captures, 3);
+}
+
+TEST(LongShotOutcomeCaptureTest, ContinuesBeyondFormerThirtyFrameLimit) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, sequence->inputs);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome out;
+  int previews = 0;
+
+  const auto result = engine.captureSelection(
+      {1, 0, 0, 32, 20}, out,
+      [&](const Image&) { ++previews; },
+      [&] { return previews < 31; });
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::UserStopped);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::None);
+  EXPECT_EQ(out.accepted_frames, 31);
+  EXPECT_EQ(out.input_attempts, 30);
+  EXPECT_EQ(out.image.height, 50);
 }
 
 TEST(LongShotOutcomeCaptureTest, DurationBudgetKeepsInitialFrame) {
@@ -921,29 +935,6 @@ TEST(LongShotOutcomeCaptureTest, DurationBudgetKeepsInitialFrame) {
   EXPECT_EQ(out.input_attempts, 0);
   EXPECT_GE(out.initial_capture_ms, 2u);
   EXPECT_GE(out.elapsed_ms, out.initial_capture_ms);
-}
-
-TEST(LongShotOutcomeCaptureTest, InputBudgetStopsBeforeAnotherWheel) {
-  LongShotProfileRegistry registry;
-  auto profile = std::make_unique<SequenceProfile>();
-  auto* sequence = profile.get();
-  registry.add(std::move(profile));
-  LongShotLimits limits;
-  limits.max_input_attempts = 1;
-  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
-    ActionResult result;
-    result.ok = true;
-    return result;
-  }, std::move(registry), limits);
-  LongShotOutcome out;
-
-  EXPECT_TRUE(engine.captureSelection({1, 0, 0, 32, 40}, out).ok);
-  EXPECT_EQ(out.stop_reason, LongShotStopReason::LimitReached);
-  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::InputAttempts);
-  EXPECT_EQ(out.accepted_frames, 2);
-  EXPECT_EQ(out.input_attempts, 1);
-  EXPECT_EQ(sequence->inputs, 1);
 }
 
 TEST(LongShotOutcomeCaptureTest,
@@ -977,23 +968,23 @@ TEST(LongShotOutcomeCaptureTest, ReportsProcessingAndPreviewMetrics) {
   auto profile = std::make_unique<SequenceProfile>();
   auto* sequence = profile.get();
   registry.add(std::move(profile));
-  LongShotLimits limits;
-  limits.max_frames = 2;
   LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
     image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
     ActionResult result;
     result.ok = true;
     return result;
-  }, std::move(registry), limits);
+  }, std::move(registry));
   LongShotOutcome out;
   int previews = 0;
 
   EXPECT_TRUE(engine.captureSelection(
       {1, 0, 0, 32, 40}, out,
-      [&](const Image&) { ++previews; }).ok);
+      [&](const Image&) { ++previews; },
+      [&] { return previews < 2; }).ok);
   EXPECT_EQ(out.preview_publications, 2);
   EXPECT_EQ(previews, 2);
-  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::FrameCount);
+  EXPECT_EQ(out.stop_reason, LongShotStopReason::UserStopped);
+  EXPECT_EQ(out.budget_reason, LongShotBudgetReason::None);
   EXPECT_GE(out.peak_working_bytes, 32u * 40u * 4u);
   EXPECT_GE(out.elapsed_ms, out.initial_capture_ms);
 }

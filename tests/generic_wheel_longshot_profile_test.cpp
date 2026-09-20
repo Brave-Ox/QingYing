@@ -145,12 +145,11 @@ class GenericWheelWindow {
   ScrollSurfaceState state_;
 };
 
-longshot_detail::GenericWheelProfilePolicy testPolicy(int max_inputs = 8) {
+longshot_detail::GenericWheelProfilePolicy testPolicy() {
   longshot_detail::GenericWheelProfilePolicy policy;
   policy.target_policy.excluded_process_id = 0;
   policy.trusted_ui_process_id = 0;
   policy.enforce_foreground = false;
-  policy.max_inputs = max_inputs;
   return policy;
 }
 
@@ -168,8 +167,6 @@ TEST(GenericWheelLongShotProfileTest,
   auto* generic_ptr = generic.get();
   LongShotProfileRegistry profiles;
   profiles.add(std::move(generic));
-  LongShotLimits limits;
-  limits.max_frames = 3;
   LongShotEngine engine(
       [&](const ScreenPhysicalRect& region, Image& image) {
         image = makeStrip(region.width, region.height, window.state().offset);
@@ -178,7 +175,7 @@ TEST(GenericWheelLongShotProfileTest,
         result.error_code = ErrorCode::kOk;
         return result;
       },
-      std::move(profiles), limits);
+      std::move(profiles));
   LongShotOutcome outcome;
   const LongShotRequest request = window.request();
 
@@ -186,15 +183,15 @@ TEST(GenericWheelLongShotProfileTest,
 
   EXPECT_TRUE(result.ok);
   EXPECT_EQ(outcome.strategy, "generic.wheel");
-  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::NoProgress);
   EXPECT_EQ(outcome.accepted_frames, 3);
-  EXPECT_EQ(outcome.input_attempts, 2);
-  EXPECT_EQ(outcome.recapture_attempts, 2);
+  EXPECT_EQ(outcome.input_attempts, 3);
+  EXPECT_EQ(outcome.recapture_attempts, 4);
   EXPECT_EQ(outcome.image.width, request.width);
   EXPECT_EQ(outcome.image.height, request.height + window.state().maximum);
   EXPECT_TRUE(outcome.isPartial());
-  EXPECT_EQ(window.state().wheel_messages, 2);
-  EXPECT_EQ(generic_ptr->inputCount(), 2);
+  EXPECT_EQ(window.state().wheel_messages, 3);
+  EXPECT_EQ(generic_ptr->inputCount(), 3);
 }
 
 TEST(GenericWheelLongShotProfileTest,
@@ -291,18 +288,20 @@ TEST(GenericWheelLongShotProfileTest,
       reinterpret_cast<std::uintptr_t>(foreign.root())));
 }
 
-TEST(GenericWheelLongShotProfileTest, InputBudgetIsStrictlyBounded) {
+TEST(GenericWheelLongShotProfileTest,
+     AllowsMoreThanFormerInputBudgetWhileSafe) {
   GenericWheelWindow window;
   ASSERT_NE(window.content(), nullptr);
-  longshot_detail::GenericWheelLongShotProfile profile(testPolicy(1));
+  longshot_detail::GenericWheelLongShotProfile profile(testPolicy());
   const LongShotRequest request = window.request();
   LongShotProfileResult resolved;
   ASSERT_TRUE(profile.resolve(request, resolved));
 
-  EXPECT_TRUE(profile.scrollDown(request, resolved));
-  EXPECT_FALSE(profile.scrollDown(request, resolved));
-  EXPECT_EQ(window.state().wheel_messages, 1);
-  EXPECT_EQ(profile.inputCount(), 1);
+  for (int input = 0; input < 65; ++input) {
+    ASSERT_TRUE(profile.scrollDown(request, resolved));
+  }
+  EXPECT_EQ(window.state().wheel_messages, 65);
+  EXPECT_EQ(profile.inputCount(), 65);
   LongShotScrollState state;
   EXPECT_FALSE(profile.queryScrollState(resolved, state));
   EXPECT_FALSE(state.valid);
