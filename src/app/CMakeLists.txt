@@ -65,6 +65,8 @@ add_executable(qingying WIN32
   main.cpp
   application.cpp
   settings_application_service.cpp
+  settings_window.cpp
+  settings_window_model.cpp
   single_instance_guard.cpp
   autostart_settings.cpp
   tray_controller.cpp
