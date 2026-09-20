@@ -16,13 +16,23 @@ namespace {
 
 constexpr wchar_t SettingsWindowClassName[] = L"QingYing.SettingsWindow";
 constexpr int BaseDpi = 96;
-constexpr int DefaultWidth = 720;
-constexpr int DefaultHeight = 540;
-constexpr int MinimumWidth = 680;
-constexpr int MinimumHeight = 500;
-constexpr int NavigationWidth = 168;
-constexpr int FooterHeight = 64;
-constexpr int ContentPadding = 32;
+constexpr int DefaultWidth = 760;
+constexpr int DefaultHeight = 560;
+constexpr int MinimumWidth = 720;
+constexpr int MinimumHeight = 520;
+constexpr int NavigationWidth = 208;
+constexpr int FooterHeight = 76;
+constexpr int ContentPadding = 36;
+constexpr COLORREF PrimaryColor = RGB(59, 130, 246);
+constexpr COLORREF PrimaryHoverColor = RGB(37, 99, 235);
+constexpr COLORREF NavigationBackgroundColor = RGB(247, 248, 250);
+constexpr COLORREF ContentBackgroundColor = RGB(255, 255, 255);
+constexpr COLORREF PageBackgroundColor = RGB(251, 252, 254);
+constexpr COLORREF SelectedNavigationColor = RGB(234, 242, 255);
+constexpr COLORREF BorderColor = RGB(229, 231, 235);
+constexpr COLORREF PrimaryTextColor = RGB(31, 35, 41);
+constexpr COLORREF SecondaryTextColor = RGB(100, 106, 115);
+constexpr COLORREF TertiaryTextColor = RGB(143, 149, 158);
 constexpr COLORREF ErrorTextColor = RGB(180, 57, 45);
 constexpr COLORREF StatusTextColor = RGB(67, 82, 68);
 
@@ -127,6 +137,67 @@ class BrushHandle final
   HBRUSH m_brush{nullptr};
 };
 
+class PenHandle final
+{
+ public:
+  explicit PenHandle(COLORREF color)
+      : m_pen(CreatePen(PS_SOLID, 1, color))
+  {
+  }
+
+  ~PenHandle()
+  {
+    if (m_pen != nullptr)
+    {
+      DeleteObject(m_pen);
+    }
+  }
+
+  HPEN get() const noexcept
+  {
+    return m_pen;
+  }
+
+ private:
+  HPEN m_pen{nullptr};
+};
+
+void drawRoundedRectangle(HDC dc, const RECT& rect, int radius,
+                          COLORREF fill_color, COLORREF border_color)
+{
+  BrushHandle brush(fill_color);
+  PenHandle pen(border_color);
+  const HGDIOBJ previous_brush = SelectObject(dc, brush.get());
+  const HGDIOBJ previous_pen = SelectObject(dc, pen.get());
+  RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+  SelectObject(dc, previous_pen);
+  SelectObject(dc, previous_brush);
+}
+
+void drawText(HDC dc, const RECT& rect, const std::wstring& text, HFONT font,
+              COLORREF color, UINT format)
+{
+  const HGDIOBJ previous_font = SelectObject(dc, font);
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, color);
+  RECT text_rect = rect;
+  DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &text_rect,
+            format | DT_SINGLELINE | DT_VCENTER);
+  SelectObject(dc, previous_font);
+}
+
+std::wstring controlText(HWND control)
+{
+  const int length = GetWindowTextLengthW(control);
+  std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+  if (length > 0)
+  {
+    GetWindowTextW(control, text.data(), length + 1);
+  }
+  text.resize(static_cast<std::size_t>(length));
+  return text;
+}
+
 std::wstring shortcutText(const ShortcutBinding& binding)
 {
   if (binding.empty())
@@ -222,6 +293,8 @@ struct SettingsWindow::Impl
   UINT dpi{BaseDpi};
   FontHandle body_font;
   FontHandle title_font;
+  FontHandle section_font;
+  FontHandle caption_font;
   bool updating_controls{false};
   std::array<HWND, 3> navigation{};
   std::array<HWND, 2> general_controls{};
@@ -262,8 +335,10 @@ struct SettingsWindow::Impl
 
   bool buildControls()
   {
-    body_font.create(9, FW_NORMAL, dpi);
-    title_font.create(14, FW_SEMIBOLD, dpi);
+    body_font.create(10, FW_NORMAL, dpi);
+    title_font.create(18, FW_SEMIBOLD, dpi);
+    section_font.create(11, FW_SEMIBOLD, dpi);
+    caption_font.create(8, FW_NORMAL, dpi);
     const auto create = [this](DWORD style, int id, const wchar_t* text)
     {
       HWND control = CreateWindowExW(
@@ -277,19 +352,19 @@ struct SettingsWindow::Impl
       }
       return control;
     };
-    navigation = {create(BS_PUSHBUTTON | WS_TABSTOP, NavigationGeneral, L"常规"),
-                  create(BS_PUSHBUTTON | WS_TABSTOP, NavigationHotkeys, L"快捷键"),
-                  create(BS_PUSHBUTTON | WS_TABSTOP, NavigationLongShot, L"长截图")};
+    navigation = {create(BS_OWNERDRAW | WS_TABSTOP, NavigationGeneral, L"常规"),
+                  create(BS_OWNERDRAW | WS_TABSTOP, NavigationHotkeys, L"快捷键"),
+                  create(BS_OWNERDRAW | WS_TABSTOP, NavigationLongShot, L"长截图")};
     general_controls = {
         create(BS_AUTOCHECKBOX | WS_TABSTOP, AutostartCheck, L"开机时启动轻映"),
         create(BS_AUTOCHECKBOX | WS_TABSTOP, AgentCheck, L"允许本机 Agent 接口")};
     hotkey_controls = {
-        create(BS_PUSHBUTTON | WS_TABSTOP, CaptureHotkeyButton, L""),
-        create(BS_PUSHBUTTON | WS_TABSTOP, CopyShortcutButton, L""),
-        create(BS_PUSHBUTTON | WS_TABSTOP, LongShotShortcutButton, L"")};
+        create(BS_OWNERDRAW | WS_TABSTOP, CaptureHotkeyButton, L""),
+        create(BS_OWNERDRAW | WS_TABSTOP, CopyShortcutButton, L""),
+        create(BS_OWNERDRAW | WS_TABSTOP, LongShotShortcutButton, L"")};
     const auto create_edit = [this](int id)
     {
-      HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+      HWND edit = CreateWindowExW(0, L"EDIT", L"",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER |
                                       ES_RIGHT | ES_AUTOHSCROLL,
                                   0, 0, 0, 0, window,
@@ -304,17 +379,17 @@ struct SettingsWindow::Impl
     };
     longshot_controls = {
         create_edit(MaxFramesEdit),
-        create(BS_PUSHBUTTON | WS_TABSTOP, MaxFramesDecrease, L"−"),
-        create(BS_PUSHBUTTON | WS_TABSTOP, MaxFramesIncrease, L"+"),
+        create(BS_OWNERDRAW | WS_TABSTOP, MaxFramesDecrease, L"-"),
+        create(BS_OWNERDRAW | WS_TABSTOP, MaxFramesIncrease, L"+"),
         create_edit(MaxHeightEdit),
-        create(BS_PUSHBUTTON | WS_TABSTOP, MaxHeightDecrease, L"−"),
-        create(BS_PUSHBUTTON | WS_TABSTOP, MaxHeightIncrease, L"+"),
+        create(BS_OWNERDRAW | WS_TABSTOP, MaxHeightDecrease, L"-"),
+        create(BS_OWNERDRAW | WS_TABSTOP, MaxHeightIncrease, L"+"),
         nullptr,
         nullptr};
-    restore_button = create(BS_PUSHBUTTON | WS_TABSTOP, RestoreDefaultsButton,
+    restore_button = create(BS_OWNERDRAW | WS_TABSTOP, RestoreDefaultsButton,
                             L"恢复当前页默认值");
-    cancel_button = create(BS_PUSHBUTTON | WS_TABSTOP, CancelButton, L"取消");
-    apply_button = create(BS_DEFPUSHBUTTON | WS_TABSTOP, ApplyButton, L"应用");
+    cancel_button = create(BS_OWNERDRAW | WS_TABSTOP, CancelButton, L"取消");
+    apply_button = create(BS_OWNERDRAW | WS_TABSTOP, ApplyButton, L"应用");
     banner = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_LEFT, 0, 0, 0,
                              0, window,
                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(BannerLabel)),
@@ -363,44 +438,141 @@ struct SettingsWindow::Impl
     const int row_height = scale(30, dpi);
     for (std::size_t index = 0; index < navigation.size(); ++index)
     {
-      MoveWindow(navigation[index], scale(16, dpi),
-                 scale(76 + static_cast<int>(index) * 44, dpi),
-                 nav_width - scale(32, dpi), scale(34, dpi), TRUE);
+      MoveWindow(navigation[index], scale(18, dpi),
+                 scale(104 + static_cast<int>(index) * 48, dpi),
+                 nav_width - scale(36, dpi), scale(40, dpi), TRUE);
     }
-    MoveWindow(general_controls[0], content_x, scale(144, dpi), content_width,
-               row_height, TRUE);
-    MoveWindow(general_controls[1], content_x, scale(184, dpi), content_width,
-               row_height, TRUE);
-    const int capsule_x = content_x + scale(176, dpi);
+    MoveWindow(general_controls[0], content_x + scale(24, dpi), scale(156, dpi),
+               content_width - scale(48, dpi), row_height, TRUE);
+    MoveWindow(general_controls[1], content_x + scale(24, dpi), scale(204, dpi),
+               content_width - scale(48, dpi), row_height, TRUE);
+    const int capsule_width = scale(154, dpi);
+    const int capsule_x = content_x + content_width - capsule_width - scale(24, dpi);
     for (std::size_t index = 0; index < hotkey_controls.size(); ++index)
     {
       MoveWindow(hotkey_controls[index], capsule_x,
-                 scale(142 + static_cast<int>(index) * 52, dpi),
-                 scale(230, dpi), scale(32, dpi), TRUE);
+                 scale(150 + static_cast<int>(index) * 72, dpi),
+                 capsule_width, scale(40, dpi), TRUE);
     }
-    MoveWindow(longshot_controls[0], content_x + scale(166, dpi), scale(142, dpi),
+    MoveWindow(longshot_controls[0], content_x + scale(190, dpi), scale(150, dpi),
                scale(120, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[1], content_x + scale(292, dpi), scale(142, dpi),
+    MoveWindow(longshot_controls[1], content_x + scale(316, dpi), scale(150, dpi),
                scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[2], content_x + scale(324, dpi), scale(142, dpi),
+    MoveWindow(longshot_controls[2], content_x + scale(348, dpi), scale(150, dpi),
                scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[3], content_x + scale(166, dpi), scale(190, dpi),
+    MoveWindow(longshot_controls[3], content_x + scale(190, dpi), scale(206, dpi),
                scale(120, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[4], content_x + scale(292, dpi), scale(190, dpi),
+    MoveWindow(longshot_controls[4], content_x + scale(316, dpi), scale(206, dpi),
                scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[5], content_x + scale(324, dpi), scale(190, dpi),
+    MoveWindow(longshot_controls[5], content_x + scale(348, dpi), scale(206, dpi),
                scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(banner, content_x, scale(94, dpi), content_width, scale(28, dpi), TRUE);
-    MoveWindow(field_error, content_x, scale(94, dpi), content_width,
+    MoveWindow(banner, content_x, scale(100, dpi), content_width, scale(24, dpi), TRUE);
+    MoveWindow(field_error, content_x, scale(100, dpi), content_width,
                scale(28, dpi), TRUE);
-    MoveWindow(warning, content_x, scale(284, dpi), content_width,
+    MoveWindow(warning, content_x, scale(306, dpi), content_width,
                scale(44, dpi), TRUE);
-    MoveWindow(restore_button, scale(20, dpi), footer_top + scale(16, dpi),
-               scale(148, dpi), scale(32, dpi), TRUE);
-    MoveWindow(apply_button, client.right - scale(104, dpi),
-               footer_top + scale(16, dpi), scale(76, dpi), scale(32, dpi), TRUE);
-    MoveWindow(cancel_button, client.right - scale(188, dpi),
-               footer_top + scale(16, dpi), scale(76, dpi), scale(32, dpi), TRUE);
+    MoveWindow(restore_button, scale(24, dpi), footer_top + scale(20, dpi),
+               scale(148, dpi), scale(36, dpi), TRUE);
+    MoveWindow(apply_button, client.right - scale(28, dpi) - scale(84, dpi),
+               footer_top + scale(20, dpi), scale(84, dpi), scale(36, dpi), TRUE);
+    MoveWindow(cancel_button, client.right - scale(124, dpi) - scale(84, dpi),
+               footer_top + scale(20, dpi), scale(84, dpi), scale(36, dpi), TRUE);
+  }
+
+  void drawNavigationItem(const DRAWITEMSTRUCT& item)
+  {
+    const SettingsPage page = model == nullptr ? SettingsPage::General
+                                                : model->currentPage();
+    const bool selected = static_cast<int>(item.CtlID) - NavigationGeneral ==
+        static_cast<int>(page);
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const COLORREF fill_color = selected ? SelectedNavigationColor
+        : pressed ? RGB(239, 242, 247) : NavigationBackgroundColor;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(8, dpi), fill_color,
+                         fill_color);
+    if (selected)
+    {
+      BrushHandle indicator(PrimaryColor);
+      RECT indicator_rect{item.rcItem.left, item.rcItem.top + scale(10, dpi),
+                          item.rcItem.left + scale(3, dpi),
+                          item.rcItem.bottom - scale(10, dpi)};
+      FillRect(item.hDC, &indicator_rect, indicator.get());
+    }
+    RECT text_rect{item.rcItem.left + scale(16, dpi), item.rcItem.top,
+                   item.rcItem.right - scale(12, dpi), item.rcItem.bottom};
+    drawText(item.hDC, text_rect, controlText(item.hwndItem), body_font.get(),
+             selected ? PrimaryColor : PrimaryTextColor, DT_LEFT);
+  }
+
+  void drawHotkeyInput(const DRAWITEMSTRUCT& item)
+  {
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const SettingsShortcutField field = item.CtlID == CaptureHotkeyButton
+        ? SettingsShortcutField::Capture
+        : item.CtlID == CopyShortcutButton ? SettingsShortcutField::Copy
+                                            : SettingsShortcutField::ToggleLongShot;
+    const bool recording = model != nullptr &&
+        model->recordingShortcut() == field;
+    const COLORREF fill_color = recording ? RGB(245, 249, 255)
+        : pressed ? RGB(243, 246, 251) : RGB(249, 250, 252);
+    const COLORREF border_color = recording ? PrimaryColor : BorderColor;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(8, dpi), fill_color,
+                         border_color);
+    RECT text_rect{item.rcItem.left + scale(10, dpi), item.rcItem.top,
+                   item.rcItem.right - scale(10, dpi), item.rcItem.bottom};
+    drawText(item.hDC, text_rect, controlText(item.hwndItem), body_font.get(),
+             recording ? PrimaryColor : PrimaryTextColor, DT_CENTER);
+  }
+
+  void drawFooterButton(const DRAWITEMSTRUCT& item, bool primary)
+  {
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const COLORREF fill_color = primary
+        ? disabled ? RGB(191, 219, 254)
+                   : pressed ? PrimaryHoverColor : PrimaryColor
+        : pressed ? RGB(243, 244, 246) : ContentBackgroundColor;
+    const COLORREF border_color = primary ? fill_color : BorderColor;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(8, dpi), fill_color,
+                         border_color);
+    drawText(item.hDC, item.rcItem, controlText(item.hwndItem), body_font.get(),
+             primary ? RGB(255, 255, 255) : SecondaryTextColor, DT_CENTER);
+  }
+
+  void drawSmallButton(const DRAWITEMSTRUCT& item)
+  {
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(6, dpi),
+                         pressed ? RGB(243, 246, 251) : ContentBackgroundColor,
+                         BorderColor);
+    drawText(item.hDC, item.rcItem, controlText(item.hwndItem), section_font.get(),
+             SecondaryTextColor, DT_CENTER);
+  }
+
+  void drawOwnerDrawItem(const DRAWITEMSTRUCT& item)
+  {
+    if (item.CtlID >= NavigationGeneral && item.CtlID <= NavigationLongShot)
+    {
+      drawNavigationItem(item);
+      return;
+    }
+    if (item.CtlID >= CaptureHotkeyButton &&
+        item.CtlID <= LongShotShortcutButton)
+    {
+      drawHotkeyInput(item);
+      return;
+    }
+    if (item.CtlID == ApplyButton)
+    {
+      drawFooterButton(item, true);
+      return;
+    }
+    if (item.CtlID == CancelButton || item.CtlID == RestoreDefaultsButton)
+    {
+      drawFooterButton(item, false);
+      return;
+    }
+    drawSmallButton(item);
   }
 
   void refreshControls()
@@ -431,11 +603,12 @@ struct SettingsWindow::Impl
     const SettingsPage page = model->currentPage();
     for (std::size_t index = 0; index < navigation.size(); ++index)
     {
-      const bool selected = static_cast<int>(page) == static_cast<int>(index);
       const wchar_t* label = index == 0 ? L"常规" : index == 1 ? L"快捷键" : L"长截图";
-      SetWindowTextW(navigation[index],
-                     (selected ? std::wstring(L"● ") + label : label).c_str());
+      SetWindowTextW(navigation[index], label);
     }
+    SetWindowTextW(restore_button,
+                   page == SettingsPage::Hotkeys ? L"恢复默认快捷键"
+                                                   : L"恢复当前页默认值");
     for (HWND control : general_controls)
     {
       ShowWindow(control, page == SettingsPage::General ? SW_SHOW : SW_HIDE);
@@ -669,8 +842,10 @@ struct SettingsWindow::Impl
                      suggested->right - suggested->left,
                      suggested->bottom - suggested->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
-        body_font.create(9, FW_NORMAL, dpi);
-        title_font.create(14, FW_SEMIBOLD, dpi);
+        body_font.create(10, FW_NORMAL, dpi);
+        title_font.create(18, FW_SEMIBOLD, dpi);
+        section_font.create(11, FW_SEMIBOLD, dpi);
+        caption_font.create(8, FW_NORMAL, dpi);
         layout();
         refreshControls();
         return 0;
@@ -760,6 +935,9 @@ struct SettingsWindow::Impl
       case WM_KEYDOWN:
         handleShortcutKey(static_cast<UINT>(wparam));
         return 0;
+      case WM_DRAWITEM:
+        drawOwnerDrawItem(*reinterpret_cast<const DRAWITEMSTRUCT*>(lparam));
+        return TRUE;
       case WM_CTLCOLORSTATIC:
       {
         HDC dc = reinterpret_cast<HDC>(wparam);
@@ -783,52 +961,88 @@ struct SettingsWindow::Impl
         GetClientRect(window, &client);
         const int nav_width = scale(NavigationWidth, dpi);
         const int footer_top = client.bottom - scale(FooterHeight, dpi);
-        BrushHandle content_brush(RGB(253, 252, 249));
-        BrushHandle nav_brush(RGB(244, 246, 239));
-        BrushHandle footer_brush(RGB(249, 249, 247));
+        const int content_x = nav_width + scale(ContentPadding, dpi);
+        const int content_width = client.right - content_x - scale(ContentPadding, dpi);
+        BrushHandle content_brush(PageBackgroundColor);
+        BrushHandle nav_brush(NavigationBackgroundColor);
+        BrushHandle footer_brush(ContentBackgroundColor);
         RECT navigation_rect{0, 0, nav_width, footer_top};
         RECT content_rect{nav_width, 0, client.right, footer_top};
         RECT footer_rect{0, footer_top, client.right, client.bottom};
         FillRect(dc, &navigation_rect, nav_brush.get());
         FillRect(dc, &content_rect, content_brush.get());
         FillRect(dc, &footer_rect, footer_brush.get());
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(43, 48, 43));
-        SelectObject(dc, title_font.get());
-        TextOutW(dc, scale(20, dpi), scale(22, dpi), L"轻映设置", 4);
-        SelectObject(dc, body_font.get());
+        PenHandle footer_pen(BorderColor);
+        const HGDIOBJ previous_pen = SelectObject(dc, footer_pen.get());
+        MoveToEx(dc, 0, footer_top, nullptr);
+        LineTo(dc, client.right, footer_top);
+        SelectObject(dc, previous_pen);
+        drawText(dc, RECT{scale(24, dpi), scale(26, dpi), nav_width - scale(20, dpi),
+                          scale(58, dpi)},
+                 L"轻映设置", section_font.get(), PrimaryTextColor, DT_LEFT);
         const SettingsPage page = model == nullptr ? SettingsPage::General : model->currentPage();
         const wchar_t* title = page == SettingsPage::General ? L"常规"
             : page == SettingsPage::Hotkeys ? L"快捷键" : L"长截图";
-        TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(34, dpi),
-                 title, static_cast<int>(std::wcslen(title)));
+        drawText(dc, RECT{content_x, scale(30, dpi), content_x + content_width,
+                          scale(62, dpi)},
+                 title, title_font.get(), PrimaryTextColor, DT_LEFT);
         const wchar_t* description = page == SettingsPage::General
-            ? L"管理启动和本机接口。"
+            ? L"管理轻映的启动方式和本机接口。"
             : page == SettingsPage::Hotkeys
-                ? L"点击键帽后按下新的组合键。"
+                ? L"自定义轻映常用操作的快捷键。"
                 : L"设置下一次长截图的安全上限。";
-        TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(62, dpi),
-                 description, static_cast<int>(std::wcslen(description)));
+        drawText(dc, RECT{content_x, scale(70, dpi), content_x + content_width,
+                          scale(94, dpi)},
+                 description, body_font.get(), SecondaryTextColor, DT_LEFT);
+        const int card_bottom = page == SettingsPage::Hotkeys ? scale(358, dpi)
+                                                               : scale(270, dpi);
+        RECT card_rect{content_x, scale(132, dpi), content_x + content_width,
+                       card_bottom};
+        drawRoundedRectangle(dc, card_rect, scale(10, dpi), ContentBackgroundColor,
+                             BorderColor);
         if (page == SettingsPage::General)
         {
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(250, dpi),
-                   L"轻映 · Windows 原生轻量截图工具", 18);
+          drawText(dc, RECT{content_x + scale(24, dpi), scale(226, dpi),
+                            content_x + content_width - scale(24, dpi), scale(250, dpi)},
+                   L"轻映 · Windows 原生轻量截图工具", caption_font.get(),
+                   TertiaryTextColor, DT_LEFT);
         }
         if (page == SettingsPage::Hotkeys)
         {
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(150, dpi),
-                   L"开始截图", 4);
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(202, dpi),
-                   L"复制截图", 4);
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(254, dpi),
-                   L"长截图控制", 5);
+          constexpr std::array<const wchar_t*, 3> labels{
+              L"开始截图", L"复制截图", L"长截图控制"};
+          constexpr std::array<const wchar_t*, 3> details{
+              L"开启选区并进行截图", L"将当前截图复制到剪贴板", L"开始或结束长截图"};
+          for (int index = 0; index < 3; ++index)
+          {
+            const int row_top = scale(142 + index * 72, dpi);
+            drawText(dc, RECT{content_x + scale(24, dpi), row_top,
+                              content_x + scale(190, dpi), row_top + scale(26, dpi)},
+                     labels[static_cast<std::size_t>(index)], section_font.get(),
+                     PrimaryTextColor, DT_LEFT);
+            drawText(dc, RECT{content_x + scale(24, dpi), row_top + scale(26, dpi),
+                              content_x + scale(210, dpi), row_top + scale(48, dpi)},
+                     details[static_cast<std::size_t>(index)], caption_font.get(),
+                     SecondaryTextColor, DT_LEFT);
+            if (index < 2)
+            {
+              PenHandle separator_pen(BorderColor);
+              const HGDIOBJ previous_separator = SelectObject(dc, separator_pen.get());
+              MoveToEx(dc, content_x + scale(24, dpi), row_top + scale(62, dpi), nullptr);
+              LineTo(dc, content_x + content_width - scale(24, dpi),
+                     row_top + scale(62, dpi));
+              SelectObject(dc, previous_separator);
+            }
+          }
         }
         if (page == SettingsPage::LongShot)
         {
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(150, dpi),
-                   L"最大帧数", 4);
-          TextOutW(dc, nav_width + scale(ContentPadding, dpi), scale(198, dpi),
-                   L"最大输出高度", 6);
+          drawText(dc, RECT{content_x + scale(24, dpi), scale(150, dpi),
+                            content_x + scale(180, dpi), scale(178, dpi)},
+                   L"最大帧数", section_font.get(), PrimaryTextColor, DT_LEFT);
+          drawText(dc, RECT{content_x + scale(24, dpi), scale(206, dpi),
+                            content_x + scale(180, dpi), scale(234, dpi)},
+                   L"最大输出高度", section_font.get(), PrimaryTextColor, DT_LEFT);
         }
         EndPaint(window, &paint);
         return 0;
