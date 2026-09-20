@@ -162,18 +162,6 @@ void drawTrayMenuHoverCard(HDC hdc, const RECT& item_rect, int dpi)
 {
   const RECT card = trayMenuHoverCardRect(item_rect, dpi);
   const int radius = trayMenuScalePx(TrayMenuHoverRadius, dpi);
-  const int offset_x = trayMenuScalePx(TrayMenuHoverShadowOffsetX, dpi);
-  const int offset_y = trayMenuScalePx(TrayMenuHoverShadowOffsetY, dpi);
-  const int spread = trayMenuScalePx(TrayMenuHoverShadowSpreadPx, dpi);
-  for (int layer = TrayMenuHoverShadowLayers; layer >= 1; --layer)
-  {
-    RECT shadow = card;
-    OffsetRect(&shadow, offset_x * layer / TrayMenuHoverShadowLayers,
-               offset_y * layer / TrayMenuHoverShadowLayers);
-    InflateRect(&shadow, spread * (layer - 1), spread * (layer - 1));
-    const COLORREF shade = trayMenuHoverShadowLayerColor(layer);
-    fillRoundRect(hdc, shadow, shade, shade, radius);
-  }
   fillRoundRect(hdc, card, TrayMenuHoverCardFill, TrayMenuHoverCardBorder,
                 radius);
 }
@@ -517,10 +505,14 @@ void TrayController::onCommand(UINT id) {
       if (autostart_toggle_ && autostart_toggle_(next)) autostart_enabled_ = next;
       break;
     }
-    case TrayMenuAutomationCommandId:
-      if (automation_toggle_ && automation_toggle_(!automation_enabled_))
-        automation_enabled_ = !automation_enabled_;
+    case TrayMenuAutomationCommandId: {
+      const bool next = !automation_enabled_;
+      if (automation_toggle_ && automation_toggle_(next))
+      {
+        automation_enabled_ = next;
+      }
       break;
+    }
     case IDM_TRAY_EXIT:
       PostMessageW(hwnd_, WM_CLOSE, 0, 0);
       break;
