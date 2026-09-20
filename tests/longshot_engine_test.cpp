@@ -725,7 +725,7 @@ TEST(LongShotInitialPairTest, WorkingMemoryBudgetRejectsBeforeCapture) {
 }
 
 TEST(LongShotOutcomeCaptureTest,
-     AmbiguousPatternReportsReasonAndPreservesInitialFrame) {
+     PeriodicPatternUsesDeterministicCurrentCandidate) {
   LongShotProfileRegistry registry;
   auto profile = std::make_unique<SequenceProfile>();
   auto* sequence = profile.get();
@@ -741,15 +741,13 @@ TEST(LongShotOutcomeCaptureTest,
   const ActionResult result =
       engine.captureSelection({1, 0, 0, 32, 40}, outcome);
 
-  EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.failure_stage, "overlap_detection");
-  EXPECT_EQ(result.message, "longshot: overlap candidates are ambiguous");
-  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::MatchFailed);
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::NoProgress);
   EXPECT_EQ(outcome.accepted_frames, 1);
   EXPECT_EQ(outcome.image.pixels, makePeriodicStrip(32, 40, 5).pixels);
   EXPECT_EQ(outcome.input_attempts, 1);
-  EXPECT_EQ(outcome.recapture_attempts, 5);
-  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::FrameRecaptures);
+  EXPECT_EQ(outcome.recapture_attempts, 2);
+  EXPECT_EQ(outcome.budget_reason, LongShotBudgetReason::None);
   EXPECT_EQ(sequence->inputs, 1);
 }
 

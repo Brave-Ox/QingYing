@@ -348,34 +348,43 @@ TEST(ImageStitcherEvidenceTest, ReportsUniqueMultiBandOverlapEvidence) {
   EXPECT_GE(evidence.vertical_texture_per_mille, 100);
 }
 
-TEST(ImageStitcherEvidenceTest, RejectsFlatColorAndPreservesAccumulatedImage) {
-  Image accumulated{24, 24,
-                    std::vector<std::uint32_t>(24u * 24u, 0xFF334455u)};
-  const Image original = accumulated;
-  const Image next{24, 18,
-                   std::vector<std::uint32_t>(24u * 18u, 0xFF334455u)};
+TEST(ImageStitcherEvidenceTest, AcceptsUniqueLowTextureCurrentCandidate) {
+  const auto make_low_texture = [](int first_global_y) {
+    Image image{24, 40,
+                std::vector<std::uint32_t>(24u * 40u, 0xFF334455u)};
+    constexpr int kMarkerGlobalY = 20;
+    if (first_global_y <= kMarkerGlobalY &&
+        kMarkerGlobalY < first_global_y + image.height) {
+      const int marker_y = kMarkerGlobalY - first_global_y;
+      for (int x = 0; x < image.width; ++x) {
+        image.pixels[static_cast<std::size_t>(marker_y) * image.width + x] =
+            pixelFor(x, kMarkerGlobalY);
+      }
+    }
+    return image;
+  };
+  Image accumulated = make_low_texture(0);
+  const Image next = make_low_texture(10);
   ImageStitchOptions options;
+  options.sample_step = 1;
   options.require_overlap = true;
   ImageStitcher stitcher(options);
   OverlapEvidence evidence;
 
   ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
-  EXPECT_FALSE(evidence.accepted());
-  EXPECT_EQ(evidence.reject_reason,
-            OverlapRejectReason::InsufficientTexture);
-  EXPECT_STREQ(overlapRejectReasonName(evidence.reject_reason),
-               "insufficient_texture");
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.overlap_rows, 30);
+  EXPECT_EQ(evidence.displacement_rows, 10);
+  EXPECT_FALSE(evidence.texture_sufficient);
+  EXPECT_LT(evidence.vertical_texture_per_mille, 100);
   OverlapEvidence append_evidence;
-  EXPECT_FALSE(stitcher.append(accumulated, next, append_evidence));
-  EXPECT_EQ(append_evidence.reject_reason,
-            OverlapRejectReason::InsufficientTexture);
-  expectSameImage(accumulated, original);
+  EXPECT_TRUE(stitcher.append(accumulated, next, append_evidence));
+  EXPECT_EQ(accumulated.height, 50);
 }
 
 TEST(ImageStitcherEvidenceTest,
-     RejectsAmbiguousShortPeriodPatternAndPreservesAccumulatedImage) {
-  Image accumulated = makePeriodicStrip(24, 24, 0, 4);
-  const Image original = accumulated;
+     RanksAmbiguousCurrentCandidatesDeterministically) {
+  const Image accumulated = makePeriodicStrip(24, 24, 0, 4);
   const Image next = makePeriodicStrip(24, 16, 8, 4);
   ImageStitchOptions options;
   options.min_overlap_rows = 4;
@@ -385,22 +394,19 @@ TEST(ImageStitcherEvidenceTest,
   OverlapEvidence evidence;
 
   ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
-  EXPECT_FALSE(evidence.accepted());
-  EXPECT_EQ(evidence.reject_reason,
-            OverlapRejectReason::AmbiguousCandidates);
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
   EXPECT_GT(evidence.matching_candidates, 1);
   EXPECT_EQ(evidence.best_score_per_mille, 1000);
   EXPECT_EQ(evidence.second_best_score_per_mille, 1000);
-  OverlapEvidence append_evidence;
-  EXPECT_FALSE(stitcher.append(accumulated, next, append_evidence));
-  EXPECT_EQ(append_evidence.reject_reason,
-            OverlapRejectReason::AmbiguousCandidates);
-  expectSameImage(accumulated, original);
+  EXPECT_EQ(evidence.score_margin_per_mille, 0);
+  EXPECT_EQ(evidence.overlap_rows, 16);
+  EXPECT_EQ(evidence.displacement_rows, 0);
+  EXPECT_FALSE(evidence.selection_used_preferred_displacement);
 }
 
-TEST(ImageStitcherEvidenceTest, RejectsMatchConfinedToOnlySomeColumnBands) {
+TEST(ImageStitcherEvidenceTest, ReportsButDoesNotRejectRegionInconsistency) {
   Image accumulated = makeStrip(30, 24, 0);
-  const Image original = accumulated;
   Image next = makeStrip(30, 18, 6);
   for (int y = 0; y < next.height; ++y) {
     for (int x = 10; x < 20; ++x) {
@@ -416,13 +422,57 @@ TEST(ImageStitcherEvidenceTest, RejectsMatchConfinedToOnlySomeColumnBands) {
   OverlapEvidence evidence;
 
   ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
-  EXPECT_FALSE(evidence.accepted());
-  EXPECT_EQ(evidence.reject_reason,
-            OverlapRejectReason::InconsistentRegions);
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
+  EXPECT_FALSE(evidence.regions_consistent);
   EXPECT_LT(evidence.consistent_column_bands,
             evidence.sampled_column_bands);
-  EXPECT_FALSE(stitcher.append(accumulated, next));
-  expectSameImage(accumulated, original);
+  EXPECT_TRUE(stitcher.append(accumulated, next));
+  EXPECT_EQ(accumulated.height, 24);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     PreferredDisplacementOnlyRanksCloseCurrentCandidates) {
+  const Image accumulated = makePeriodicStrip(24, 24, 0, 4);
+  const Image next = makePeriodicStrip(24, 16, 8, 4);
+  ImageStitchOptions options;
+  options.min_overlap_rows = 4;
+  options.sample_step = 1;
+  options.preferred_displacement_rows = 4;
+  options.has_preferred_displacement = true;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.displacement_rows, 4);
+  EXPECT_EQ(evidence.overlap_rows, 12);
+  EXPECT_TRUE(evidence.selection_used_preferred_displacement);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     HistoricalDisplacementCannotCreateAMissingCurrentCandidate) {
+  const Image accumulated = makeStrip(32, 240, 0);
+  const Image next = makeStrip(32, 120, 200);
+  ImageStitchOptions options;
+  options.sample_step = 1;
+  options.preferred_displacement_rows = 200;
+  options.has_preferred_displacement = true;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.displacement_rows, 80);
+  EXPECT_EQ(evidence.overlap_rows, 40);
+
+  const Image no_overlap{
+      32, 120, std::vector<std::uint32_t>(32u * 120u, 0xFFDEADBEu)};
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, no_overlap, evidence));
+  EXPECT_FALSE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::NoCandidate);
 }
 
 TEST(ImageStitcherEvidenceTest, RejectsDisplacementOutsideConfiguredRange) {

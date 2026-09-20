@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace qingying {
 namespace {
@@ -421,9 +422,9 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
 
   CandidateEvidence best_global;
   CandidateEvidence best;
-  CandidateEvidence second_best;
-  bool saw_region_failure = false;
-  bool saw_texture_failure = false;
+  std::vector<CandidateEvidence> current_candidates;
+  std::uint16_t highest_score = 0;
+  std::uint16_t second_highest_score = 0;
   bool saw_displacement_failure = false;
   for (int candidate = maximum; candidate >= minimum; --candidate) {
     const CandidateEvidence inspected =
@@ -432,28 +433,51 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
     if (inspected.score_per_mille > best_global.score_per_mille) {
       best_global = inspected;
     }
-    if (!inspected.regions_consistent) {
-      saw_region_failure = true;
-      continue;
-    }
-    if (!inspected.texture_sufficient) {
-      saw_texture_failure = true;
-      continue;
-    }
     if (!inspected.displacement_valid) {
       saw_displacement_failure = true;
       continue;
     }
 
     ++evidence.matching_candidates;
+    current_candidates.push_back(inspected);
+    if (inspected.score_per_mille > highest_score) {
+      second_highest_score = highest_score;
+      highest_score = inspected.score_per_mille;
+    } else if (inspected.score_per_mille > second_highest_score) {
+      second_highest_score = inspected.score_per_mille;
+    }
     if (inspected.score_per_mille > best.score_per_mille ||
         (inspected.score_per_mille == best.score_per_mille &&
          inspected.overlap_rows > best.overlap_rows)) {
-      second_best = best;
       best = inspected;
-    } else if (inspected.score_per_mille >
-               second_best.score_per_mille) {
-      second_best = inspected;
+    }
+  }
+
+  bool used_preferred_displacement = false;
+  if (options_.has_preferred_displacement &&
+      evidence.matching_candidates > 1) {
+    CandidateEvidence preferred;
+    std::int64_t preferred_distance = std::numeric_limits<std::int64_t>::max();
+    const int close_score_margin =
+        (std::min<int>)(options_.minimum_score_margin_per_mille, 1000);
+    for (const CandidateEvidence& inspected : current_candidates) {
+      if (static_cast<int>(highest_score) - inspected.score_per_mille >
+              close_score_margin) {
+        continue;
+      }
+      const std::int64_t distance = std::abs(
+          static_cast<std::int64_t>(inspected.displacement_rows) -
+          options_.preferred_displacement_rows);
+      if (preferred.overlap_rows == 0 || distance < preferred_distance ||
+          (distance == preferred_distance &&
+           inspected.overlap_rows > preferred.overlap_rows)) {
+        preferred = inspected;
+        preferred_distance = distance;
+      }
+    }
+    if (preferred.overlap_rows > 0) {
+      best = preferred;
+      used_preferred_displacement = true;
     }
   }
 
@@ -461,33 +485,28 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
                                                             : best_global;
   evidence.candidate_overlap_rows = reported.overlap_rows;
   evidence.displacement_rows = reported.displacement_rows;
-  evidence.best_score_per_mille = reported.score_per_mille;
-  evidence.second_best_score_per_mille = second_best.score_per_mille;
+  evidence.best_score_per_mille = highest_score;
+  evidence.second_best_score_per_mille = second_highest_score;
+  evidence.score_margin_per_mille =
+      highest_score >= second_highest_score
+          ? static_cast<std::uint16_t>(highest_score - second_highest_score)
+          : 0;
   evidence.vertical_texture_per_mille =
       reported.vertical_texture_per_mille;
   evidence.consistent_column_bands = reported.consistent_column_bands;
   evidence.sampled_column_bands = reported.sampled_column_bands;
   evidence.consistent_row_bands = reported.consistent_row_bands;
   evidence.sampled_row_bands = reported.sampled_row_bands;
+  evidence.regions_consistent = reported.regions_consistent;
+  evidence.texture_sufficient = reported.texture_sufficient;
+  evidence.selection_used_preferred_displacement =
+      used_preferred_displacement;
 
   if (evidence.matching_candidates == 0) {
     evidence.reject_reason =
         saw_displacement_failure
             ? OverlapRejectReason::DisplacementOutOfRange
-            : saw_texture_failure
-                ? OverlapRejectReason::InsufficientTexture
-                : saw_region_failure
-                    ? OverlapRejectReason::InconsistentRegions
-                    : OverlapRejectReason::NoCandidate;
-    return true;
-  }
-
-  const int score_margin = static_cast<int>(best.score_per_mille) -
-                           static_cast<int>(second_best.score_per_mille);
-  if (options_.require_unique_overlap &&
-      evidence.matching_candidates > 1 &&
-      score_margin < options_.minimum_score_margin_per_mille) {
-    evidence.reject_reason = OverlapRejectReason::AmbiguousCandidates;
+            : OverlapRejectReason::NoCandidate;
     return true;
   }
 

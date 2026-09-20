@@ -42,19 +42,6 @@ VisualFrameObservation VisualFrameSettler::observe(
             evidence.reject_reason};
   }
   if (!evidence.accepted()) {
-    // A flat viewport is unsafe to stitch because every displacement looks
-    // plausible. It can still safely establish end-of-content when the best
-    // candidate is the complete, unchanged frame for three bounded samples.
-    if (evidence.reject_reason == OverlapRejectReason::InsufficientTexture &&
-        evidence.displacement_rows == 0) {
-      ++unchanged_samples_;
-      movement_overlap_ = 0;
-      stable_movement_samples_ = 0;
-      return {unchanged_samples_ >= 3 ? VisualFrameDecision::NoProgress
-                                      : VisualFrameDecision::ObserveMore,
-              evidence.candidate_overlap_rows, 0, accumulated.height,
-              evidence.reject_reason};
-    }
     movement_overlap_ = 0;
     stable_movement_samples_ = 0;
     unchanged_samples_ = 0;

@@ -118,13 +118,12 @@ TEST(VisualFrameSettlerTest,
   for (int sample = 0; sample < 2; ++sample) {
     const auto observation = settler.observe(flat, flat);
     EXPECT_EQ(observation.decision, VisualFrameDecision::ObserveMore);
-    EXPECT_EQ(observation.reject_reason,
-              OverlapRejectReason::InsufficientTexture);
+    EXPECT_EQ(observation.reject_reason, OverlapRejectReason::None);
   }
   const auto stopped = settler.observe(flat, flat);
   EXPECT_EQ(stopped.decision, VisualFrameDecision::NoProgress);
   EXPECT_EQ(stopped.overlap_rows, flat.height);
-  EXPECT_EQ(stopped.reject_reason, OverlapRejectReason::InsufficientTexture);
+  EXPECT_EQ(stopped.reject_reason, OverlapRejectReason::None);
 }
 
 TEST(VisualFrameSettlerTest,

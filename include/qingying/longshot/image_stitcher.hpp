@@ -79,7 +79,8 @@ struct ImageStitchOptions {
   std::uint16_t minimum_vertical_texture_per_mille{100};
   int minimum_displacement_rows{0};
   int maximum_displacement_rows{0};  // 0 means no explicit upper bound.
-  bool require_unique_overlap{true};
+  int preferred_displacement_rows{0};
+  bool has_preferred_displacement{false};
   bool require_overlap{false};
 };
 
@@ -106,6 +107,7 @@ struct OverlapEvidence {
   int matching_candidates{0};
   std::uint16_t best_score_per_mille{0};
   std::uint16_t second_best_score_per_mille{0};
+  std::uint16_t score_margin_per_mille{0};
   std::uint16_t vertical_texture_per_mille{0};
   std::uint8_t consistent_column_bands{0};
   std::uint8_t sampled_column_bands{0};
@@ -114,6 +116,9 @@ struct OverlapEvidence {
   int excluded_left_pixels{0};
   int excluded_right_pixels{0};
   int usable_match_width{0};
+  bool regions_consistent{false};
+  bool texture_sufficient{false};
+  bool selection_used_preferred_displacement{false};
   // Immutable row ranges calculated for an accepted append operation.
   int accumulated_keep_rows{0};
   int next_append_start_row{0};

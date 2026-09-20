@@ -806,6 +806,8 @@ ActionResult LongShotEngine::captureSelection(
   int provisional_bottom_rows = 0;
   int consistent_bottom_positions = 0;
   int confirmed_bottom_rows = 0;
+  int last_displacement_rows = 0;
+  bool has_last_displacement = false;
   Image last_reliable_viewport;
   int frame_count = 1;
   LongShotStopReason stop_reason = LongShotStopReason::LimitReached;
@@ -972,6 +974,8 @@ ActionResult LongShotEngine::captureSelection(
       if (!frame_settler || active_bottom_rows != sample_bottom_rows) {
         ImageStitchOptions sample_options = stitch_options;
         sample_options.fixed_bottom_rows = sample_bottom_rows;
+        sample_options.preferred_displacement_rows = last_displacement_rows;
+        sample_options.has_preferred_displacement = has_last_displacement;
         frame_settler =
             std::make_unique<longshot_detail::VisualFrameSettler>(
                 sample_options);
@@ -1084,6 +1088,8 @@ ActionResult LongShotEngine::captureSelection(
     try {
       ImageStitchOptions accepted_options = stitch_options;
       accepted_options.fixed_bottom_rows = accepted_bottom_rows;
+      accepted_options.preferred_displacement_rows = last_displacement_rows;
+      accepted_options.has_preferred_displacement = has_last_displacement;
       ImageStitcher stitcher(accepted_options);
       appended = stitcher.append(stitched, candidate_frame, append_evidence);
       next_overlap_rows = append_evidence.overlap_rows;
@@ -1104,6 +1110,9 @@ ActionResult LongShotEngine::captureSelection(
                          LongShotFailureStage::Stitching, next_frame_number),
                     LongShotStopReason::StitchFailed);
     }
+
+    last_displacement_rows = append_evidence.displacement_rows;
+    has_last_displacement = true;
 
     if (auto_bottom_enabled) {
       if (accepted_bottom_rows > 0) {
