@@ -4,15 +4,17 @@
 #include "qingying/longshot/image_stitcher.hpp"
 
 #include "generic_wheel_longshot_profile.hpp"
+#include "visual_frame_settler.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
-#include <memory>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <string>
-#include <thread>
 #include <utility>
 
 namespace qingying {
@@ -80,12 +82,15 @@ const char* longShotFailureStageName(LongShotFailureStage stage) noexcept {
 namespace {
 
 constexpr auto kScrollSettlePollInterval = std::chrono::milliseconds(40);
-constexpr auto kScrollSettleTimeout = std::chrono::milliseconds(800);
-constexpr auto kFallbackScrollSettleDelay = std::chrono::milliseconds(250);
 constexpr auto kRenderSettleDelay = std::chrono::milliseconds(60);
 constexpr auto kFrameRetryDelay = std::chrono::milliseconds(75);
-constexpr int kFrameCaptureAttempts = 3;
+constexpr int kMaxScrollSettlePolls = 20;
+constexpr int kMaxVisualFrameSamples = 6;
 constexpr int kRequiredStableSamples = 2;
+
+using LongShotWaitCallback =
+    std::function<bool(std::chrono::milliseconds,
+                       const LongShotContinueCallback&)>;
 
 ActionResult makeFailure(int error_code, const char* message,
                          LongShotFailureStage stage =
@@ -236,6 +241,7 @@ ActionResult waitForScrollSettle(
     const LongShotProfileResult& before_profile,
     const LongShotScrollState& before_scroll_state,
     const LongShotContinueCallback& should_continue,
+    const LongShotWaitCallback& wait_for,
     LongShotProfileResult& after_profile,
     LongShotScrollState& after_scroll_state, bool& has_after_scroll_state,
     bool& no_movement, bool& stopped, int frame) {
@@ -245,8 +251,6 @@ ActionResult waitForScrollSettle(
   no_movement = false;
   stopped = false;
 
-  const auto deadline = std::chrono::steady_clock::now() +
-                        kScrollSettleTimeout;
   LongShotProfileResult latest_profile = before_profile;
   LongShotScrollState latest_state = before_scroll_state;
   LongShotScrollState previous_state = before_scroll_state;
@@ -254,7 +258,7 @@ ActionResult waitForScrollSettle(
   bool saw_movement = false;
   int stable_samples = 0;
 
-  while (std::chrono::steady_clock::now() < deadline) {
+  for (int poll = 0; poll < kMaxScrollSettlePolls; ++poll) {
     if (should_continue && !should_continue()) {
       stopped = true;
       return makeSuccess();
@@ -262,7 +266,10 @@ ActionResult waitForScrollSettle(
 
     LongShotProfileResult candidate_profile;
     if (!profile.resolve(request, candidate_profile)) {
-      std::this_thread::sleep_for(kScrollSettlePollInterval);
+      if (!wait_for(kScrollSettlePollInterval, should_continue)) {
+        stopped = true;
+        return makeSuccess();
+      }
       continue;
     }
     resolved_any = true;
@@ -277,8 +284,7 @@ ActionResult waitForScrollSettle(
       // A profile may advertise a native state while the target is being
       // recreated. Fall back to a conservative render delay and capture the
       // fixed selection instead of sending another wheel message.
-      std::this_thread::sleep_for(kFallbackScrollSettleDelay);
-      if (should_continue && !should_continue()) {
+      if (!wait_for(kRenderSettleDelay, should_continue)) {
         stopped = true;
         return makeSuccess();
       }
@@ -306,13 +312,19 @@ ActionResult waitForScrollSettle(
     previous_state = candidate_state;
 
     if (saw_movement && stable_samples >= kRequiredStableSamples) {
-      std::this_thread::sleep_for(kRenderSettleDelay);
+      if (!wait_for(kRenderSettleDelay, should_continue)) {
+        stopped = true;
+        return makeSuccess();
+      }
       after_profile = latest_profile;
       after_scroll_state = latest_state;
       return makeSuccess();
     }
 
-    std::this_thread::sleep_for(kScrollSettlePollInterval);
+    if (!wait_for(kScrollSettlePollInterval, should_continue)) {
+      stopped = true;
+      return makeSuccess();
+    }
   }
 
   if (should_continue && !should_continue()) {
@@ -335,10 +347,12 @@ ActionResult waitForScrollSettle(
     return makeSuccess();
   }
 
-  // The position changed but never reported two identical samples before the
-  // deadline. Capture the latest frame once; the render delay above is not
-  // available in this timeout path, so add the same guard here.
-  std::this_thread::sleep_for(kRenderSettleDelay);
+  // The position changed but never reported two identical samples within the
+  // poll budget. Capture the latest frame once after the same render guard.
+  if (!wait_for(kRenderSettleDelay, should_continue)) {
+    stopped = true;
+    return makeSuccess();
+  }
   return makeSuccess();
 }
 
@@ -348,6 +362,7 @@ ActionResult captureNextFrame(
     const LongShotProfileResult& before_profile,
     const LongShotScrollState* before_scroll_state, int frame_number,
     const LongShotContinueCallback& should_continue, Image& frame,
+    const LongShotWaitCallback& wait_for,
     LongShotProfileResult* after_profile_out,
     LongShotScrollState* after_scroll_state_out,
     bool* has_after_scroll_state_out, bool* stable_scroll_out,
@@ -381,14 +396,16 @@ ActionResult captureNextFrame(
   if (before_scroll_state != nullptr) {
     result = waitForScrollSettle(
         profile, request, before_profile, *before_scroll_state, should_continue,
-        after_profile, after_scroll_state, has_after_scroll_state, no_movement,
-        stopped, frame_number);
+        wait_for, after_profile, after_scroll_state, has_after_scroll_state,
+        no_movement, stopped, frame_number);
   } else {
     if (should_continue && !should_continue()) {
       stopped = true;
       result = makeSuccess();
+    } else if (!wait_for(kRenderSettleDelay, should_continue)) {
+      stopped = true;
+      result = makeSuccess();
     } else {
-      std::this_thread::sleep_for(kFallbackScrollSettleDelay);
       result = resolveAfterScroll(profile, request, before_profile,
                                   after_profile, frame_number);
       if (result.ok) {
@@ -437,11 +454,32 @@ struct LongShotEngine::Impl {
         profiles(std::move(profile_registry)),
         limits(capture_limits) {}
 
+  bool waitFor(std::chrono::milliseconds delay,
+               const LongShotContinueCallback& should_continue) {
+    if (should_continue && !should_continue()) return false;
+    const std::uint64_t generation = wake_generation.load();
+    std::unique_lock<std::mutex> lock(wait_mutex);
+    wait_condition.wait_for(lock, delay, [&] {
+      return cancelled.load() || wake_generation.load() != generation;
+    });
+    lock.unlock();
+    return !cancelled.load() &&
+           (!should_continue || should_continue());
+  }
+
+  void wakeWaiters() noexcept {
+    wake_generation.fetch_add(1);
+    wait_condition.notify_all();
+  }
+
   LongShotCaptureCallback capture;
   LongShotProfileRegistry profiles;
   LongShotLimits limits;
   std::atomic<const LongShotProfile*> active_profile{nullptr};
   std::atomic_bool cancelled{false};
+  std::atomic<std::uint64_t> wake_generation{0};
+  std::mutex wait_mutex;
+  std::condition_variable wait_condition;
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
@@ -568,6 +606,11 @@ ActionResult LongShotEngine::captureSelection(
     return !impl_->cancelled.load() &&
            (!should_continue || should_continue());
   };
+  LongShotWaitCallback wait_for =
+      [this](std::chrono::milliseconds delay,
+             const LongShotContinueCallback& keep_going) {
+        return impl_->waitFor(delay, keep_going);
+      };
   if (!request.valid()) {
     return finish(makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: owner window and selection are required",
@@ -666,14 +709,15 @@ ActionResult LongShotEngine::captureSelection(
     bool has_after_scroll_state = false;
     bool stable_scroll = false;
     bool stopped = false;
+    ++out.input_attempts;
     result = captureNextFrame(impl_->capture, *profile, request,
                               current_profile,
                               has_before_scroll_state ? &before_scroll_state
                                                       : nullptr,
                               next_frame_number, continue_capture,
-                              next_frame, &after_profile, &after_scroll_state,
-                              &has_after_scroll_state, &stable_scroll,
-                              &stopped);
+                              next_frame, wait_for, &after_profile,
+                              &after_scroll_state, &has_after_scroll_state,
+                              &stable_scroll, &stopped);
     if (stopped) {
       stop_reason = LongShotStopReason::UserStopped;
       break;
@@ -693,14 +737,17 @@ ActionResult LongShotEngine::captureSelection(
     int next_overlap_rows = 0;
     bool matched_overlap = false;
     bool full_overlap = false;
+    bool lost_overlap = false;
     bool interrupted = false;
-    for (int attempt = 0; attempt < kFrameCaptureAttempts; ++attempt) {
-      if (attempt > 0) {
-        if (!continue_capture()) {
+    auto visual_retry_delay = kFrameRetryDelay;
+    longshot_detail::VisualFrameSettler frame_settler;
+    for (int sample = 0; sample < kMaxVisualFrameSamples; ++sample) {
+      if (sample > 0) {
+        if (!wait_for(visual_retry_delay, continue_capture)) {
           interrupted = true;
           break;
         }
-        std::this_thread::sleep_for(kFrameRetryDelay);
+        ++out.recapture_attempts;
         result = captureFrame(impl_->capture, request, next_frame_number,
                               LongShotFailureStage::FrameCapture,
                               candidate_frame);
@@ -711,36 +758,35 @@ ActionResult LongShotEngine::captureSelection(
         continue;
       }
 
-      int candidate_overlap = 0;
-      if (!stitcher.findOverlap(stitched, candidate_frame,
-                                candidate_overlap)) {
-        last_frame_failure = makeFailure(
-            ErrorCode::kCaptureFailed,
-            "longshot: failed to inspect next overlap",
-            LongShotFailureStage::OverlapDetection, next_frame_number);
-        continue;
+      const auto observation = frame_settler.observe(stitched,
+                                                     candidate_frame);
+      next_overlap_rows = observation.overlap_rows;
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::ObserveMore) {
+        visual_retry_delay =
+            observation.overlap_rows == candidate_frame.height
+                ? kFrameRetryDelay
+                : kScrollSettlePollInterval;
       }
-
-      // A stale frame can still be fully identical immediately after the
-      // scroll message. Re-capture at the same position before treating it
-      // as the terminal no-new-content condition.
-      if (candidate_overlap == candidate_frame.height) {
-        if (attempt + 1 == kFrameCaptureAttempts) {
-          full_overlap = true;
-        }
-        continue;
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::StableMovement) {
+        matched_overlap = true;
+        break;
       }
-      if (candidate_overlap == 0) {
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::NoProgress) {
+        full_overlap = true;
+        break;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::LostOverlap) {
+        lost_overlap = true;
         last_frame_failure = makeFailure(
             ErrorCode::kCaptureFailed,
             "longshot: no reliable overlap was found",
             LongShotFailureStage::OverlapDetection, next_frame_number);
-        continue;
+        break;
       }
-
-      next_overlap_rows = candidate_overlap;
-      matched_overlap = true;
-      break;
     }
 
     if (interrupted) {
@@ -753,6 +799,12 @@ ActionResult LongShotEngine::captureSelection(
       break;
     }
     if (!matched_overlap) {
+      if (!lost_overlap && last_frame_failure.ok) {
+        last_frame_failure = makeFailure(
+            ErrorCode::kCaptureFailed,
+            "longshot: frame did not become stable within retry budget",
+            LongShotFailureStage::ScrollSettle, next_frame_number);
+      }
       result = last_frame_failure.ok
                  ? makeFailure(ErrorCode::kCaptureFailed,
                                "longshot: no reliable overlap was found",
@@ -836,9 +888,14 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   }
 
   Image second_frame;
+  LongShotWaitCallback wait_for =
+      [this](std::chrono::milliseconds delay,
+             const LongShotContinueCallback& keep_going) {
+        return impl_->waitFor(delay, keep_going);
+      };
   result = captureNextFrame(impl_->capture, *profile, request, before_profile,
-                            nullptr, 2, {}, second_frame, nullptr, nullptr,
-                            nullptr, nullptr, nullptr);
+                            nullptr, 2, {}, second_frame, wait_for, nullptr,
+                            nullptr, nullptr, nullptr, nullptr);
   if (!result.ok) {
     return result;
   }
@@ -850,11 +907,16 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
 
 void LongShotEngine::cancel() noexcept {
   impl_->cancelled.store(true);
+  impl_->wakeWaiters();
   const LongShotProfile* profile =
       impl_->active_profile.load(std::memory_order_acquire);
   if (profile != nullptr) {
     profile->cancel();
   }
+}
+
+void LongShotEngine::notifyControlChange() noexcept {
+  impl_->wakeWaiters();
 }
 
 std::string LongShotEngine::activeProfileName() const {

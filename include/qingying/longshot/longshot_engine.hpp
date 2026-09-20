@@ -81,11 +81,14 @@ enum class LongShotStopReason : std::uint8_t {
 };
 
 // 内部 C++ 完成载荷，不属于 profile DLL 的 C ABI。image 只能包含已接受的
-// 帧；accepted_frames 不计重采或拒绝的帧。尺寸直接取 image，避免重复元数据。
-// 捕获循环通过此模型交付，旧 ActionResult + Image 入口继续兼容。
+// 帧；accepted_frames 不计重采或拒绝的帧。input_attempts 记录滚动调用，
+// recapture_attempts 记录同一次输入后的额外采样。尺寸直接取 image，避免重复
+// 元数据。捕获循环通过此模型交付，旧 ActionResult + Image 入口继续兼容。
 struct LongShotOutcome {
   Image image;
   int accepted_frames{0};
+  int input_attempts{0};
+  int recapture_attempts{0};
   LongShotStopReason stop_reason{LongShotStopReason::NotStarted};
   std::string strategy;
   LongShotFailureStage failure_stage{LongShotFailureStage::None};
@@ -148,6 +151,9 @@ class LongShotEngine {
   // profiles may ignore it; LongShotController still enforces its join
   // deadline and keeps the owner context alive if the callback is stuck.
   void cancel() noexcept;
+  // Wakes an in-progress bounded settle wait so pause/stop state can be
+  // observed immediately. This does not cancel the active capture.
+  void notifyControlChange() noexcept;
   std::string activeProfileName() const;
 
   // 围绕一次滚轮输入准确捕获两帧原始图像。保留这个分阶段接口，便于独立

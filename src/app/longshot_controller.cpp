@@ -135,14 +135,17 @@ struct LongShotController::Impl {
   }
 
   void handleControl(LongShotControl control) noexcept {
-    std::lock_guard<std::mutex> lock(worker_mutex);
-    if (control == LongShotControl::TogglePause) {
-      paused.store(!paused.load());
-    } else if (control == LongShotControl::Stop) {
-      stop_requested.store(true);
-      paused.store(false);
+    {
+      std::lock_guard<std::mutex> lock(worker_mutex);
+      if (control == LongShotControl::TogglePause) {
+        paused.store(!paused.load());
+      } else if (control == LongShotControl::Stop) {
+        stop_requested.store(true);
+        paused.store(false);
+      }
+      control_condition.notify_all();
     }
-    control_condition.notify_all();
+    engine.notifyControlChange();
   }
 
   bool handleCompletion(UiMessageToken token, ActionResult& result,

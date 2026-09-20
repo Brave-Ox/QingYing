@@ -188,6 +188,8 @@ TEST(GenericWheelLongShotProfileTest,
   EXPECT_EQ(outcome.strategy, "generic.wheel");
   EXPECT_EQ(outcome.stop_reason, LongShotStopReason::LimitReached);
   EXPECT_EQ(outcome.accepted_frames, 3);
+  EXPECT_EQ(outcome.input_attempts, 2);
+  EXPECT_EQ(outcome.recapture_attempts, 2);
   EXPECT_EQ(outcome.image.width, request.width);
   EXPECT_EQ(outcome.image.height, request.height + window.state().maximum);
   EXPECT_TRUE(outcome.isPartial());
@@ -224,6 +226,8 @@ TEST(GenericWheelLongShotProfileTest,
   EXPECT_TRUE(result.ok);
   EXPECT_EQ(outcome.stop_reason, LongShotStopReason::NoProgress);
   EXPECT_EQ(outcome.accepted_frames, 1);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(outcome.recapture_attempts, 2);
   EXPECT_EQ(window.state().wheel_messages, 1);
   EXPECT_EQ(generic_ptr->inputCount(), 1);
   EXPECT_EQ(captures, 4);

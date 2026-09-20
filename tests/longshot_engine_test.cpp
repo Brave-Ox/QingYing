@@ -409,14 +409,81 @@ TEST(LongShotEngineTest, RetriesStaleFrameWithoutSendingAnotherWheel) {
   EXPECT_TRUE(result.ok);
   EXPECT_EQ(result.error_code, ErrorCode::kOk);
   EXPECT_TRUE(result.failure_stage.empty());
-  EXPECT_EQ(capture_count, 3);
+  EXPECT_EQ(capture_count, 4);
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
   EXPECT_EQ(out.width, kWidth);
   EXPECT_EQ(out.height, kHeight + kScrollDelta);
 }
 
 TEST(LongShotEngineTest,
-     ReportsPersistentOverlapFailureAfterSamePositionRetries) {
+     SmoothRenderingWaitsForRepeatedPositionWithinOneInput) {
+  constexpr int kWidth = 32;
+  constexpr int kHeight = 40;
+  auto profile = std::make_unique<ScriptedLongShotProfile>(true);
+  auto* profile_ptr = profile.get();
+  LongShotProfileRegistry registry;
+  registry.add(std::move(profile));
+  int captures = 0;
+  LongShotEngine engine(
+      [&](const ScreenPhysicalRect& region, Image& image) {
+        const int offsets[] = {0, 5, 10, 15, 15};
+        const int index = (std::min)(captures, 4);
+        ++captures;
+        image = makeStrip(region.width, region.height, offsets[index]);
+        ActionResult result;
+        result.ok = true;
+        return result;
+      },
+      std::move(registry));
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, kWidth, kHeight}, outcome);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::ReachedBottom);
+  EXPECT_EQ(outcome.accepted_frames, 2);
+  EXPECT_EQ(outcome.image.height, kHeight + 15);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(outcome.recapture_attempts, 3);
+  EXPECT_EQ(captures, 5);
+  EXPECT_EQ(profile_ptr->wheelCount(), 1);
+}
+
+TEST(LongShotEngineTest, PersistentMotionStopsAtVisualSampleBudget) {
+  constexpr int kWidth = 32;
+  constexpr int kHeight = 40;
+  auto profile = std::make_unique<ScriptedLongShotProfile>(true);
+  auto* profile_ptr = profile.get();
+  LongShotProfileRegistry registry;
+  registry.add(std::move(profile));
+  int captures = 0;
+  LongShotEngine engine(
+      [&](const ScreenPhysicalRect& region, Image& image) {
+        const int offsets[] = {0, 2, 4, 6, 8, 10, 12};
+        const int index = (std::min)(captures, 6);
+        ++captures;
+        image = makeStrip(region.width, region.height, offsets[index]);
+        ActionResult result;
+        result.ok = true;
+        return result;
+      },
+      std::move(registry));
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, kWidth, kHeight}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "scroll_settle");
+  EXPECT_EQ(outcome.accepted_frames, 1);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(outcome.recapture_attempts, 5);
+  EXPECT_EQ(captures, 7);
+  EXPECT_EQ(profile_ptr->wheelCount(), 1);
+}
+
+TEST(LongShotEngineTest, StopsImmediatelyWhenOverlapIsLost) {
   constexpr int kWidth = 32;
   constexpr int kHeight = 30;
 
@@ -446,7 +513,7 @@ TEST(LongShotEngineTest,
   EXPECT_EQ(result.error_code, ErrorCode::kCaptureFailed);
   EXPECT_EQ(result.failure_stage, "overlap_detection");
   EXPECT_EQ(result.failure_frame, 2);
-  EXPECT_EQ(capture_count, 4);
+  EXPECT_EQ(capture_count, 2);
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
   EXPECT_TRUE(out.empty());
 }
@@ -479,14 +546,14 @@ TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {
     if (failure == 2) sequence->reject_input = 2;
     LongShotProfileRegistry registry;
     registry.add(std::move(profile));
-    int captures = 0;
     LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-      ++captures;
       ActionResult result;
-      result.ok = !(failure == 1 && captures >= 3);
+      result.ok = !(failure == 1 && sequence->inputs >= 2);
       result.error_code = result.ok ? ErrorCode::kOk : ErrorCode::kCaptureFailed;
       image = makeStrip(rect.width, rect.height,
-                        captures == 1 ? 0 : captures == 2 ? 10 : 100);
+                        sequence->inputs == 0 ? 0
+                        : sequence->inputs == 1 ? 10
+                                                : 100);
       return result;
     }, std::move(registry));
     LongShotOutcome out;
@@ -502,19 +569,24 @@ TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {
                                               LongShotStopReason::InputUnavailable);
     EXPECT_EQ(result.failure_frame, 3);
     EXPECT_EQ(sequence->inputs, 2);
+    EXPECT_EQ(out.input_attempts, 2);
+    EXPECT_EQ(out.recapture_attempts, failure == 1 ? 6 : 1);
   }
 }
 
 TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
   for (bool height_limit : {false, true}) {
     LongShotProfileRegistry registry;
-    registry.add(std::make_unique<SequenceProfile>());
+    auto profile = std::make_unique<SequenceProfile>();
+    auto* sequence = profile.get();
+    registry.add(std::move(profile));
     int captures = 0;
     LongShotLimits limits;
     limits.max_frames = height_limit ? 30 : 2;
     limits.max_output_height = height_limit ? 45 : 30000;
     LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-      image = makeStrip(rect.width, rect.height, 10 * captures++);
+      ++captures;
+      image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
       ActionResult result;
       result.ok = true;
       return result;
@@ -525,6 +597,9 @@ TEST(LongShotOutcomeCaptureTest, LimitsDoNotClaimReachedBottom) {
     EXPECT_FALSE(out.isComplete());
     EXPECT_EQ(out.accepted_frames, height_limit ? 1 : 2);
     EXPECT_EQ(out.image.pixels, makeStrip(32, height_limit ? 40 : 50, 0).pixels);
+    EXPECT_EQ(out.input_attempts, 1);
+    EXPECT_EQ(out.recapture_attempts, 1);
+    EXPECT_EQ(captures, 3);
   }
 }
 
@@ -574,11 +649,14 @@ TEST(LongShotOutcomeCaptureTest, StitchAllocationFailureKeepsPreviousPixels) {
     ~RestoreLimit() { budget.setLimit(limit); }
   } restore{budget, budget.snapshot().limit_bytes};
   LongShotProfileRegistry registry;
-  registry.add(std::make_unique<SequenceProfile>());
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
   int captures = 0;
   LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-    image = makeStrip(rect.width, rect.height, 10 * captures++);
-    if (captures == 2) {
+    ++captures;
+    image = makeStrip(rect.width, rect.height, 10 * sequence->inputs);
+    if (captures == 3) {
       EXPECT_TRUE(budget.setLimit(budget.snapshot().used_bytes));
     }
     ActionResult result;
