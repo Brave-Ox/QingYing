@@ -2,6 +2,7 @@
 
 add_executable(qingying_tests
   user_settings_test.cpp
+  user_settings_store_test.cpp
   image_memory_budget_test.cpp
   fault_boundary_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp

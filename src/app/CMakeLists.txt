@@ -55,6 +55,7 @@ add_library(qingying_app_runtime STATIC
   automation_runtime.cpp
   automation_settings.cpp
   mcp_stdio_runner.cpp
+  user_settings_store.cpp
 )
 target_include_directories(qingying_app_runtime PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(qingying_app_runtime PUBLIC qingying_automation qingying_ipc qingying_mcp PRIVATE advapi32)
