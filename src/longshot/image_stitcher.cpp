@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <limits>
 #include <utility>
-#include <vector>
 
 namespace qingying {
 namespace {
@@ -41,6 +40,8 @@ const char* overlapRejectReasonName(OverlapRejectReason reason) noexcept {
       return "ambiguous_candidates";
     case OverlapRejectReason::DisplacementOutOfRange:
       return "displacement_out_of_range";
+    case OverlapRejectReason::InvalidEdgeExclusion:
+      return "invalid_edge_exclusion";
   }
   return "unknown";
 }
@@ -76,6 +77,30 @@ bool ImageStitcher::validImage(const Image& image) const {
   return image.pixels.size() == width * height;
 }
 
+bool ImageStitcher::validEdgeExclusions(const Image& accumulated,
+                                        const Image& next) const {
+  if (options_.left_edge_exclusion_pixels < 0 ||
+      options_.right_edge_exclusion_pixels < 0 ||
+      options_.fixed_top_rows < 0 || options_.fixed_bottom_rows < 0) {
+    return false;
+  }
+  if (options_.left_edge_exclusion_pixels >= accumulated.width ||
+      options_.right_edge_exclusion_pixels >= accumulated.width -
+          options_.left_edge_exclusion_pixels) {
+    return false;
+  }
+  const int minimum = std::max(1, options_.min_overlap_rows);
+  const auto hasBody = [&](const Image& image) {
+    return options_.fixed_top_rows <= image.height &&
+           options_.fixed_bottom_rows <=
+               image.height - options_.fixed_top_rows &&
+           image.height - options_.fixed_top_rows -
+                   options_.fixed_bottom_rows >=
+               minimum;
+  };
+  return hasBody(accumulated) && hasBody(next);
+}
+
 bool ImageStitcher::pixelsMatch(std::uint32_t lhs, std::uint32_t rhs) const {
   return withinTolerance(channel(lhs, 0), channel(rhs, 0),
                          options_.channel_tolerance) &&
@@ -91,7 +116,9 @@ ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(
     const Image& accumulated, const Image& next, int overlap_rows) const {
   CandidateEvidence evidence;
   evidence.overlap_rows = overlap_rows;
-  evidence.displacement_rows = next.height - overlap_rows;
+  evidence.displacement_rows =
+      next.height - options_.fixed_top_rows -
+      options_.fixed_bottom_rows - overlap_rows;
   const int step = std::max(1, options_.sample_step);
   const int width = accumulated.width;
   const int first_x = std::max(0, options_.left_edge_exclusion_pixels);
@@ -134,8 +161,9 @@ ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(
     }
   };
   const auto recordSampledRow = [&](int accumulated_y, int next_y) {
-    const int row_band =
-        (std::min)(2, next_y * 3 / (std::max)(1, overlap_rows));
+    const int relative_next_y = next_y - options_.fixed_top_rows;
+    const int row_band = (std::min)(
+        2, relative_next_y * 3 / (std::max)(1, overlap_rows));
     std::uint64_t row_hash = 1469598103934665603ull;
     const auto recordX = [&](int x) {
       const int column_band = (std::min)(
@@ -156,10 +184,13 @@ ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(
   };
 
   for (int y = 0; y < overlap_rows; y += step) {
-    recordSampledRow(accumulated.height - overlap_rows + y, y);
+    recordSampledRow(accumulated.height - options_.fixed_bottom_rows -
+                         overlap_rows + y,
+                     options_.fixed_top_rows + y);
   }
   if ((overlap_rows - 1) % step != 0) {
-    recordSampledRow(accumulated.height - 1, overlap_rows - 1);
+    recordSampledRow(accumulated.height - options_.fixed_bottom_rows - 1,
+                     options_.fixed_top_rows + overlap_rows - 1);
   }
   if (total_samples == 0) return evidence;
 
@@ -231,9 +262,18 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
     evidence.reject_reason = OverlapRejectReason::WidthMismatch;
     return false;
   }
+  if (!validEdgeExclusions(accumulated, next)) {
+    evidence.reject_reason = OverlapRejectReason::InvalidEdgeExclusion;
+    return true;
+  }
 
   const int minimum = std::max(1, options_.min_overlap_rows);
-  int maximum = std::min(accumulated.height, next.height);
+  const int accumulated_body_rows =
+      accumulated.height - options_.fixed_top_rows -
+      options_.fixed_bottom_rows;
+  const int next_body_rows = next.height - options_.fixed_top_rows -
+                             options_.fixed_bottom_rows;
+  int maximum = std::min(accumulated_body_rows, next_body_rows);
   if (options_.max_overlap_rows > 0) {
     maximum = std::min(maximum, options_.max_overlap_rows);
   }
@@ -317,6 +357,21 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
   evidence.overlap_rows = best.overlap_rows;
   evidence.candidate_overlap_rows = best.overlap_rows;
   evidence.displacement_rows = best.displacement_rows;
+  evidence.accumulated_keep_rows =
+      accumulated.height - options_.fixed_bottom_rows;
+  evidence.next_append_start_row =
+      options_.fixed_top_rows + best.overlap_rows;
+  evidence.next_append_rows =
+      next.height - evidence.next_append_start_row;
+  const std::int64_t output_rows =
+      static_cast<std::int64_t>(evidence.accumulated_keep_rows) +
+      static_cast<std::int64_t>(evidence.next_append_rows);
+  if (output_rows > std::numeric_limits<int>::max()) {
+    evidence.overlap_rows = 0;
+    evidence.reject_reason = OverlapRejectReason::DisplacementOutOfRange;
+    return true;
+  }
+  evidence.output_rows = static_cast<int>(output_rows);
   evidence.reject_reason = OverlapRejectReason::None;
   return true;
 }
@@ -341,49 +396,72 @@ bool ImageStitcher::append(Image& accumulated, const Image& next,
   if (!findOverlap(accumulated, next, evidence)) {
     return false;
   }
+  const bool fixed_edges_enabled =
+      options_.fixed_top_rows > 0 || options_.fixed_bottom_rows > 0;
   if (!evidence.accepted() &&
       (evidence.reject_reason != OverlapRejectReason::NoCandidate ||
-       options_.require_overlap)) {
+       options_.require_overlap || fixed_edges_enabled)) {
     return false;
   }
-  const int detected_overlap = evidence.overlap_rows;
+  if (!evidence.accepted()) {
+    evidence.accumulated_keep_rows = accumulated.height;
+    evidence.next_append_start_row = 0;
+    evidence.next_append_rows = next.height;
+    if (next.height > std::numeric_limits<int>::max() - accumulated.height) {
+      return false;
+    }
+    evidence.output_rows = accumulated.height + next.height;
+  }
 
-  if (!appendDetected(accumulated, next, detected_overlap)) return false;
+  if (!appendDetected(accumulated, next, evidence)) return false;
   if (overlap_rows != nullptr) {
-    *overlap_rows = detected_overlap;
+    *overlap_rows = evidence.overlap_rows;
   }
   return true;
 }
 
 bool ImageStitcher::appendDetected(Image& accumulated, const Image& next,
-                                   int detected_overlap) const {
+                                   const OverlapEvidence& evidence) const {
 
   const std::size_t width = static_cast<std::size_t>(next.width);
-  const std::size_t accumulated_height =
-      static_cast<std::size_t>(accumulated.height);
-  const std::size_t next_height = static_cast<std::size_t>(next.height);
-  const std::size_t new_rows = next_height -
-                               static_cast<std::size_t>(detected_overlap);
+  if (evidence.accumulated_keep_rows < 0 ||
+      evidence.accumulated_keep_rows > accumulated.height ||
+      evidence.next_append_start_row < 0 ||
+      evidence.next_append_start_row > next.height ||
+      evidence.next_append_rows !=
+          next.height - evidence.next_append_start_row ||
+      evidence.output_rows != evidence.accumulated_keep_rows +
+                                  evidence.next_append_rows ||
+      evidence.output_rows <= 0) {
+    return false;
+  }
+  const std::size_t accumulated_keep_rows =
+      static_cast<std::size_t>(evidence.accumulated_keep_rows);
+  const std::size_t next_append_rows =
+      static_cast<std::size_t>(evidence.next_append_rows);
   const std::size_t max_pixels_per_width =
       std::numeric_limits<std::size_t>::max() / width;
-  if (new_rows > max_pixels_per_width ||
-      accumulated_height > max_pixels_per_width - new_rows ||
-      new_rows > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
-      accumulated_height >
+  if (next_append_rows > max_pixels_per_width ||
+      accumulated_keep_rows > max_pixels_per_width - next_append_rows ||
+      next_append_rows >
+          static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+      accumulated_keep_rows >
           static_cast<std::size_t>(std::numeric_limits<int>::max()) -
-              new_rows) {
+              next_append_rows) {
     return false;
   }
 
-  const std::size_t new_pixel_count =
-      (accumulated_height + new_rows) * width;
+  const std::size_t new_pixel_count = static_cast<std::size_t>(
+      evidence.output_rows) * width;
   ImagePixels merged;
   try {
     merged.reserve(new_pixel_count);
+    const std::size_t accumulated_keep_pixels = accumulated_keep_rows * width;
     merged.insert(merged.end(), accumulated.pixels.begin(),
-                  accumulated.pixels.end());
+                  accumulated.pixels.begin() + static_cast<std::ptrdiff_t>(
+                      accumulated_keep_pixels));
     const std::size_t first_new_pixel =
-        static_cast<std::size_t>(detected_overlap) * width;
+        static_cast<std::size_t>(evidence.next_append_start_row) * width;
     merged.insert(merged.end(), next.pixels.begin() +
                                     static_cast<std::ptrdiff_t>(first_new_pixel),
                   next.pixels.end());
@@ -393,7 +471,7 @@ bool ImageStitcher::appendDetected(Image& accumulated, const Image& next,
     return false;
   }
 
-  accumulated.height = static_cast<int>(accumulated_height + new_rows);
+  accumulated.height = evidence.output_rows;
   accumulated.pixels.swap(merged);
   return true;
 }
@@ -411,12 +489,23 @@ bool ImageStitcher::append(Image& accumulated, const Image& next,
     return true;
   }
   if (!findOverlap(accumulated, next, evidence)) return false;
+  const bool fixed_edges_enabled =
+      options_.fixed_top_rows > 0 || options_.fixed_bottom_rows > 0;
   if (!evidence.accepted() &&
       (evidence.reject_reason != OverlapRejectReason::NoCandidate ||
-       options_.require_overlap)) {
+       options_.require_overlap || fixed_edges_enabled)) {
     return false;
   }
-  return appendDetected(accumulated, next, evidence.overlap_rows);
+  if (!evidence.accepted()) {
+    evidence.accumulated_keep_rows = accumulated.height;
+    evidence.next_append_start_row = 0;
+    evidence.next_append_rows = next.height;
+    if (next.height > std::numeric_limits<int>::max() - accumulated.height) {
+      return false;
+    }
+    evidence.output_rows = accumulated.height + next.height;
+  }
+  return appendDetected(accumulated, next, evidence);
 }
 
 }  // namespace qingying

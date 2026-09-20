@@ -246,6 +246,8 @@ const char* overlapFailureMessage(OverlapRejectReason reason) noexcept {
       return "longshot: overlap is inconsistent across image regions";
     case OverlapRejectReason::DisplacementOutOfRange:
       return "longshot: overlap displacement is outside the safe range";
+    case OverlapRejectReason::InvalidEdgeExclusion:
+      return "longshot: fixed edge exclusion is invalid; adjust selection";
     default:
       return "longshot: no reliable overlap was found";
   }
@@ -693,6 +695,8 @@ ActionResult LongShotEngine::captureSelection(
   ImageStitchOptions stitch_options;
   stitch_options.min_overlap_rows = 16;
   stitch_options.right_edge_exclusion_pixels = 12;
+  stitch_options.fixed_top_rows = impl_->limits.fixed_edges.top_rows;
+  stitch_options.fixed_bottom_rows = impl_->limits.fixed_edges.bottom_rows;
   // Text anti-aliasing, caret blinking and other small repaint differences
   // are expected after a real scroll. Keep the overlap requirement enabled,
   // but allow a small per-channel difference and sparse dynamic pixels.
@@ -750,12 +754,13 @@ ActionResult LongShotEngine::captureSelection(
     Image candidate_frame = std::move(next_frame);
     ActionResult last_frame_failure = result;
     int next_overlap_rows = 0;
+    int planned_output_rows = 0;
     bool matched_overlap = false;
     bool full_overlap = false;
     bool lost_overlap = false;
     bool interrupted = false;
     auto visual_retry_delay = kFrameRetryDelay;
-    longshot_detail::VisualFrameSettler frame_settler;
+    longshot_detail::VisualFrameSettler frame_settler(stitch_options);
     for (int sample = 0; sample < kMaxVisualFrameSamples; ++sample) {
       if (sample > 0) {
         if (!wait_for(visual_retry_delay, continue_capture)) {
@@ -776,10 +781,11 @@ ActionResult LongShotEngine::captureSelection(
       const auto observation = frame_settler.observe(stitched,
                                                      candidate_frame);
       next_overlap_rows = observation.overlap_rows;
+      planned_output_rows = observation.output_rows;
       if (observation.decision ==
           longshot_detail::VisualFrameDecision::ObserveMore) {
         visual_retry_delay =
-            observation.overlap_rows == candidate_frame.height
+            observation.displacement_rows == 0
                 ? kFrameRetryDelay
                 : kScrollSettlePollInterval;
       }
@@ -829,17 +835,15 @@ ActionResult LongShotEngine::captureSelection(
       return finish(result, failureReason(result));
     }
 
-    const std::int64_t next_height =
-        static_cast<std::int64_t>(stitched.height) +
-        static_cast<std::int64_t>(candidate_frame.height) -
-        static_cast<std::int64_t>(next_overlap_rows);
-    if (next_height > limits.max_output_height)
-    {
+    const std::int64_t next_height = planned_output_rows;
+    if (next_height > limits.max_output_height) {
       break;
     }
     bool appended = false;
+    OverlapEvidence append_evidence;
     try {
-      appended = stitcher.append(stitched, candidate_frame, &next_overlap_rows);
+      appended = stitcher.append(stitched, candidate_frame, append_evidence);
+      next_overlap_rows = append_evidence.overlap_rows;
     } catch (const std::bad_alloc&) {
       // append 分配新缓冲成功后才提交；预算拒绝不损坏上一可靠图像。
       return finish(makeFailure(ErrorCode::kCaptureFailed,

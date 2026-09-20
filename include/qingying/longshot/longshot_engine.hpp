@@ -14,13 +14,24 @@ namespace qingying {
 
 class CaptureEngine;
 
+// Explicit viewport rows known to be fixed across scrolls. They are never
+// inferred from one frame pair: zero disables fixed-edge output replacement.
+struct LongShotFixedEdgeExclusions {
+  int top_rows{0};
+  int bottom_rows{0};
+
+  bool valid() const noexcept { return top_rows >= 0 && bottom_rows >= 0; }
+  bool enabled() const noexcept { return top_rows > 0 || bottom_rows > 0; }
+};
+
 // 一次长截图的安全限制。初始帧对已经占用两帧，因此 max_frames 至少为 2。
 struct LongShotLimits {
   int max_frames{30};
   int max_output_height{30000};
+  LongShotFixedEdgeExclusions fixed_edges{};
 
   bool valid() const {
-    return max_frames >= 2 && max_output_height > 0;
+    return max_frames >= 2 && max_output_height > 0 && fixed_edges.valid();
   }
 };
 
@@ -121,7 +132,8 @@ class LongShotEngine {
   // 或达到安全限制时停止。
   ActionResult captureSelection(const LongShotRequest& request, Image& out);
 
-  // 交互版本：每捕获一帧就报告当前累计图像；should_continue 返回 false
+  // 交互版本：每接受一帧就报告当前已提交的累计输出；启用固定边缘时，
+  // 预览始终包含首帧顶部和最新可靠帧底部。should_continue 返回 false
   // 时正常停止。
   ActionResult captureSelection(const LongShotRequest& request, Image& out,
                                 LongShotProgressCallback on_progress,

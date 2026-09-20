@@ -15,6 +15,8 @@ enum class VisualFrameDecision {
 struct VisualFrameObservation {
   VisualFrameDecision decision{VisualFrameDecision::ObserveMore};
   int overlap_rows{0};
+  int displacement_rows{0};
+  int output_rows{0};
   OverlapRejectReason reject_reason{OverlapRejectReason::None};
 };
 
@@ -24,6 +26,7 @@ struct VisualFrameObservation {
 class VisualFrameSettler {
  public:
   VisualFrameSettler();
+  explicit VisualFrameSettler(ImageStitchOptions options);
 
   VisualFrameObservation observe(const Image& accumulated,
                                  const Image& sample);

@@ -54,6 +54,28 @@ Image makePeriodicStrip(int width, int height, int period) {
   return image;
 }
 
+Image makeFixedEdgeFrame(int width, int height, int top_rows,
+                         int bottom_rows, int first_body_row,
+                         std::uint32_t top_pixel,
+                         std::uint32_t bottom_pixel) {
+  Image image;
+  image.width = width;
+  image.height = height;
+  image.pixels.resize(static_cast<std::size_t>(width) * height);
+  const int body_rows = height - top_rows - bottom_rows;
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      image.pixels[static_cast<std::size_t>(y) * width + x] =
+          y < top_rows
+              ? top_pixel
+              : y >= top_rows + body_rows
+                    ? bottom_pixel
+                    : pixelFor(x, first_body_row + y - top_rows);
+    }
+  }
+  return image;
+}
+
 class ScriptedLongShotProfile final : public LongShotProfile {
  public:
   explicit ScriptedLongShotProfile(bool move_on_scroll)
@@ -166,6 +188,17 @@ TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
   EXPECT_TRUE(limits.valid());
   EXPECT_EQ(limits.max_frames, 30);
   EXPECT_EQ(limits.max_output_height, 30000);
+  EXPECT_FALSE(limits.fixed_edges.enabled());
+  EXPECT_TRUE(limits.fixed_edges.valid());
+}
+
+TEST(LongShotLimitsTest, RejectsNegativeFixedEdgeConfiguration) {
+  LongShotLimits limits;
+  limits.fixed_edges.top_rows = -1;
+  EXPECT_FALSE(limits.valid());
+  limits.fixed_edges.top_rows = 0;
+  limits.fixed_edges.bottom_rows = -1;
+  EXPECT_FALSE(limits.valid());
 }
 
 TEST(LongShotOutcomeTest, DefaultAndNoImageFailureHaveNoResult) {
@@ -575,6 +608,90 @@ TEST(LongShotOutcomeCaptureTest,
   EXPECT_EQ(outcome.input_attempts, 1);
   EXPECT_EQ(outcome.recapture_attempts, 0);
   EXPECT_EQ(sequence->inputs, 1);
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     ExplicitFixedEdgesKeepFirstHeaderAndLatestFooter) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotLimits limits;
+  limits.max_frames = 2;
+  limits.fixed_edges.top_rows = 2;
+  limits.fixed_edges.bottom_rows = 2;
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    const int frame = sequence->inputs;
+    image = makeFixedEdgeFrame(
+        rect.width, rect.height, 2, 2, frame * 10,
+        frame == 0 ? 0xFF101010u : 0xFF202020u,
+        frame == 0 ? 0xFF303030u : 0xFF404040u);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome outcome;
+  std::vector<Image> previews;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, 32, 40}, outcome,
+                              [&](const Image& image) {
+                                previews.push_back(image);
+                              });
+
+  ASSERT_TRUE(result.ok);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::LimitReached);
+  EXPECT_EQ(outcome.accepted_frames, 2);
+  ASSERT_EQ(outcome.image.width, 32);
+  ASSERT_EQ(outcome.image.height, 50);
+  ASSERT_EQ(previews.size(), 2u);
+  EXPECT_EQ(previews.front().height, 40);
+  EXPECT_EQ(previews.back().pixels, outcome.image.pixels);
+  for (int x = 0; x < outcome.image.width; ++x) {
+    EXPECT_EQ(outcome.image.pixels[x], 0xFF101010u);
+    EXPECT_EQ(outcome.image.pixels[32u + x], 0xFF101010u);
+  }
+  for (int global_y = 0; global_y < 46; ++global_y) {
+    for (int x = 0; x < outcome.image.width; ++x) {
+      EXPECT_EQ(outcome.image.pixels[
+                    static_cast<std::size_t>(global_y + 2) * 32u + x],
+                pixelFor(x, global_y));
+    }
+  }
+  for (int row = 48; row < 50; ++row) {
+    for (int x = 0; x < outcome.image.width; ++x) {
+      EXPECT_EQ(outcome.image.pixels[
+                    static_cast<std::size_t>(row) * 32u + x],
+                0xFF404040u);
+    }
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     OversizedFixedEdgesRequestSelectionAdjustmentAndKeepFirstFrame) {
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<SequenceProfile>());
+  LongShotLimits limits;
+  limits.fixed_edges.top_rows = 20;
+  limits.fixed_edges.bottom_rows = 20;
+  LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeStrip(rect.width, rect.height, 0);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry), limits);
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, 32, 40}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "overlap_detection");
+  EXPECT_EQ(result.message,
+            "longshot: fixed edge exclusion is invalid; adjust selection");
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::MatchFailed);
+  EXPECT_EQ(outcome.accepted_frames, 1);
+  EXPECT_EQ(outcome.image.pixels, makeStrip(32, 40, 0).pixels);
 }
 
 TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {

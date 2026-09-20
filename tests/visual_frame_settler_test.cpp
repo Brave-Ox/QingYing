@@ -29,6 +29,26 @@ Image stableStrip(int first_global_y) {
   return image;
 }
 
+Image fixedEdgeStrip(int first_global_y, std::uint32_t edge_pixel) {
+  constexpr int kWidth = 32;
+  constexpr int kHeight = 40;
+  constexpr int kTop = 2;
+  constexpr int kBottom = 2;
+  Image image;
+  image.width = kWidth;
+  image.height = kHeight;
+  image.pixels.resize(kWidth * kHeight);
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      image.pixels[y * kWidth + x] =
+          y < kTop || y >= kHeight - kBottom
+              ? edge_pixel
+              : stablePixelFor(x, first_global_y + y - kTop);
+    }
+  }
+  return image;
+}
+
 using longshot_detail::VisualFrameDecision;
 using longshot_detail::VisualFrameSettler;
 
@@ -105,6 +125,27 @@ TEST(VisualFrameSettlerTest,
   EXPECT_EQ(stopped.decision, VisualFrameDecision::NoProgress);
   EXPECT_EQ(stopped.overlap_rows, flat.height);
   EXPECT_EQ(stopped.reject_reason, OverlapRejectReason::InsufficientTexture);
+}
+
+TEST(VisualFrameSettlerTest,
+     FixedEdgeChangesDoNotHideAStaticBodyOrImplyMovement) {
+  const Image accumulated = fixedEdgeStrip(0, 0xFF101010u);
+  const Image changed_edges = fixedEdgeStrip(0, 0xFF202020u);
+  ImageStitchOptions options;
+  options.min_overlap_rows = 16;
+  options.fixed_top_rows = 2;
+  options.fixed_bottom_rows = 2;
+  options.require_overlap = true;
+  VisualFrameSettler settler(options);
+
+  for (int sample = 0; sample < 2; ++sample) {
+    const auto observation = settler.observe(accumulated, changed_edges);
+    EXPECT_EQ(observation.decision, VisualFrameDecision::ObserveMore);
+    EXPECT_EQ(observation.displacement_rows, 0);
+    EXPECT_EQ(observation.output_rows, accumulated.height);
+  }
+  EXPECT_EQ(settler.observe(accumulated, changed_edges).decision,
+            VisualFrameDecision::NoProgress);
 }
 
 TEST(VisualFrameSettlerTest, LostOverlapStopsImmediately) {

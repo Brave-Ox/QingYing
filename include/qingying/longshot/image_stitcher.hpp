@@ -15,6 +15,11 @@ struct ImageStitchOptions {
   std::uint8_t channel_tolerance{0};
   int left_edge_exclusion_pixels{0};
   int right_edge_exclusion_pixels{0};
+  // Explicit fixed viewport edges. They are excluded from overlap matching;
+  // append keeps the first top edge and replaces the previous bottom edge
+  // with the newest frame's bottom edge. Zero preserves the legacy layout.
+  int fixed_top_rows{0};
+  int fixed_bottom_rows{0};
   std::uint16_t minimum_match_per_mille{1000};
   std::uint16_t minimum_score_margin_per_mille{20};
   std::uint16_t minimum_vertical_texture_per_mille{100};
@@ -33,6 +38,7 @@ enum class OverlapRejectReason : std::uint8_t {
   InsufficientTexture,
   AmbiguousCandidates,
   DisplacementOutOfRange,
+  InvalidEdgeExclusion,
 };
 
 const char* overlapRejectReasonName(OverlapRejectReason reason) noexcept;
@@ -51,6 +57,11 @@ struct OverlapEvidence {
   std::uint8_t sampled_column_bands{0};
   std::uint8_t consistent_row_bands{0};
   std::uint8_t sampled_row_bands{0};
+  // Immutable row ranges calculated for an accepted append operation.
+  int accumulated_keep_rows{0};
+  int next_append_start_row{0};
+  int next_append_rows{0};
+  int output_rows{0};
   OverlapRejectReason reject_reason{OverlapRejectReason::NoCandidate};
 
   bool accepted() const noexcept {
@@ -88,11 +99,13 @@ class ImageStitcher {
   struct CandidateEvidence;
 
   bool validImage(const Image& image) const;
+  bool validEdgeExclusions(const Image& accumulated,
+                           const Image& next) const;
   CandidateEvidence evaluateCandidate(const Image& accumulated,
                                       const Image& next,
                                       int overlap_rows) const;
   bool appendDetected(Image& accumulated, const Image& next,
-                      int overlap_rows) const;
+                      const OverlapEvidence& evidence) const;
   bool pixelsMatch(std::uint32_t lhs, std::uint32_t rhs) const;
 
   ImageStitchOptions options_;

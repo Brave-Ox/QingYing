@@ -18,12 +18,15 @@ ImageStitchOptions stabilityOptions() {
 
 VisualFrameSettler::VisualFrameSettler() : stitcher_(stabilityOptions()) {}
 
+VisualFrameSettler::VisualFrameSettler(ImageStitchOptions options)
+    : stitcher_(options) {}
+
 VisualFrameObservation VisualFrameSettler::observe(
     const Image& accumulated, const Image& sample) {
   ++sample_count_;
   OverlapEvidence evidence;
   if (!stitcher_.findOverlap(accumulated, sample, evidence)) {
-    return {VisualFrameDecision::LostOverlap, 0,
+    return {VisualFrameDecision::LostOverlap, 0, 0, 0,
             evidence.reject_reason};
   }
   if (!evidence.accepted()) {
@@ -31,26 +34,27 @@ VisualFrameObservation VisualFrameSettler::observe(
     // plausible. It can still safely establish end-of-content when the best
     // candidate is the complete, unchanged frame for three bounded samples.
     if (evidence.reject_reason == OverlapRejectReason::InsufficientTexture &&
-        evidence.candidate_overlap_rows == sample.height) {
+        evidence.displacement_rows == 0) {
       ++unchanged_samples_;
       movement_overlap_ = 0;
       stable_movement_samples_ = 0;
       return {unchanged_samples_ >= 3 ? VisualFrameDecision::NoProgress
                                       : VisualFrameDecision::ObserveMore,
-              sample.height, evidence.reject_reason};
+              evidence.candidate_overlap_rows, 0, accumulated.height,
+              evidence.reject_reason};
     }
-    return {VisualFrameDecision::LostOverlap, 0,
+    return {VisualFrameDecision::LostOverlap, 0, 0, 0,
             evidence.reject_reason};
   }
   const int overlap_rows = evidence.overlap_rows;
 
-  if (overlap_rows == sample.height) {
+  if (evidence.displacement_rows == 0) {
     ++unchanged_samples_;
     movement_overlap_ = 0;
     stable_movement_samples_ = 0;
     return {unchanged_samples_ >= 3 ? VisualFrameDecision::NoProgress
                                     : VisualFrameDecision::ObserveMore,
-            overlap_rows};
+            overlap_rows, 0, accumulated.height};
   }
 
   unchanged_samples_ = 0;
@@ -64,7 +68,7 @@ VisualFrameObservation VisualFrameSettler::observe(
   return {stable_movement_samples_ >= 2
               ? VisualFrameDecision::StableMovement
               : VisualFrameDecision::ObserveMore,
-          overlap_rows};
+          overlap_rows, evidence.displacement_rows, evidence.output_rows};
 }
 
 int VisualFrameSettler::sampleCount() const noexcept { return sample_count_; }
