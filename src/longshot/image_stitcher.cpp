@@ -491,6 +491,7 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
       highest_score >= second_highest_score
           ? static_cast<std::uint16_t>(highest_score - second_highest_score)
           : 0;
+  evidence.selected_score_per_mille = reported.score_per_mille;
   evidence.vertical_texture_per_mille =
       reported.vertical_texture_per_mille;
   evidence.consistent_column_bands = reported.consistent_column_bands;

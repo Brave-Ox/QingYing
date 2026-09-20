@@ -108,6 +108,7 @@ struct OverlapEvidence {
   std::uint16_t best_score_per_mille{0};
   std::uint16_t second_best_score_per_mille{0};
   std::uint16_t score_margin_per_mille{0};
+  std::uint16_t selected_score_per_mille{0};
   std::uint16_t vertical_texture_per_mille{0};
   std::uint8_t consistent_column_bands{0};
   std::uint8_t sampled_column_bands{0};

@@ -550,6 +550,41 @@ TEST(LongShotEngineTest,
   EXPECT_EQ(profile_ptr->wheelCount(), 1);
 }
 
+TEST(LongShotEngineTest,
+     SmallDisplacementJitterSettlesWithinOneInput) {
+  constexpr int kWidth = 32;
+  constexpr int kHeight = 40;
+  auto profile = std::make_unique<ScriptedLongShotProfile>(true);
+  auto* profile_ptr = profile.get();
+  LongShotProfileRegistry registry;
+  registry.add(std::move(profile));
+  int captures = 0;
+  LongShotEngine engine(
+      [&](const ScreenPhysicalRect& region, Image& image) {
+        const int offsets[] = {0, 10, 11};
+        const int index = (std::min)(captures, 2);
+        ++captures;
+        image = makeStrip(region.width, region.height, offsets[index]);
+        ActionResult result;
+        result.ok = true;
+        return result;
+      },
+      std::move(registry));
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, kWidth, kHeight}, outcome);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::ReachedBottom);
+  EXPECT_EQ(outcome.accepted_frames, 2);
+  EXPECT_EQ(outcome.image.height, kHeight + 11);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(outcome.recapture_attempts, 1);
+  EXPECT_EQ(captures, 3);
+  EXPECT_EQ(profile_ptr->wheelCount(), 1);
+}
+
 TEST(LongShotEngineTest, PersistentMotionStopsAtVisualSampleBudget) {
   constexpr int kWidth = 32;
   constexpr int kHeight = 40;
@@ -560,7 +595,7 @@ TEST(LongShotEngineTest, PersistentMotionStopsAtVisualSampleBudget) {
   int captures = 0;
   LongShotEngine engine(
       [&](const ScreenPhysicalRect& region, Image& image) {
-        const int offsets[] = {0, 2, 4, 6, 8, 10, 12};
+        const int offsets[] = {0, 3, 6, 9, 12, 15, 18};
         const int index = (std::min)(captures, 6);
         ++captures;
         image = makeStrip(region.width, region.height, offsets[index]);
@@ -619,7 +654,7 @@ TEST(LongShotEngineTest, FrameRecaptureUsesConfiguredBudget) {
   limits.max_frame_recaptures = 2;
   int captures = 0;
   LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
-    const int offsets[] = {0, 2, 4, 6};
+    const int offsets[] = {0, 3, 6, 9};
     image = makeStrip(rect.width, rect.height,
                       offsets[(std::min)(captures, 3)]);
     ++captures;

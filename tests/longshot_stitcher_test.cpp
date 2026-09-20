@@ -341,6 +341,7 @@ TEST(ImageStitcherEvidenceTest, ReportsUniqueMultiBandOverlapEvidence) {
   EXPECT_EQ(evidence.displacement_rows, 4);
   EXPECT_EQ(evidence.matching_candidates, 1);
   EXPECT_EQ(evidence.best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.selected_score_per_mille, 1000);
   EXPECT_EQ(evidence.consistent_column_bands, 3);
   EXPECT_EQ(evidence.sampled_column_bands, 3);
   EXPECT_EQ(evidence.consistent_row_bands, 3);

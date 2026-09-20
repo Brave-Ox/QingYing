@@ -29,6 +29,21 @@ Image stableStrip(int first_global_y) {
   return image;
 }
 
+Image tallStableStrip(int first_global_y) {
+  constexpr int kWidth = 32;
+  constexpr int kHeight = 240;
+  Image image;
+  image.width = kWidth;
+  image.height = kHeight;
+  image.pixels.resize(kWidth * kHeight);
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      image.pixels[y * kWidth + x] = stablePixelFor(x, first_global_y + y);
+    }
+  }
+  return image;
+}
+
 Image fixedEdgeStrip(int first_global_y, std::uint32_t edge_pixel) {
   constexpr int kWidth = 32;
   constexpr int kHeight = 40;
@@ -50,6 +65,7 @@ Image fixedEdgeStrip(int first_global_y, std::uint32_t edge_pixel) {
 }
 
 using longshot_detail::VisualFrameDecision;
+using longshot_detail::VisualFrameSettlingPolicy;
 using longshot_detail::VisualFrameSettler;
 
 }  // namespace
@@ -79,6 +95,100 @@ TEST(VisualFrameSettlerTest, SmoothScrollAcceptsOnlyTheSettledPosition) {
   const auto stable = settler.observe(accumulated, stableStrip(15));
   EXPECT_EQ(stable.decision, VisualFrameDecision::StableMovement);
   EXPECT_EQ(stable.overlap_rows, 25);
+}
+
+TEST(VisualFrameSettlerTest, NearbyDisplacementsShareTheDefaultCluster) {
+  const Image accumulated = tallStableStrip(0);
+  VisualFrameSettler settler;
+
+  const auto first = settler.observe(accumulated, tallStableStrip(120));
+  EXPECT_EQ(first.decision, VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(first.displacement_rows, 120);
+
+  const auto stable = settler.observe(accumulated, tallStableStrip(121));
+  EXPECT_EQ(stable.decision, VisualFrameDecision::StableMovement);
+  EXPECT_EQ(stable.displacement_rows, 121);
+  EXPECT_EQ(stable.overlap_rows, 119);
+}
+
+TEST(VisualFrameSettlerTest, DistantDisplacementsStartANewCluster) {
+  const Image accumulated = tallStableStrip(0);
+  VisualFrameSettler settler;
+
+  EXPECT_EQ(settler.observe(accumulated, tallStableStrip(120)).decision,
+            VisualFrameDecision::ObserveMore);
+  const auto restarted =
+      settler.observe(accumulated, tallStableStrip(126));
+  EXPECT_EQ(restarted.decision, VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(restarted.displacement_rows, 126);
+
+  const auto stable = settler.observe(accumulated, tallStableStrip(127));
+  EXPECT_EQ(stable.decision, VisualFrameDecision::StableMovement);
+  EXPECT_EQ(stable.displacement_rows, 127);
+}
+
+TEST(VisualFrameSettlerTest, LowerScoringObservationRestartsTheCluster) {
+  const Image accumulated = stableStrip(0);
+  const Image moved = stableStrip(10);
+  Image lower_scoring = moved;
+  lower_scoring.pixels[8] ^= 0x00101010u;
+  VisualFrameSettler settler;
+
+  EXPECT_EQ(settler.observe(accumulated, moved).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, lower_scoring).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, lower_scoring).decision,
+            VisualFrameDecision::StableMovement);
+}
+
+TEST(VisualFrameSettlerTest, DisplacementToleranceIsANamedPolicy) {
+  const Image accumulated = tallStableStrip(0);
+  ImageStitchOptions stitch_options;
+  stitch_options.min_overlap_rows = 16;
+  stitch_options.side_exclusion.mode = SideExclusionMode::Automatic;
+  stitch_options.channel_tolerance = 2;
+  stitch_options.minimum_match_per_mille = 960;
+  stitch_options.require_overlap = true;
+  VisualFrameSettlingPolicy policy;
+  policy.displacement_tolerance_rows = 0;
+  VisualFrameSettler settler(stitch_options, policy);
+
+  EXPECT_EQ(settler.observe(accumulated, tallStableStrip(120)).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, tallStableStrip(121)).decision,
+            VisualFrameDecision::ObserveMore);
+}
+
+TEST(VisualFrameSettlerTest, ZeroDisplacementNeverJoinsMovementCluster) {
+  const Image accumulated = stableStrip(0);
+  VisualFrameSettler settler;
+
+  EXPECT_EQ(settler.observe(accumulated, accumulated).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, stableStrip(1)).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, accumulated).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, accumulated).decision,
+            VisualFrameDecision::ObserveMore);
+  EXPECT_EQ(settler.observe(accumulated, accumulated).decision,
+            VisualFrameDecision::NoProgress);
+}
+
+TEST(VisualFrameSettlerTest, SmoothScrollAcceptsFinalJitterCluster) {
+  const Image accumulated = tallStableStrip(0);
+  VisualFrameSettler settler;
+
+  for (const int displacement : {40, 100, 160, 200}) {
+    EXPECT_EQ(
+        settler.observe(accumulated, tallStableStrip(displacement)).decision,
+        VisualFrameDecision::ObserveMore);
+  }
+  const auto stable = settler.observe(accumulated, tallStableStrip(202));
+  EXPECT_EQ(stable.decision, VisualFrameDecision::StableMovement);
+  EXPECT_EQ(stable.displacement_rows, 202);
+  EXPECT_EQ(stable.overlap_rows, 38);
 }
 
 TEST(VisualFrameSettlerTest, SparseCursorBlinkDoesNotImplyMovement) {
