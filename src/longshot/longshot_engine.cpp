@@ -236,6 +236,21 @@ bool retryableFrameFailure(const ActionResult& result) {
              longShotFailureStageName(LongShotFailureStage::FrameValidation);
 }
 
+const char* overlapFailureMessage(OverlapRejectReason reason) noexcept {
+  switch (reason) {
+    case OverlapRejectReason::AmbiguousCandidates:
+      return "longshot: overlap candidates are ambiguous";
+    case OverlapRejectReason::InsufficientTexture:
+      return "longshot: overlap has insufficient visual texture";
+    case OverlapRejectReason::InconsistentRegions:
+      return "longshot: overlap is inconsistent across image regions";
+    case OverlapRejectReason::DisplacementOutOfRange:
+      return "longshot: overlap displacement is outside the safe range";
+    default:
+      return "longshot: no reliable overlap was found";
+  }
+}
+
 ActionResult waitForScrollSettle(
     const LongShotProfile& profile, const LongShotRequest& request,
     const LongShotProfileResult& before_profile,
@@ -783,7 +798,7 @@ ActionResult LongShotEngine::captureSelection(
         lost_overlap = true;
         last_frame_failure = makeFailure(
             ErrorCode::kCaptureFailed,
-            "longshot: no reliable overlap was found",
+            overlapFailureMessage(observation.reject_reason),
             LongShotFailureStage::OverlapDetection, next_frame_number);
         break;
       }

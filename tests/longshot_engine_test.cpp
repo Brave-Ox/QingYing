@@ -43,6 +43,17 @@ Image makeStrip(int width, int height, int first_global_y) {
   return image;
 }
 
+Image makePeriodicStrip(int width, int height, int period) {
+  Image image = makeStrip(width, height, 0);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      image.pixels[static_cast<std::size_t>(y) * width + x] =
+          pixelFor(x, y % period);
+    }
+  }
+  return image;
+}
+
 class ScriptedLongShotProfile final : public LongShotProfile {
  public:
   explicit ScriptedLongShotProfile(bool move_on_scroll)
@@ -536,6 +547,34 @@ class SequenceProfile final : public LongShotProfile {
   bool queryScrollState(const LongShotProfileResult&,
                         LongShotScrollState&) const override { return false; }
 };
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     AmbiguousPatternReportsReasonAndPreservesInitialFrame) {
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotEngine engine([](const ScreenPhysicalRect& rect, Image& image) {
+    image = makePeriodicStrip(rect.width, rect.height, 5);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, 32, 40}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "overlap_detection");
+  EXPECT_EQ(result.message, "longshot: overlap candidates are ambiguous");
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::MatchFailed);
+  EXPECT_EQ(outcome.accepted_frames, 1);
+  EXPECT_EQ(outcome.image.pixels, makePeriodicStrip(32, 40, 5).pixels);
+  EXPECT_EQ(outcome.input_attempts, 1);
+  EXPECT_EQ(outcome.recapture_attempts, 0);
+  EXPECT_EQ(sequence->inputs, 1);
 }
 
 TEST(LongShotOutcomeCaptureTest, ThirdFrameFailuresKeepExactVerifiedComposite) {

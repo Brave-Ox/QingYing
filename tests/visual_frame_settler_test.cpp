@@ -87,14 +87,35 @@ TEST(VisualFrameSettlerTest, StaticFramesNeedThreeSamplesForNoProgress) {
             VisualFrameDecision::NoProgress);
 }
 
+TEST(VisualFrameSettlerTest,
+     FlatStaticFramesNeedThreeSamplesAndAreNeverAcceptedAsMovement) {
+  Image flat;
+  flat.width = 32;
+  flat.height = 40;
+  flat.pixels.assign(flat.width * flat.height, 0xFFF2F2F2u);
+  VisualFrameSettler settler;
+
+  for (int sample = 0; sample < 2; ++sample) {
+    const auto observation = settler.observe(flat, flat);
+    EXPECT_EQ(observation.decision, VisualFrameDecision::ObserveMore);
+    EXPECT_EQ(observation.reject_reason,
+              OverlapRejectReason::InsufficientTexture);
+  }
+  const auto stopped = settler.observe(flat, flat);
+  EXPECT_EQ(stopped.decision, VisualFrameDecision::NoProgress);
+  EXPECT_EQ(stopped.overlap_rows, flat.height);
+  EXPECT_EQ(stopped.reject_reason, OverlapRejectReason::InsufficientTexture);
+}
+
 TEST(VisualFrameSettlerTest, LostOverlapStopsImmediately) {
   const Image accumulated = stableStrip(0);
   Image unrelated = accumulated;
   for (auto& pixel : unrelated.pixels) pixel = 0xFF7F11E3u;
   VisualFrameSettler settler;
 
-  EXPECT_EQ(settler.observe(accumulated, unrelated).decision,
-            VisualFrameDecision::LostOverlap);
+  const auto observation = settler.observe(accumulated, unrelated);
+  EXPECT_EQ(observation.decision, VisualFrameDecision::LostOverlap);
+  EXPECT_EQ(observation.reject_reason, OverlapRejectReason::NoCandidate);
   EXPECT_EQ(settler.sampleCount(), 1);
 }
 

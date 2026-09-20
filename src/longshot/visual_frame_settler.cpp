@@ -21,11 +21,28 @@ VisualFrameSettler::VisualFrameSettler() : stitcher_(stabilityOptions()) {}
 VisualFrameObservation VisualFrameSettler::observe(
     const Image& accumulated, const Image& sample) {
   ++sample_count_;
-  int overlap_rows = 0;
-  if (!stitcher_.findOverlap(accumulated, sample, overlap_rows) ||
-      overlap_rows == 0) {
-    return {VisualFrameDecision::LostOverlap, 0};
+  OverlapEvidence evidence;
+  if (!stitcher_.findOverlap(accumulated, sample, evidence)) {
+    return {VisualFrameDecision::LostOverlap, 0,
+            evidence.reject_reason};
   }
+  if (!evidence.accepted()) {
+    // A flat viewport is unsafe to stitch because every displacement looks
+    // plausible. It can still safely establish end-of-content when the best
+    // candidate is the complete, unchanged frame for three bounded samples.
+    if (evidence.reject_reason == OverlapRejectReason::InsufficientTexture &&
+        evidence.candidate_overlap_rows == sample.height) {
+      ++unchanged_samples_;
+      movement_overlap_ = 0;
+      stable_movement_samples_ = 0;
+      return {unchanged_samples_ >= 3 ? VisualFrameDecision::NoProgress
+                                      : VisualFrameDecision::ObserveMore,
+              sample.height, evidence.reject_reason};
+    }
+    return {VisualFrameDecision::LostOverlap, 0,
+            evidence.reject_reason};
+  }
+  const int overlap_rows = evidence.overlap_rows;
 
   if (overlap_rows == sample.height) {
     ++unchanged_samples_;

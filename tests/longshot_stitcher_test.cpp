@@ -36,6 +36,24 @@ Image makeStrip(int width, int height, int first_global_y) {
   return image;
 }
 
+Image makePeriodicStrip(int width, int height, int first_global_y,
+                        int period) {
+  Image image = makeStrip(width, height, first_global_y);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      image.pixels[static_cast<std::size_t>(y) * width + x] =
+          pixelFor(x, (first_global_y + y) % period);
+    }
+  }
+  return image;
+}
+
+void expectSameImage(const Image& actual, const Image& expected) {
+  EXPECT_EQ(actual.width, expected.width);
+  EXPECT_EQ(actual.height, expected.height);
+  EXPECT_EQ(actual.pixels, expected.pixels);
+}
+
 }  // namespace
 
 TEST(ImageStitcherTest, FindsLargestOverlapAndAppendsOnlyNewRows) {
@@ -168,6 +186,140 @@ TEST(ImageStitcherTest, EmptyAccumulatedImageBecomesFirstFrame) {
   EXPECT_EQ(accumulated.width, 3);
   EXPECT_EQ(accumulated.height, 4);
   EXPECT_EQ(accumulated.pixels, next.pixels);
+}
+
+TEST(ImageStitcherEvidenceTest, ReportsUniqueMultiBandOverlapEvidence) {
+  const Image accumulated = makeStrip(36, 40, 0);
+  const Image next = makeStrip(36, 32, 12);
+  ImageStitchOptions options;
+  options.sample_step = 2;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
+  EXPECT_EQ(evidence.overlap_rows, 28);
+  EXPECT_EQ(evidence.displacement_rows, 4);
+  EXPECT_EQ(evidence.matching_candidates, 1);
+  EXPECT_EQ(evidence.best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.consistent_column_bands, 3);
+  EXPECT_EQ(evidence.sampled_column_bands, 3);
+  EXPECT_EQ(evidence.consistent_row_bands, 3);
+  EXPECT_EQ(evidence.sampled_row_bands, 3);
+  EXPECT_GE(evidence.vertical_texture_per_mille, 100);
+}
+
+TEST(ImageStitcherEvidenceTest, RejectsFlatColorAndPreservesAccumulatedImage) {
+  Image accumulated{24, 24,
+                    std::vector<std::uint32_t>(24u * 24u, 0xFF334455u)};
+  const Image original = accumulated;
+  const Image next{24, 18,
+                   std::vector<std::uint32_t>(24u * 18u, 0xFF334455u)};
+  ImageStitchOptions options;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_FALSE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason,
+            OverlapRejectReason::InsufficientTexture);
+  EXPECT_STREQ(overlapRejectReasonName(evidence.reject_reason),
+               "insufficient_texture");
+  OverlapEvidence append_evidence;
+  EXPECT_FALSE(stitcher.append(accumulated, next, append_evidence));
+  EXPECT_EQ(append_evidence.reject_reason,
+            OverlapRejectReason::InsufficientTexture);
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     RejectsAmbiguousShortPeriodPatternAndPreservesAccumulatedImage) {
+  Image accumulated = makePeriodicStrip(24, 24, 0, 4);
+  const Image original = accumulated;
+  const Image next = makePeriodicStrip(24, 16, 8, 4);
+  ImageStitchOptions options;
+  options.min_overlap_rows = 4;
+  options.sample_step = 1;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_FALSE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason,
+            OverlapRejectReason::AmbiguousCandidates);
+  EXPECT_GT(evidence.matching_candidates, 1);
+  EXPECT_EQ(evidence.best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.second_best_score_per_mille, 1000);
+  OverlapEvidence append_evidence;
+  EXPECT_FALSE(stitcher.append(accumulated, next, append_evidence));
+  EXPECT_EQ(append_evidence.reject_reason,
+            OverlapRejectReason::AmbiguousCandidates);
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherEvidenceTest, RejectsMatchConfinedToOnlySomeColumnBands) {
+  Image accumulated = makeStrip(30, 24, 0);
+  const Image original = accumulated;
+  Image next = makeStrip(30, 18, 6);
+  for (int y = 0; y < next.height; ++y) {
+    for (int x = 10; x < 20; ++x) {
+      next.pixels[static_cast<std::size_t>(y) * next.width + x] =
+          0xFF010203u;
+    }
+  }
+  ImageStitchOptions options;
+  options.sample_step = 1;
+  options.minimum_match_per_mille = 600;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_FALSE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason,
+            OverlapRejectReason::InconsistentRegions);
+  EXPECT_LT(evidence.consistent_column_bands,
+            evidence.sampled_column_bands);
+  EXPECT_FALSE(stitcher.append(accumulated, next));
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherEvidenceTest, RejectsDisplacementOutsideConfiguredRange) {
+  Image accumulated = makeStrip(32, 40, 0);
+  const Image original = accumulated;
+  const Image next = makeStrip(32, 40, 10);
+  ImageStitchOptions options;
+  options.maximum_displacement_rows = 5;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_EQ(evidence.reject_reason,
+            OverlapRejectReason::DisplacementOutOfRange);
+  EXPECT_FALSE(stitcher.append(accumulated, next));
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherEvidenceTest, ReportsTrueNoOverlapWithoutChangingPixels) {
+  Image accumulated = makeStrip(24, 24, 0);
+  const Image original = accumulated;
+  const Image next = makeStrip(24, 18, 100);
+  ImageStitchOptions options;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::NoCandidate);
+  EXPECT_EQ(evidence.overlap_rows, 0);
+  EXPECT_FALSE(stitcher.append(accumulated, next));
+  expectSameImage(accumulated, original);
 }
 
 }  // namespace qingying

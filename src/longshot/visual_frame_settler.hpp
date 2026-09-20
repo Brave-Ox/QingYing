@@ -15,6 +15,7 @@ enum class VisualFrameDecision {
 struct VisualFrameObservation {
   VisualFrameDecision decision{VisualFrameDecision::ObserveMore};
   int overlap_rows{0};
+  OverlapRejectReason reject_reason{OverlapRejectReason::None};
 };
 
 // Classifies captures made after one scroll input. Movement is accepted only
