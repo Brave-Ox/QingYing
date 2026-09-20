@@ -802,7 +802,11 @@ ActionResult LongShotEngine::captureSelection(
   stitch_options.channel_tolerance = 2;
   stitch_options.minimum_match_per_mille = 960;
   stitch_options.require_overlap = true;
-  ImageStitcher stitcher(stitch_options);
+  const bool auto_bottom_enabled = stitch_options.fixed_bottom_rows == 0;
+  int provisional_bottom_rows = 0;
+  int consistent_bottom_positions = 0;
+  int confirmed_bottom_rows = 0;
+  Image last_reliable_viewport;
   int frame_count = 1;
   LongShotStopReason stop_reason = LongShotStopReason::LimitReached;
   while (true) {
@@ -827,8 +831,18 @@ ActionResult LongShotEngine::captureSelection(
       out.budget_reason = LongShotBudgetReason::WorkingMemory;
       break;
     }
+    std::uint64_t reliable_viewport_bytes = 0;
+    if (!last_reliable_viewport.empty() &&
+        !imageCapacityBytes(last_reliable_viewport,
+                            reliable_viewport_bytes)) {
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      break;
+    }
+    std::uint64_t retained_bytes = 0;
     std::uint64_t capture_peak_bytes = 0;
-    if (!checkedWorkingBytes(stitched_bytes, frame_bytes, 0,
+    if (!checkedWorkingBytes(stitched_bytes, reliable_viewport_bytes, 0,
+                             retained_bytes) ||
+        !checkedWorkingBytes(retained_bytes, frame_bytes, 0,
                              capture_peak_bytes) ||
         capture_peak_bytes > limits.max_working_bytes) {
       out.budget_reason = LongShotBudgetReason::WorkingMemory;
@@ -889,7 +903,7 @@ ActionResult LongShotEngine::captureSelection(
     std::uint64_t candidate_capture_bytes = 0;
     std::uint64_t actual_capture_bytes = 0;
     if (imageCapacityBytes(candidate_frame, candidate_capture_bytes) &&
-        checkedWorkingBytes(stitched_bytes, candidate_capture_bytes, 0,
+        checkedWorkingBytes(retained_bytes, candidate_capture_bytes, 0,
                             actual_capture_bytes)) {
       out.peak_working_bytes =
           (std::max)(out.peak_working_bytes, actual_capture_bytes);
@@ -902,8 +916,15 @@ ActionResult LongShotEngine::captureSelection(
     bool retryable_overlap = false;
     bool fatal_overlap = false;
     bool interrupted = false;
+    int accepted_bottom_rows = stitch_options.fixed_bottom_rows;
+    int active_bottom_rows = -1;
     auto visual_retry_delay = kFrameRetryDelay;
-    longshot_detail::VisualFrameSettler frame_settler(stitch_options);
+    std::unique_ptr<longshot_detail::VisualFrameSettler> frame_settler;
+    const Image& previous_viewport = last_reliable_viewport.empty()
+                                         ? stitched
+                                         : last_reliable_viewport;
+    const SideExclusionRange bottom_detection_sides = resolveSideExclusion(
+        request.width, stitch_options.side_exclusion);
     for (int sample = 0; sample <= limits.max_frame_recaptures;
          ++sample) {
       if (!continue_capture()) {
@@ -926,8 +947,39 @@ ActionResult LongShotEngine::captureSelection(
         continue;
       }
 
-      const auto observation = frame_settler.observe(stitched,
-                                                     candidate_frame);
+      int sample_bottom_rows = stitch_options.fixed_bottom_rows;
+      if (auto_bottom_enabled) {
+        const auto bottom_evidence = detectFixedBottomEdge(
+            previous_viewport, candidate_frame, bottom_detection_sides);
+        if (!bottom_evidence.valid ||
+            (confirmed_bottom_rows > 0 &&
+             (!bottom_evidence.detected ||
+              bottom_evidence.candidate_rows != confirmed_bottom_rows))) {
+          retryable_overlap = true;
+          last_frame_failure = makeFailure(
+              ErrorCode::kCaptureFailed,
+              "longshot: fixed bottom edge could not be verified",
+              LongShotFailureStage::OverlapDetection, next_frame_number);
+          frame_settler.reset();
+          active_bottom_rows = -1;
+          visual_retry_delay = kFrameRetryDelay;
+          continue;
+        }
+        sample_bottom_rows = bottom_evidence.detected
+                                 ? bottom_evidence.candidate_rows
+                                 : 0;
+      }
+      if (!frame_settler || active_bottom_rows != sample_bottom_rows) {
+        ImageStitchOptions sample_options = stitch_options;
+        sample_options.fixed_bottom_rows = sample_bottom_rows;
+        frame_settler =
+            std::make_unique<longshot_detail::VisualFrameSettler>(
+                sample_options);
+        active_bottom_rows = sample_bottom_rows;
+      }
+
+      const auto observation = frame_settler->observe(stitched,
+                                                      candidate_frame);
       next_overlap_rows = observation.overlap_rows;
       planned_output_rows = observation.output_rows;
       if (observation.decision ==
@@ -945,6 +997,7 @@ ActionResult LongShotEngine::captureSelection(
       if (observation.decision ==
           longshot_detail::VisualFrameDecision::StableMovement) {
         matched_overlap = true;
+        accepted_bottom_rows = sample_bottom_rows;
         break;
       }
       if (observation.decision ==
@@ -1016,7 +1069,9 @@ ActionResult LongShotEngine::captureSelection(
     if (!imageCapacityBytes(stitched, stitched_bytes) ||
         !imageCapacityBytes(candidate_frame, candidate_bytes) ||
         !checkedImageBytes(request.width, planned_output_rows, output_bytes) ||
-        !checkedWorkingBytes(stitched_bytes, candidate_bytes, output_bytes,
+        !checkedWorkingBytes(stitched_bytes, reliable_viewport_bytes, 0,
+                             retained_bytes) ||
+        !checkedWorkingBytes(retained_bytes, candidate_bytes, output_bytes,
                              append_peak_bytes) ||
         append_peak_bytes > limits.max_working_bytes) {
       out.budget_reason = LongShotBudgetReason::WorkingMemory;
@@ -1027,6 +1082,9 @@ ActionResult LongShotEngine::captureSelection(
     bool appended = false;
     OverlapEvidence append_evidence;
     try {
+      ImageStitchOptions accepted_options = stitch_options;
+      accepted_options.fixed_bottom_rows = accepted_bottom_rows;
+      ImageStitcher stitcher(accepted_options);
       appended = stitcher.append(stitched, candidate_frame, append_evidence);
       next_overlap_rows = append_evidence.overlap_rows;
     } catch (const std::bad_alloc&) {
@@ -1045,6 +1103,24 @@ ActionResult LongShotEngine::captureSelection(
                          "longshot: failed to stitch next frame",
                          LongShotFailureStage::Stitching, next_frame_number),
                     LongShotStopReason::StitchFailed);
+    }
+
+    if (auto_bottom_enabled) {
+      if (accepted_bottom_rows > 0) {
+        if (provisional_bottom_rows == accepted_bottom_rows) {
+          ++consistent_bottom_positions;
+        } else {
+          provisional_bottom_rows = accepted_bottom_rows;
+          consistent_bottom_positions = 1;
+        }
+        if (consistent_bottom_positions >= 2) {
+          confirmed_bottom_rows = accepted_bottom_rows;
+        }
+      } else if (confirmed_bottom_rows == 0) {
+        provisional_bottom_rows = 0;
+        consistent_bottom_positions = 0;
+      }
+      last_reliable_viewport = std::move(candidate_frame);
     }
 
     ++frame_count;

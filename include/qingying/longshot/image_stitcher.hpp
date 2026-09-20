@@ -36,6 +36,31 @@ struct SideExclusionRange {
 SideExclusionRange resolveSideExclusion(
     int image_width, const SideExclusionPolicy& policy) noexcept;
 
+struct FixedBottomDetectionOptions {
+  int sample_step{4};
+  std::uint8_t channel_tolerance{2};
+  std::uint16_t minimum_match_per_mille{960};
+  std::uint16_t minimum_texture_per_mille{20};
+  int minimum_rows{2};
+  int maximum_height_divisor{3};
+};
+
+struct FixedBottomEvidence {
+  int candidate_rows{0};
+  std::uint16_t match_per_mille{0};
+  std::uint16_t texture_per_mille{0};
+  bool valid{false};
+  bool detected{false};
+};
+
+// Detects a same-position bottom edge between two raw viewport captures. The
+// caller remains responsible for requiring evidence across multiple scroll
+// positions before treating the height as a confirmed model.
+FixedBottomEvidence detectFixedBottomEdge(
+    const Image& previous, const Image& current,
+    const SideExclusionRange& sides,
+    const FixedBottomDetectionOptions& options = {}) noexcept;
+
 // Options for matching the bottom of an accumulated image with the top of
 // the next viewport frame.
 struct ImageStitchOptions {

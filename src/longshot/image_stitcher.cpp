@@ -20,6 +20,22 @@ bool withinTolerance(std::uint8_t lhs, std::uint8_t rhs,
   return std::abs(difference) <= static_cast<int>(tolerance);
 }
 
+bool pixelsWithinTolerance(std::uint32_t lhs, std::uint32_t rhs,
+                           std::uint8_t tolerance) {
+  return withinTolerance(channel(lhs, 0), channel(rhs, 0), tolerance) &&
+         withinTolerance(channel(lhs, 8), channel(rhs, 8), tolerance) &&
+         withinTolerance(channel(lhs, 16), channel(rhs, 16), tolerance) &&
+         withinTolerance(channel(lhs, 24), channel(rhs, 24), tolerance);
+}
+
+bool validImagePixels(const Image& image) {
+  if (image.width <= 0 || image.height <= 0) return false;
+  const auto width = static_cast<std::size_t>(image.width);
+  const auto height = static_cast<std::size_t>(image.height);
+  return height <= std::numeric_limits<std::size_t>::max() / width &&
+         image.pixels.size() == width * height;
+}
+
 }  // namespace
 
 SideExclusionRange resolveSideExclusion(
@@ -57,6 +73,106 @@ SideExclusionRange resolveSideExclusion(
   range.usable_width = static_cast<int>(usable_width);
   range.valid = true;
   return range;
+}
+
+FixedBottomEvidence detectFixedBottomEdge(
+    const Image& previous, const Image& current,
+    const SideExclusionRange& sides,
+    const FixedBottomDetectionOptions& options) noexcept {
+  FixedBottomEvidence evidence;
+  const std::int64_t declared_usable_width =
+      static_cast<std::int64_t>(previous.width) - sides.left_pixels -
+      sides.right_pixels;
+  if (!validImagePixels(previous) || !validImagePixels(current) ||
+      previous.width != current.width ||
+      previous.height != current.height || !sides.valid ||
+      sides.left_pixels < 0 || sides.right_pixels < 0 ||
+      declared_usable_width <= 0 ||
+      declared_usable_width > std::numeric_limits<int>::max() ||
+      sides.usable_width != declared_usable_width ||
+      options.sample_step <= 0 || options.minimum_rows <= 0 ||
+      options.maximum_height_divisor <= 0 ||
+      options.minimum_match_per_mille > 1000 ||
+      options.minimum_texture_per_mille > 1000) {
+    return evidence;
+  }
+  evidence.valid = true;
+  const int maximum_rows = previous.height / options.maximum_height_divisor;
+  if (maximum_rows < options.minimum_rows) return evidence;
+
+  const int first_x = sides.left_pixels;
+  const int last_x = previous.width - sides.right_pixels;
+  const int step = options.sample_step;
+  const auto pixelAt = [](const Image& image, int x, int y) {
+    return image.pixels[static_cast<std::size_t>(y) * image.width + x];
+  };
+  std::uint64_t all_matches = 0;
+  std::uint64_t all_samples = 0;
+  int matching_rows = 0;
+  for (int offset = 0; offset <= maximum_rows; ++offset) {
+    const int y = previous.height - 1 - offset;
+    std::uint64_t row_matches = 0;
+    std::uint64_t row_samples = 0;
+    const auto sampleX = [&](int x) {
+      ++row_samples;
+      if (pixelsWithinTolerance(pixelAt(previous, x, y),
+                                pixelAt(current, x, y),
+                                options.channel_tolerance)) {
+        ++row_matches;
+      }
+    };
+    for (int x = first_x; x < last_x; x += step) sampleX(x);
+    const int rightmost_x = last_x - 1;
+    if ((rightmost_x - first_x) % step != 0) sampleX(rightmost_x);
+    if (row_samples == 0 ||
+        row_matches * 1000u <
+            row_samples * options.minimum_match_per_mille) {
+      break;
+    }
+    ++matching_rows;
+    all_matches += row_matches;
+    all_samples += row_samples;
+  }
+  evidence.candidate_rows = matching_rows;
+  if (all_samples > 0) {
+    evidence.match_per_mille = static_cast<std::uint16_t>(
+        (std::min<std::uint64_t>)(1000u,
+                                  all_matches * 1000u / all_samples));
+  }
+  // Reaching beyond the cap means the stable area is not a bounded bottom
+  // edge (for example a large blank or unchanged viewport).
+  if (matching_rows < options.minimum_rows || matching_rows > maximum_rows) {
+    return evidence;
+  }
+
+  std::uint64_t texture_changes = 0;
+  std::uint64_t texture_samples = 0;
+  for (int y = previous.height - matching_rows; y < previous.height; ++y) {
+    bool has_previous = false;
+    std::uint32_t previous_pixel = 0;
+    const auto sampleTexture = [&](int x) {
+      const std::uint32_t pixel = pixelAt(current, x, y);
+      if (has_previous) {
+        ++texture_samples;
+        if (!pixelsWithinTolerance(previous_pixel, pixel,
+                                   options.channel_tolerance)) {
+          ++texture_changes;
+        }
+      }
+      previous_pixel = pixel;
+      has_previous = true;
+    };
+    for (int x = first_x; x < last_x; x += step) sampleTexture(x);
+    const int rightmost_x = last_x - 1;
+    if ((rightmost_x - first_x) % step != 0) sampleTexture(rightmost_x);
+  }
+  if (texture_samples > 0) {
+    evidence.texture_per_mille = static_cast<std::uint16_t>(
+        texture_changes * 1000u / texture_samples);
+  }
+  evidence.detected = evidence.texture_per_mille >=
+                      options.minimum_texture_per_mille;
+  return evidence;
 }
 
 const char* overlapRejectReasonName(OverlapRejectReason reason) noexcept {
@@ -102,16 +218,7 @@ ImageStitcher::ImageStitcher(ImageStitchOptions options)
     : options_(options) {}
 
 bool ImageStitcher::validImage(const Image& image) const {
-  if (image.width <= 0 || image.height <= 0) {
-    return false;
-  }
-
-  const std::size_t width = static_cast<std::size_t>(image.width);
-  const std::size_t height = static_cast<std::size_t>(image.height);
-  if (height > std::numeric_limits<std::size_t>::max() / width) {
-    return false;
-  }
-  return image.pixels.size() == width * height;
+  return validImagePixels(image);
 }
 
 bool ImageStitcher::validEdgeExclusions(const Image& accumulated,
@@ -134,14 +241,7 @@ bool ImageStitcher::validEdgeExclusions(const Image& accumulated,
 }
 
 bool ImageStitcher::pixelsMatch(std::uint32_t lhs, std::uint32_t rhs) const {
-  return withinTolerance(channel(lhs, 0), channel(rhs, 0),
-                         options_.channel_tolerance) &&
-         withinTolerance(channel(lhs, 8), channel(rhs, 8),
-                         options_.channel_tolerance) &&
-         withinTolerance(channel(lhs, 16), channel(rhs, 16),
-                         options_.channel_tolerance) &&
-         withinTolerance(channel(lhs, 24), channel(rhs, 24),
-                         options_.channel_tolerance);
+  return pixelsWithinTolerance(lhs, rhs, options_.channel_tolerance);
 }
 
 ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(

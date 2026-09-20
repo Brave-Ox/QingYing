@@ -76,6 +76,18 @@ Image makeFixedEdgeFrame(int width, int height, int top_rows,
   return image;
 }
 
+Image makeAutoBottomFrame(int width, int height, int bottom_rows,
+                          int first_body_row) {
+  Image image = makeStrip(width, height, first_body_row);
+  for (int y = height - bottom_rows; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      image.pixels[static_cast<std::size_t>(y) * width + x] =
+          (x % 7 == 0) ? 0xFF203040u : 0xFFE0D0C0u;
+    }
+  }
+  return image;
+}
+
 class ScriptedLongShotProfile final : public LongShotProfile {
  public:
   explicit ScriptedLongShotProfile(bool move_on_scroll)
@@ -795,6 +807,101 @@ TEST(LongShotOutcomeCaptureTest,
       EXPECT_EQ(outcome.image.pixels[
                     static_cast<std::size_t>(row) * 32u + x],
                 0xFF404040u);
+    }
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     AutoBottomUsesCurrentEvidenceAndKeepsOneFooter) {
+  constexpr int kWidth = 120;
+  constexpr int kHeight = 60;
+  constexpr int kBottom = 6;
+  constexpr int kDisplacement = 10;
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeAutoBottomFrame(rect.width, rect.height, kBottom,
+                                sequence->inputs * kDisplacement);
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome outcome;
+  int previews = 0;
+
+  const ActionResult result = engine.captureSelection(
+      {1, 0, 0, kWidth, kHeight}, outcome,
+      [&](const Image&) { ++previews; }, [&] { return previews < 3; });
+
+  ASSERT_TRUE(result.ok);
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::UserStopped);
+  EXPECT_EQ(outcome.accepted_frames, 3);
+  ASSERT_EQ(outcome.image.width, kWidth);
+  ASSERT_EQ(outcome.image.height, kHeight + 2 * kDisplacement);
+  for (int global_y = 0; global_y < 74; ++global_y) {
+    for (int x = 0; x < kWidth; ++x) {
+      EXPECT_EQ(outcome.image.pixels[
+                    static_cast<std::size_t>(global_y) * kWidth + x],
+                pixelFor(x, global_y));
+    }
+  }
+  for (int y = outcome.image.height - kBottom;
+       y < outcome.image.height; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      EXPECT_EQ(outcome.image.pixels[
+                    static_cast<std::size_t>(y) * kWidth + x],
+                (x % 7 == 0) ? 0xFF203040u : 0xFFE0D0C0u);
+    }
+  }
+}
+
+TEST(LongShotOutcomeCaptureTest,
+     ConfirmedAutoBottomRejectsChangedFooterAndKeepsReliableComposite) {
+  constexpr int kWidth = 120;
+  constexpr int kHeight = 60;
+  constexpr int kBottom = 6;
+  constexpr int kDisplacement = 10;
+  LongShotProfileRegistry registry;
+  auto profile = std::make_unique<SequenceProfile>();
+  auto* sequence = profile.get();
+  registry.add(std::move(profile));
+  LongShotEngine engine([&](const ScreenPhysicalRect& rect, Image& image) {
+    image = makeAutoBottomFrame(rect.width, rect.height, kBottom,
+                                sequence->inputs * kDisplacement);
+    if (sequence->inputs >= 3) {
+      for (int y = rect.height - kBottom; y < rect.height; ++y) {
+        for (int x = 0; x < rect.width; ++x) {
+          image.pixels[static_cast<std::size_t>(y) * rect.width + x] =
+              (x % 5 == 0) ? 0xFF506070u : 0xFFA0B0C0u;
+        }
+      }
+    }
+    ActionResult result;
+    result.ok = true;
+    return result;
+  }, std::move(registry));
+  LongShotOutcome outcome;
+
+  const ActionResult result =
+      engine.captureSelection({1, 0, 0, kWidth, kHeight}, outcome);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_stage, "overlap_detection");
+  EXPECT_EQ(result.message,
+            "longshot: fixed bottom edge could not be verified");
+  EXPECT_EQ(outcome.stop_reason, LongShotStopReason::MatchFailed);
+  EXPECT_EQ(outcome.accepted_frames, 3);
+  EXPECT_EQ(outcome.input_attempts, 3);
+  EXPECT_EQ(sequence->inputs, 3);
+  ASSERT_EQ(outcome.image.height, kHeight + 2 * kDisplacement);
+  for (int y = outcome.image.height - kBottom;
+       y < outcome.image.height; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      EXPECT_EQ(outcome.image.pixels[
+                    static_cast<std::size_t>(y) * kWidth + x],
+                (x % 7 == 0) ? 0xFF203040u : 0xFFE0D0C0u);
     }
   }
 }

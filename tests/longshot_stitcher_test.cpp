@@ -139,6 +139,59 @@ TEST(SideExclusionPolicyTest, RejectsInvalidAutomaticConfiguration) {
   EXPECT_FALSE(resolveSideExclusion(100, policy).valid);
 }
 
+TEST(FixedBottomDetectionTest, FindsBoundedTexturedBottomInCentralRange) {
+  Image previous = makeStrip(120, 60, 0);
+  Image current = makeStrip(120, 60, 10);
+  for (Image* image : {&previous, &current}) {
+    for (int y = 54; y < 60; ++y) {
+      for (int x = 0; x < 120; ++x) {
+        image->pixels[static_cast<std::size_t>(y) * 120u + x] =
+            (x % 7 == 0) ? 0xFF203040u : 0xFFE0D0C0u;
+      }
+    }
+  }
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+
+  const auto evidence = detectFixedBottomEdge(
+      previous, current, resolveSideExclusion(previous.width, policy));
+
+  EXPECT_TRUE(evidence.valid);
+  EXPECT_TRUE(evidence.detected);
+  EXPECT_EQ(evidence.candidate_rows, 6);
+  EXPECT_EQ(evidence.match_per_mille, 1000);
+  EXPECT_GE(evidence.texture_per_mille, 20);
+}
+
+TEST(FixedBottomDetectionTest, RejectsFlatBlankAndUnboundedStaticAreas) {
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+  const auto sides = resolveSideExclusion(120, policy);
+
+  Image previous = makeStrip(120, 60, 0);
+  Image current = makeStrip(120, 60, 10);
+  for (Image* image : {&previous, &current}) {
+    for (int y = 54; y < 60; ++y) {
+      for (int x = 0; x < 120; ++x) {
+        image->pixels[static_cast<std::size_t>(y) * 120u + x] =
+            0xFFF0F0F0u;
+      }
+    }
+  }
+  const auto blank = detectFixedBottomEdge(previous, current, sides);
+  EXPECT_TRUE(blank.valid);
+  EXPECT_FALSE(blank.detected);
+  EXPECT_EQ(blank.candidate_rows, 6);
+  EXPECT_EQ(blank.texture_per_mille, 0);
+
+  const Image unchanged = makeStrip(120, 60, 0);
+  const auto unbounded =
+      detectFixedBottomEdge(unchanged, unchanged, sides);
+  EXPECT_TRUE(unbounded.valid);
+  EXPECT_FALSE(unbounded.detected);
+  EXPECT_GT(unbounded.candidate_rows, 60 / 3);
+}
+
 TEST(ImageStitcherTest, FindsLargestOverlapAndAppendsOnlyNewRows) {
   Image accumulated = makeStrip(8, 10, 0);  // rows 0..9
   const Image next = makeStrip(8, 9, 7);    // rows 7..15; overlap is 3
