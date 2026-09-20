@@ -129,6 +129,11 @@ struct CaptureWorkflow::Impl {
     longshot_controller.setOwnerWindow(window);
   }
 
+  void setSelectionShortcuts(
+      const SelectionShortcutSettings& shortcuts) noexcept {
+    selection_shortcuts = shortcuts;
+  }
+
   void postContinuation() {
     if (owner_window != nullptr && IsWindow(owner_window)) {
       PostMessageW(owner_window, WM_QINGYING_WORKFLOW_CONTINUE, 0, 0);
@@ -160,7 +165,8 @@ void showSelectionOverlay() {
           selection_closed = true;
           postContinuation();
         },
-        annotated_result_ready);
+        annotated_result_ready,
+        selection_shortcuts);
     if (!shown) {
       stage = WorkflowStage::Idle;
       active = false;
@@ -671,6 +677,8 @@ void showSelectionOverlay() {
   std::wstring pending_overlay_error;
   InteractionGate local_gate;
   InteractionGate& gate;
+  SelectionShortcutSettings selection_shortcuts{
+      defaultSelectionShortcutSettings()};
   InteractionGate::Guard interaction;
 };
 
@@ -689,6 +697,11 @@ CaptureWorkflow::~CaptureWorkflow() {
 
 void CaptureWorkflow::setOwnerWindow(HWND owner_window) noexcept {
   impl_->setOwnerWindow(owner_window);
+}
+
+void CaptureWorkflow::setSelectionShortcuts(
+    const SelectionShortcutSettings& selection_shortcuts) noexcept {
+  impl_->setSelectionShortcuts(selection_shortcuts);
 }
 
 bool CaptureWorkflow::beginSelection() {

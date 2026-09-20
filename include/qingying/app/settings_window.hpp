@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <functional>
 
 #include <Windows.h>
 
@@ -21,6 +22,7 @@ class SettingsWindow final
   void activate() noexcept;
   void close() noexcept;
   void refreshExternalState(const SettingsState& state);
+  void setAppliedCallback(std::function<void(const SettingsState&)> callback);
   bool visible() const noexcept;
 
  private:

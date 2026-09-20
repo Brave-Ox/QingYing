@@ -1,6 +1,10 @@
 ﻿#include "qingying/app/tray_context_menu.hpp"
 
+#include <array>
+
 #include <gtest/gtest.h>
+
+#include "qingying/app/tray_controller.hpp"
 
 namespace qingying {
 
@@ -10,6 +14,41 @@ TEST(TrayContextMenuTest, AutostartAndExitLabelsAreChinese)
   EXPECT_STREQ(TrayMenuExitText, L"退出");
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuAutostartCommandId), L"开机自启");
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuExitCommandId), L"退出");
+}
+
+TEST(TrayContextMenuTest, CaptureAndSettingsAppearBeforeSystemSwitches)
+{
+  EXPECT_STREQ(TrayMenuCaptureText, L"开始截图");
+  EXPECT_STREQ(TrayMenuSettingsText, L"设置...");
+  EXPECT_STREQ(trayMenuLabelForId(TrayMenuCaptureCommandId), L"开始截图");
+  EXPECT_STREQ(trayMenuLabelForId(TrayMenuSettingsCommandId), L"设置...");
+
+  const std::array<UINT, 5> expected{
+      TrayMenuCaptureCommandId,
+      TrayMenuSettingsCommandId,
+      TrayMenuAutostartCommandId,
+      TrayMenuAutomationCommandId,
+      TrayMenuExitCommandId};
+  EXPECT_EQ(trayMenuCommandOrder(), expected);
+  EXPECT_EQ(trayMenuCaptureDisplayText(L"Ctrl + Shift + Q"),
+            L"开始截图\tCtrl + Shift + Q");
+}
+
+TEST(TrayControllerTest, DispatchesCaptureAndSettingsCommandsToCallbacks)
+{
+  TrayController tray;
+  ASSERT_TRUE(tray.create(GetModuleHandleW(nullptr)));
+  int capture_requests = 0;
+  int settings_requests = 0;
+  tray.setBeginCaptureCallback([&capture_requests]() { ++capture_requests; });
+  tray.setSettingsCallback([&settings_requests]() { ++settings_requests; });
+
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuCaptureCommandId, 0);
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuSettingsCommandId, 0);
+
+  EXPECT_EQ(capture_requests, 1);
+  EXPECT_EQ(settings_requests, 1);
+  tray.destroy();
 }
 
 TEST(TrayContextMenuTest, FontIsMicrosoftYaHeiUiAt14Px)

@@ -55,6 +55,8 @@ class CaptureWorkflow {
   // The tray window remains owned by Application. CaptureWorkflow only uses
   // this non-owning handle for message delivery and dialog ownership.
   void setOwnerWindow(HWND owner_window) noexcept;
+  void setSelectionShortcuts(
+      const SelectionShortcutSettings& selection_shortcuts) noexcept;
 
   // Starts the selection workflow. Returns false only when it cannot start or
   // the SelectionOverlay cannot be shown; completion is asynchronous.

@@ -3,6 +3,7 @@
 #include "qingying/action/action_dispatcher.hpp"
 #include "qingying/diagnostics/fault_boundary.h"
 #include "qingying/app/action_handlers.hpp"
+#include "qingying/app/autostart_settings.hpp"
 #include "qingying/app/application_shutdown_coordinator.h"
 #include "qingying/app/automation_runtime.h"
 #include "qingying/app/automation_settings.h"
@@ -17,8 +18,11 @@
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 #include "qingying/app/save_policy.h"
+#include "qingying/app/settings_application_service.hpp"
+#include "qingying/app/settings_window.hpp"
 #include "qingying/app/single_instance_guard.hpp"
 #include "qingying/app/tray_controller.hpp"
+#include "qingying/app/user_settings_store.hpp"
 #include "qingying/automation/automation_endpoint.h"
 #include "qingying/app/automation_workflow_adapter.h"
 #include "qingying/capture/capture_engine.hpp"
@@ -44,6 +48,7 @@
 namespace {
 
 constexpr UINT_PTR kAutomationMaintenanceTimer = 0xF907;
+constexpr int kSettingsAvailabilityHotkeyId = 0xF914;
 
 qingying::ApplicationEpoch makeApplicationEpoch() {
   GUID guid{};
@@ -106,6 +111,36 @@ void reportShutdownDiagnostic(
   OutputDebugStringA(message.c_str());
 }
 
+std::wstring shortcutDisplayText(const qingying::ShortcutBinding& binding)
+{
+  std::wstring text;
+  const auto append = [&text](const wchar_t* name)
+  {
+    if (!text.empty())
+    {
+      text += L" + ";
+    }
+    text += name;
+  };
+  if ((binding.m_modifiers & MOD_CONTROL) != 0) append(L"Ctrl");
+  if ((binding.m_modifiers & MOD_SHIFT) != 0) append(L"Shift");
+  if ((binding.m_modifiers & MOD_ALT) != 0) append(L"Alt");
+  if ((binding.m_modifiers & MOD_WIN) != 0) append(L"Win");
+  if (!text.empty())
+  {
+    text += L" + ";
+  }
+  if (binding.m_virtual_key >= '0' && binding.m_virtual_key <= 'Z')
+  {
+    text += static_cast<wchar_t>(binding.m_virtual_key);
+  }
+  else if (binding.m_virtual_key >= VK_F1 && binding.m_virtual_key <= VK_F24)
+  {
+    text += L"F" + std::to_wstring(binding.m_virtual_key - VK_F1 + 1);
+  }
+  return text;
+}
+
 }  // namespace
 
 namespace qingying {
@@ -120,6 +155,10 @@ struct Application::Impl {
         longshot_plugin_host_(makeLongShotPluginDirectory(instance)),
         longshot_(capture_, makeApplicationLongShotProfiles(
                                longshot_plugin_host_)),
+        settings_store_(test_namespace_),
+        settings_service_(settings_store_, hotkey_, longshot_limits_provider_,
+                          makeSettingsSystemPorts()),
+        settings_window_(settings_service_),
         save_policy_(automation_settings_.allowedSaveDirectories()),
         result_actions_(result_store_, export_service_, pin_manager_, {},
                         &interaction_gate_, &save_policy_),
@@ -177,6 +216,7 @@ struct Application::Impl {
                      KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
                    }
                    hotkey_.unregisterAll(tray_.hwnd());
+                   settings_window_.close();
                    return true;
                  },
                  [] { return std::string("hotkey_and_timer=stopped"); }},
@@ -293,6 +333,96 @@ struct Application::Impl {
     return shutdown_requires_process_reclaim_;
   }
 
+  SettingsSystemPorts makeSettingsSystemPorts()
+  {
+    return SettingsSystemPorts{
+        [this]() { return tray_.hwnd(); },
+        [this]() { return capture_workflow_.active(); },
+        []() { return AutostartSettings::isEnabled(); },
+        [](bool enabled) { return AutostartSettings::setEnabled(enabled); },
+        [this]() { return automation_settings_.enabled(); },
+        [this](bool enabled) { return setAgentEnabled(enabled); },
+        [this](const ShortcutBinding& binding) {
+          return captureHotkeyAvailable(binding);
+        },
+        [this](const ShortcutBinding& binding,
+               const ShortcutBinding& binding_to_release) {
+          return selectionShortcutAvailable(binding, binding_to_release);
+        }};
+  }
+
+  bool setAgentEnabled(bool enabled)
+  {
+    if (enabled && !automation_runtime_.enable())
+    {
+      return false;
+    }
+    if (!enabled)
+    {
+      automation_runtime_.disable();
+    }
+    if (!automation_settings_.setEnabled(enabled))
+    {
+      if (enabled)
+      {
+        automation_runtime_.disable();
+      }
+      return false;
+    }
+    tray_.setAutomationEnabled(enabled);
+    return true;
+  }
+
+  bool captureHotkeyAvailable(const ShortcutBinding& binding) const
+  {
+    if (binding == hotkey_.currentCaptureHotkey())
+    {
+      return true;
+    }
+    const HWND owner = tray_.hwnd();
+    if (owner == nullptr || binding.empty())
+    {
+      return false;
+    }
+    if (RegisterHotKey(owner, kSettingsAvailabilityHotkeyId,
+                        binding.m_modifiers | MOD_NOREPEAT,
+                        binding.m_virtual_key) == FALSE)
+    {
+      return false;
+    }
+    return UnregisterHotKey(owner, kSettingsAvailabilityHotkeyId) != FALSE;
+  }
+
+  bool selectionShortcutAvailable(
+      const ShortcutBinding& binding,
+      const ShortcutBinding& binding_to_release) const noexcept
+  {
+    const ShortcutBinding current = hotkey_.currentCaptureHotkey();
+    return binding != current || binding == binding_to_release;
+  }
+
+  void applySettingsState(const SettingsState& state)
+  {
+    longshot_limits_provider_.update(state.m_settings.m_longshot_limits);
+    capture_workflow_.setSelectionShortcuts(
+        state.m_settings.m_selection_shortcuts);
+    tray_.setAutostartEnabled(state.m_autostart_enabled);
+    tray_.setAutomationEnabled(state.m_agent_enabled);
+    tray_.setCaptureHotkeyDisplay(shortcutDisplayText(state.m_settings.m_capture_hotkey));
+  }
+
+  void refreshExternalSettingsState()
+  {
+    const SettingsState state = settings_service_.loadState();
+    applySettingsState(state);
+    settings_window_.refreshExternalState(state);
+  }
+
+  void showSettingsWindow()
+  {
+    settings_window_.show(tray_.hwnd(), settings_service_.loadState());
+  }
+
   void registerHandlers() {
     registerAppHandlers(dispatcher_, capture_service_, result_store_,
                         result_actions_, &export_executor_);
@@ -400,18 +530,31 @@ struct Application::Impl {
     capture_workflow_.setOwnerWindow(tray_.hwnd());
     result_actions_.setOwnerWindow(tray_.hwnd());
 
+    const SettingsState settings_state = settings_service_.loadState();
+    applySettingsState(settings_state);
+    settings_window_.setAppliedCallback([this](const SettingsState& state) {
+      applySettingsState(state);
+    });
+
     installMessageRouter();
-    tray_.setAutomationToggle([this](bool enabled) {
-      if (enabled && !automation_runtime_.enable()) {
-        MessageBoxW(tray_.hwnd(), L"无法启动本机 Agent 接口。", L"QingYing", MB_OK | MB_ICONERROR);
+    tray_.setBeginCaptureCallback([this]() {
+      static_cast<void>(capture_workflow_.beginSelection());
+    });
+    tray_.setSettingsCallback([this]() { showSettingsWindow(); });
+    tray_.setAutostartToggle([this](bool enabled) {
+      if (!AutostartSettings::setEnabled(enabled))
+      {
         return false;
       }
-      if (!enabled) automation_runtime_.disable();
-      if (!automation_settings_.setEnabled(enabled)) {
-        if (enabled) automation_runtime_.disable();
-        MessageBoxW(tray_.hwnd(), L"无法保存本机 Agent 接口设置。", L"QingYing", MB_OK | MB_ICONERROR);
-        return !enabled;
+      refreshExternalSettingsState();
+      return true;
+    });
+    tray_.setAutomationToggle([this](bool enabled) {
+      if (!setAgentEnabled(enabled))
+      {
+        return false;
       }
+      refreshExternalSettingsState();
       return true;
     });
     if (!SetTimer(tray_.hwnd(), kAutomationMaintenanceTimer, 1000, nullptr)) {
@@ -419,16 +562,10 @@ struct Application::Impl {
       return 3;
     }
 
-    const ShortcutBinding capture_hotkey{
-        HotkeyDefaults::kCaptureModifiers,
-        test_namespace_.empty() ? HotkeyDefaults::kCaptureVirtualKey : VK_F24};
+    const ShortcutBinding capture_hotkey = settings_state.m_settings.m_capture_hotkey;
     if (!hotkey_.registerCaptureHotkey(tray_.hwnd(), capture_hotkey)) {
-      if (!test_namespace_.empty()) { shutdown(); return 5; }
-      MessageBoxW(
-          tray_.hwnd(),
-          L"Failed to register capture hotkey (Ctrl+Shift+Q).\n"
-          L"It may be used by another application.",
-          L"QingYing", MB_OK | MB_ICONWARNING);
+      OutputDebugStringW(L"轻映：已保存的截图快捷键当前不可用。\n");
+      refreshExternalSettingsState();
     }
 
     if (automation_settings_.enabled()) {
@@ -459,6 +596,9 @@ struct Application::Impl {
   LongShotPluginHost longshot_plugin_host_;
   LongShotEngine longshot_;
   LongShotLimitsProvider longshot_limits_provider_;
+  UserSettingsStore settings_store_;
+  SettingsApplicationService settings_service_;
+  SettingsWindow settings_window_;
   ExportService export_service_;
   SavePolicy save_policy_;
   ResultStore result_store_;

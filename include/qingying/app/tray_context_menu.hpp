@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include <array>
+#include <string>
+
 #include <Windows.h>
 
 namespace qingying {
@@ -7,6 +10,10 @@ namespace qingying {
 inline constexpr UINT TrayMenuAutostartCommandId = 40001;
 inline constexpr UINT TrayMenuExitCommandId = 40002;
 inline constexpr UINT TrayMenuAutomationCommandId = 40003;
+inline constexpr UINT TrayMenuCaptureCommandId = 40004;
+inline constexpr UINT TrayMenuSettingsCommandId = 40005;
+inline constexpr wchar_t TrayMenuCaptureText[] = L"开始截图";
+inline constexpr wchar_t TrayMenuSettingsText[] = L"设置...";
 inline constexpr wchar_t TrayMenuAutomationText[] = L"允许本机 Agent 接口";
 inline constexpr wchar_t TrayMenuAutostartText[] = L"开机自启";
 inline constexpr wchar_t TrayMenuExitText[] = L"退出";
@@ -43,6 +50,8 @@ enum class TrayMenuItemKind : ULONG_PTR
   Separator = 2,
   Exit = 3,
   Automation = 4,
+  Capture = 5,
+  Settings = 6,
 };
 
 inline int trayMenuScalePx(int px, int dpi)
@@ -57,6 +66,8 @@ inline int trayMenuScalePx(int px, int dpi)
 
 inline const wchar_t* trayMenuLabelForId(UINT menu_id)
 {
+  if (menu_id == TrayMenuCaptureCommandId) return TrayMenuCaptureText;
+  if (menu_id == TrayMenuSettingsCommandId) return TrayMenuSettingsText;
   if (menu_id == TrayMenuAutomationCommandId) return TrayMenuAutomationText;
   if (menu_id == TrayMenuAutostartCommandId)
   {
@@ -69,8 +80,30 @@ inline const wchar_t* trayMenuLabelForId(UINT menu_id)
   return L"";
 }
 
+inline const std::array<UINT, 5>& trayMenuCommandOrder()
+{
+  static constexpr std::array<UINT, 5> Order{
+      TrayMenuCaptureCommandId,
+      TrayMenuSettingsCommandId,
+      TrayMenuAutostartCommandId,
+      TrayMenuAutomationCommandId,
+      TrayMenuExitCommandId};
+  return Order;
+}
+
+inline std::wstring trayMenuCaptureDisplayText(const std::wstring& hotkey)
+{
+  if (hotkey.empty())
+  {
+    return TrayMenuCaptureText;
+  }
+  return std::wstring(TrayMenuCaptureText) + L"\t" + hotkey;
+}
+
 inline TrayMenuItemKind trayMenuKindFromId(UINT menu_id)
 {
+  if (menu_id == TrayMenuCaptureCommandId) return TrayMenuItemKind::Capture;
+  if (menu_id == TrayMenuSettingsCommandId) return TrayMenuItemKind::Settings;
   if (menu_id == TrayMenuAutomationCommandId) return TrayMenuItemKind::Automation;
   if (menu_id == TrayMenuAutostartCommandId)
   {
@@ -87,6 +120,10 @@ inline const wchar_t* trayMenuLabelForKind(TrayMenuItemKind kind)
 {
   switch (kind)
   {
+    case TrayMenuItemKind::Capture:
+      return TrayMenuCaptureText;
+    case TrayMenuItemKind::Settings:
+      return TrayMenuSettingsText;
     case TrayMenuItemKind::Automation:
       return TrayMenuAutomationText;
     case TrayMenuItemKind::Autostart:

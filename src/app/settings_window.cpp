@@ -214,6 +214,7 @@ struct SettingsWindow::Impl
   }
 
   SettingsApplicationService& service;
+  std::function<void(const SettingsState&)> applied_callback;
   std::unique_ptr<SettingsWindowModel> model;
   HWND window{nullptr};
   UINT dpi{BaseDpi};
@@ -531,6 +532,10 @@ struct SettingsWindow::Impl
     }
     const SettingsApplyResult result = service.apply(model->draft());
     model->recordApplyResult(result);
+    if (result.m_committed && applied_callback)
+    {
+      applied_callback(result.m_state);
+    }
     refreshControls();
     return result.m_committed;
   }
@@ -874,7 +879,7 @@ void SettingsWindow::close() noexcept
 {
   if (visible())
   {
-    SendMessageW(m_impl->window, WM_CLOSE, 0, 0);
+    DestroyWindow(m_impl->window);
   }
 }
 
@@ -889,6 +894,12 @@ void SettingsWindow::refreshExternalState(const SettingsState& state)
   {
     m_impl->refreshControls();
   }
+}
+
+void SettingsWindow::setAppliedCallback(
+    std::function<void(const SettingsState&)> callback)
+{
+  m_impl->applied_callback = std::move(callback);
 }
 
 bool SettingsWindow::visible() const noexcept
