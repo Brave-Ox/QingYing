@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/longshot_controller.hpp"
 
 #include "qingying/app/app_messages.hpp"
+#include "qingying/app/longshot_limits_provider.hpp"
 #include "qingying/app/ui_message_channel.h"
 #include "qingying/diagnostics/fault_boundary.h"
 
@@ -20,8 +21,13 @@
 namespace qingying {
 
 struct LongShotController::Impl {
-  Impl(LongShotEngine& engine_in, SelectionOverlay& overlay_in)
-      : engine(engine_in), overlay(overlay_in) {}
+  Impl(LongShotEngine& engine_in, SelectionOverlay& overlay_in,
+       LongShotLimitsProvider& limits_provider_in)
+      : engine(engine_in),
+        overlay(overlay_in),
+        limits_provider(limits_provider_in)
+  {
+  }
 
   void setOwnerWindow(HWND window) noexcept { owner_window = window; }
 
@@ -32,6 +38,7 @@ struct LongShotController::Impl {
     if (shutting_down.load() || !request.valid() || owner_window == nullptr) {
       return false;
     }
+    const LongShotLimits limits = limits_provider.snapshot();
 
     stop_requested.store(false);
     paused.store(false);
@@ -48,7 +55,8 @@ struct LongShotController::Impl {
     try {
       auto context = currentFaultContext();
       if (!context.request_id) context.request_id = diagnostic_request_id;
-      worker = std::thread([this, request, completion_window, context] {
+      worker = std::thread([this, request, limits, completion_window, context]
+      {
         DiagnosticScope scope(context);
         struct WorkerDone final {
           Impl* owner;
@@ -69,7 +77,7 @@ struct LongShotController::Impl {
                 std::this_thread::sleep_for(std::chrono::milliseconds(40));
               }
               return !stop_requested.load();
-            });
+            }, limits);
         }, &fault)) {
           result.error_code = fault.error_code;
           result.diagnostic = fault;
@@ -213,6 +221,7 @@ struct LongShotController::Impl {
 
   LongShotEngine& engine;
   SelectionOverlay& overlay;
+  LongShotLimitsProvider& limits_provider;
   HWND owner_window{nullptr};
   std::thread worker;
   std::mutex worker_mutex;
@@ -229,8 +238,11 @@ struct LongShotController::Impl {
 };
 
 LongShotController::LongShotController(LongShotEngine& engine,
-                                       SelectionOverlay& overlay)
-    : impl_(std::make_unique<Impl>(engine, overlay)) {}
+                                       SelectionOverlay& overlay,
+                                       LongShotLimitsProvider& limits_provider)
+    : impl_(std::make_unique<Impl>(engine, overlay, limits_provider))
+{
+}
 
 LongShotController::~LongShotController() { impl_->shutdown(); }
 

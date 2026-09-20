@@ -13,6 +13,7 @@
 #include "qingying/app/export_executor.h"
 #include "qingying/app/hotkey_manager.hpp"
 #include "qingying/app/longshot_controller.hpp"
+#include "qingying/app/longshot_limits_provider.hpp"
 #include "qingying/app/result_action_service.h"
 #include "qingying/app/result_store.h"
 #include "qingying/app/save_policy.h"
@@ -124,7 +125,7 @@ struct Application::Impl {
                         &interaction_gate_, &save_policy_),
         export_executor_(AutomationLimits{}.max_queued_exports),
         capture_service_(capture_, result_store_, pin_manager_, interaction_gate_),
-        longshot_controller_(longshot_, overlay_),
+        longshot_controller_(longshot_, overlay_, longshot_limits_provider_),
         capture_workflow_(capture_, capture_service_, longshot_controller_,
                           result_store_, result_actions_, pin_manager_,
                           overlay_, &interaction_gate_),
@@ -457,6 +458,7 @@ struct Application::Impl {
   CaptureEngine capture_;
   LongShotPluginHost longshot_plugin_host_;
   LongShotEngine longshot_;
+  LongShotLimitsProvider longshot_limits_provider_;
   ExportService export_service_;
   SavePolicy save_policy_;
   ResultStore result_store_;

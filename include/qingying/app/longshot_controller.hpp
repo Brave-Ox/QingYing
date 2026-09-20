@@ -12,12 +12,15 @@
 
 namespace qingying {
 
+class LongShotLimitsProvider;
+
 // Owns the asynchronous lifetime around LongShotEngine. The engine remains a
 // synchronous capture/profile service; this controller owns the worker,
 // pause/stop tokens, cross-thread progress and completion hand-off.
 class LongShotController {
  public:
-  LongShotController(LongShotEngine& engine, SelectionOverlay& overlay);
+  LongShotController(LongShotEngine& engine, SelectionOverlay& overlay,
+                     LongShotLimitsProvider& limits_provider);
   ~LongShotController();
 
   LongShotController(const LongShotController&) = delete;

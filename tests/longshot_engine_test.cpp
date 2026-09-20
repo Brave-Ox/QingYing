@@ -116,6 +116,37 @@ class CancelAwareLongShotProfile final : public LongShotProfile {
   mutable std::atomic_bool cancelled_{false};
 };
 
+class BottomLongShotProfile final : public LongShotProfile
+{
+ public:
+  const char* name() const noexcept override
+  {
+    return "test.bottom";
+  }
+
+  bool resolve(const LongShotRequest& request,
+               LongShotProfileResult& out) const override
+  {
+    out = LongShotProfileResult{
+        1, ScreenPhysicalRect{request.x, request.y, request.width,
+                              request.height}};
+    return out.valid();
+  }
+
+  bool scrollDown(const LongShotRequest&,
+                  const LongShotProfileResult&) const override
+  {
+    return true;
+  }
+
+  bool queryScrollState(const LongShotProfileResult&,
+                        LongShotScrollState& out) const override
+  {
+    out = LongShotScrollState{1, 1, true};
+    return true;
+  }
+};
+
 }  // namespace
 
 TEST(LongShotLimitsTest, DefaultsAreValidAndBounded) {
@@ -131,6 +162,30 @@ TEST(LongShotLimitsTest, InitialPairRequiresAtLeastTwoFrames) {
   limits.max_frames = 1;
 
   EXPECT_FALSE(limits.valid());
+}
+
+TEST(LongShotEngineTest, ExplicitLimitsOverrideConstructionDefaults)
+{
+  LongShotProfileRegistry registry;
+  registry.add(std::make_unique<BottomLongShotProfile>());
+  int capture_count = 0;
+  LongShotEngine engine(
+      [&capture_count](const ScreenPhysicalRect& region, Image& out)
+      {
+        ++capture_count;
+        out = makeStrip(region.width, region.height, 0);
+        return ActionResult{true, ErrorCode::kOk};
+      },
+      std::move(registry));
+  const LongShotRequest request{1, 0, 0, 8, 8};
+  Image out;
+
+  const ActionResult result = engine.captureSelection(
+      request, out, {}, {}, LongShotLimits{2, 5});
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error_code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(capture_count, 0);
 }
 
 TEST(LongShotEngineTest, InvalidSelectionRequestClearsOutput) {

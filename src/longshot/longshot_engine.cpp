@@ -439,26 +439,40 @@ void LongShotFramePair::clear() {
 }
 
 ActionResult LongShotEngine::captureSelection(const LongShotRequest& request,
-                                              Image& out) {
-  return captureSelection(request, out, {}, {});
+                                              Image& out)
+{
+  return captureSelection(request, out, {}, {}, impl_->limits);
 }
 
 ActionResult LongShotEngine::captureSelection(
     const LongShotRequest& request, Image& out,
     LongShotProgressCallback on_progress,
-    LongShotContinueCallback should_continue) {
+    LongShotContinueCallback should_continue)
+{
+  return captureSelection(request, out, std::move(on_progress),
+                          std::move(should_continue), impl_->limits);
+}
+
+ActionResult LongShotEngine::captureSelection(
+    const LongShotRequest& request, Image& out,
+    LongShotProgressCallback on_progress,
+    LongShotContinueCallback should_continue,
+    const LongShotLimits& limits)
+{
   out = Image{};
   if (!request.valid()) {
     return makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: owner window and selection are required",
                        LongShotFailureStage::RequestValidation);
   }
-  if (!impl_->limits.valid()) {
+  if (!limits.valid())
+  {
     return makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: safety limits are invalid",
                        LongShotFailureStage::SafetyLimit);
   }
-  if (request.height > impl_->limits.max_output_height) {
+  if (request.height > limits.max_output_height)
+  {
     return makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: selection exceeds maximum output height",
                        LongShotFailureStage::SafetyLimit, 1);
@@ -516,8 +530,9 @@ ActionResult LongShotEngine::captureSelection(
   stitch_options.require_overlap = true;
   ImageStitcher stitcher(stitch_options);
   int frame_count = 1;
-  while (frame_count < impl_->limits.max_frames &&
-         stitched.height < impl_->limits.max_output_height) {
+  while (frame_count < limits.max_frames &&
+         stitched.height < limits.max_output_height)
+  {
     if (should_continue && !should_continue()) {
       break;
     }
@@ -629,7 +644,8 @@ ActionResult LongShotEngine::captureSelection(
         static_cast<std::int64_t>(stitched.height) +
         static_cast<std::int64_t>(candidate_frame.height) -
         static_cast<std::int64_t>(next_overlap_rows);
-    if (next_height > impl_->limits.max_output_height) {
+    if (next_height > limits.max_output_height)
+    {
       break;
     }
     if (!stitcher.append(stitched, candidate_frame, &next_overlap_rows) ||

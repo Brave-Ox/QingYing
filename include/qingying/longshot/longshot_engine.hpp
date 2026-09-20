@@ -81,6 +81,13 @@ class LongShotEngine {
                                 LongShotProgressCallback on_progress,
                                 LongShotContinueCallback should_continue);
 
+  // Uses the supplied limits for exactly this capture. The engine does not
+  // retain the reference after this synchronous call returns.
+  ActionResult captureSelection(const LongShotRequest& request, Image& out,
+                                LongShotProgressCallback on_progress,
+                                LongShotContinueCallback should_continue,
+                                const LongShotLimits& limits);
+
   // Requests cooperative cancellation of the active profile callback. Old
   // profiles may ignore it; LongShotController still enforces its join
   // deadline and keeps the owner context alive if the callback is stuck.

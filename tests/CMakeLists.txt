@@ -45,6 +45,7 @@ add_executable(qingying_tests
   mcp_tool_catalog_test.cpp
   stdio_transport_test.cpp
   longshot_controller_test.cpp
+  longshot_limits_provider_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
   capture_workflow_test.cpp

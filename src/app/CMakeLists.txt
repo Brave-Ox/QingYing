@@ -3,6 +3,7 @@ add_library(qingying_workflow STATIC
   capture_service.cpp
   capture_workflow.cpp
   export_executor.cpp
+  longshot_limits_provider.cpp
   longshot_controller.cpp
   save_policy.cpp
   result_action_service.cpp
