@@ -793,7 +793,7 @@ ActionResult LongShotEngine::captureSelection(
 
   ImageStitchOptions stitch_options;
   stitch_options.min_overlap_rows = 16;
-  stitch_options.right_edge_exclusion_pixels = 12;
+  stitch_options.side_exclusion.mode = SideExclusionMode::Automatic;
   stitch_options.fixed_top_rows = limits.fixed_edges.top_rows;
   stitch_options.fixed_bottom_rows = limits.fixed_edges.bottom_rows;
   // Text anti-aliasing, caret blinking and other small repaint differences

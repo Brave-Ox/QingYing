@@ -7,7 +7,7 @@ namespace {
 ImageStitchOptions stabilityOptions() {
   ImageStitchOptions options;
   options.min_overlap_rows = 16;
-  options.right_edge_exclusion_pixels = 12;
+  options.side_exclusion.mode = SideExclusionMode::Automatic;
   options.channel_tolerance = 2;
   options.minimum_match_per_mille = 960;
   options.require_overlap = true;

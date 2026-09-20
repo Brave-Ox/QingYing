@@ -6,6 +6,36 @@
 
 namespace qingying {
 
+enum class SideExclusionMode : std::uint8_t {
+  Explicit,
+  Automatic,
+};
+
+// Controls which horizontal pixels participate in overlap matching. Excluded
+// pixels are still retained by append() and therefore remain in the output.
+struct SideExclusionPolicy {
+  SideExclusionMode mode{SideExclusionMode::Explicit};
+  int left_pixels{0};
+  int right_pixels{0};
+  int minimum_center_pixels{24};
+  int automatic_minimum_pixels{50};
+  int automatic_width_divisor{20};
+  int automatic_maximum_width_divisor{3};
+};
+
+struct SideExclusionRange {
+  int left_pixels{0};
+  int right_pixels{0};
+  int usable_width{0};
+  bool valid{false};
+};
+
+// Resolves a bounded matching range without inspecting image pixels. Automatic
+// mode follows ShareX's side baseline while preserving a usable center on
+// narrow selections.
+SideExclusionRange resolveSideExclusion(
+    int image_width, const SideExclusionPolicy& policy) noexcept;
+
 // Options for matching the bottom of an accumulated image with the top of
 // the next viewport frame.
 struct ImageStitchOptions {
@@ -13,8 +43,7 @@ struct ImageStitchOptions {
   int max_overlap_rows{0};  // 0 means no explicit upper bound.
   int sample_step{4};
   std::uint8_t channel_tolerance{0};
-  int left_edge_exclusion_pixels{0};
-  int right_edge_exclusion_pixels{0};
+  SideExclusionPolicy side_exclusion{};
   // Explicit fixed viewport edges. They are excluded from overlap matching;
   // append keeps the first top edge and replaces the previous bottom edge
   // with the newest frame's bottom edge. Zero preserves the legacy layout.
@@ -57,6 +86,9 @@ struct OverlapEvidence {
   std::uint8_t sampled_column_bands{0};
   std::uint8_t consistent_row_bands{0};
   std::uint8_t sampled_row_bands{0};
+  int excluded_left_pixels{0};
+  int excluded_right_pixels{0};
+  int usable_match_width{0};
   // Immutable row ranges calculated for an accepted append operation.
   int accumulated_keep_rows{0};
   int next_append_start_row{0};
@@ -100,10 +132,12 @@ class ImageStitcher {
 
   bool validImage(const Image& image) const;
   bool validEdgeExclusions(const Image& accumulated,
-                           const Image& next) const;
+                           const Image& next,
+                           const SideExclusionRange& sides) const;
   CandidateEvidence evaluateCandidate(const Image& accumulated,
                                       const Image& next,
-                                      int overlap_rows) const;
+                                      int overlap_rows,
+                                      const SideExclusionRange& sides) const;
   bool appendDetected(Image& accumulated, const Image& next,
                       const OverlapEvidence& evidence) const;
   bool pixelsMatch(std::uint32_t lhs, std::uint32_t rhs) const;

@@ -22,6 +22,43 @@ bool withinTolerance(std::uint8_t lhs, std::uint8_t rhs,
 
 }  // namespace
 
+SideExclusionRange resolveSideExclusion(
+    int image_width, const SideExclusionPolicy& policy) noexcept {
+  SideExclusionRange range;
+  if (image_width <= 0) return range;
+
+  if (policy.mode == SideExclusionMode::Automatic) {
+    if (policy.minimum_center_pixels <= 0 ||
+        policy.automatic_minimum_pixels < 0 ||
+        policy.automatic_width_divisor <= 0 ||
+        policy.automatic_maximum_width_divisor <= 0) {
+      return range;
+    }
+    const int sharex_baseline = (std::min)(
+        (std::max)(policy.automatic_minimum_pixels,
+                   image_width / policy.automatic_width_divisor),
+        image_width / policy.automatic_maximum_width_divisor);
+    const int maximum_side =
+        (std::max)(0, image_width - policy.minimum_center_pixels) / 2;
+    range.left_pixels = (std::min)(sharex_baseline, maximum_side);
+    range.right_pixels = range.left_pixels;
+  } else {
+    if (policy.left_pixels < 0 || policy.right_pixels < 0) return range;
+    range.left_pixels = policy.left_pixels;
+    range.right_pixels = policy.right_pixels;
+  }
+
+  const std::int64_t usable_width =
+      static_cast<std::int64_t>(image_width) - range.left_pixels -
+      range.right_pixels;
+  if (usable_width <= 0 || usable_width > std::numeric_limits<int>::max()) {
+    return range;
+  }
+  range.usable_width = static_cast<int>(usable_width);
+  range.valid = true;
+  return range;
+}
+
 const char* overlapRejectReasonName(OverlapRejectReason reason) noexcept {
   switch (reason) {
     case OverlapRejectReason::None:
@@ -78,15 +115,10 @@ bool ImageStitcher::validImage(const Image& image) const {
 }
 
 bool ImageStitcher::validEdgeExclusions(const Image& accumulated,
-                                        const Image& next) const {
-  if (options_.left_edge_exclusion_pixels < 0 ||
-      options_.right_edge_exclusion_pixels < 0 ||
-      options_.fixed_top_rows < 0 || options_.fixed_bottom_rows < 0) {
-    return false;
-  }
-  if (options_.left_edge_exclusion_pixels >= accumulated.width ||
-      options_.right_edge_exclusion_pixels >= accumulated.width -
-          options_.left_edge_exclusion_pixels) {
+                                        const Image& next,
+                                        const SideExclusionRange& sides) const {
+  if (!sides.valid || options_.fixed_top_rows < 0 ||
+      options_.fixed_bottom_rows < 0) {
     return false;
   }
   const int minimum = std::max(1, options_.min_overlap_rows);
@@ -113,7 +145,8 @@ bool ImageStitcher::pixelsMatch(std::uint32_t lhs, std::uint32_t rhs) const {
 }
 
 ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(
-    const Image& accumulated, const Image& next, int overlap_rows) const {
+    const Image& accumulated, const Image& next, int overlap_rows,
+    const SideExclusionRange& sides) const {
   CandidateEvidence evidence;
   evidence.overlap_rows = overlap_rows;
   evidence.displacement_rows =
@@ -121,9 +154,8 @@ ImageStitcher::CandidateEvidence ImageStitcher::evaluateCandidate(
       options_.fixed_bottom_rows - overlap_rows;
   const int step = std::max(1, options_.sample_step);
   const int width = accumulated.width;
-  const int first_x = std::max(0, options_.left_edge_exclusion_pixels);
-  const int last_x =
-      width - std::max(0, options_.right_edge_exclusion_pixels);
+  const int first_x = sides.left_pixels;
+  const int last_x = width - sides.right_pixels;
   if (first_x >= last_x) return evidence;
 
   const std::uint16_t required_match_per_mille =
@@ -262,7 +294,12 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
     evidence.reject_reason = OverlapRejectReason::WidthMismatch;
     return false;
   }
-  if (!validEdgeExclusions(accumulated, next)) {
+  const SideExclusionRange sides =
+      resolveSideExclusion(accumulated.width, options_.side_exclusion);
+  evidence.excluded_left_pixels = sides.left_pixels;
+  evidence.excluded_right_pixels = sides.right_pixels;
+  evidence.usable_match_width = sides.usable_width;
+  if (!validEdgeExclusions(accumulated, next, sides)) {
     evidence.reject_reason = OverlapRejectReason::InvalidEdgeExclusion;
     return true;
   }
@@ -290,7 +327,7 @@ bool ImageStitcher::findOverlap(const Image& accumulated, const Image& next,
   bool saw_displacement_failure = false;
   for (int candidate = maximum; candidate >= minimum; --candidate) {
     const CandidateEvidence inspected =
-        evaluateCandidate(accumulated, next, candidate);
+        evaluateCandidate(accumulated, next, candidate, sides);
     if (!inspected.global_match) continue;
     if (inspected.score_per_mille > best_global.score_per_mille) {
       best_global = inspected;
