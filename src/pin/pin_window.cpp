@@ -39,6 +39,12 @@ bool isValidImage(const Image& image) {
 
 }  // namespace
 
+int PinWindow::scaleForDpi(int logical_pixels, UINT dpi) noexcept {
+  constexpr UINT kDefaultDpi = 96;
+  return MulDiv(logical_pixels, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi),
+                kDefaultDpi);
+}
+
 void PinWindow::computeInitialClientSize(const Image& image, int& width,
                                          int& height) {
   const double scale_x = static_cast<double>(kMaxClientWidth) /
@@ -126,6 +132,8 @@ bool PinWindow::show(int x, int y) {
     return false;
   }
 
+  dpi_ = GetDpiForWindow(hwnd_);
+  if (dpi_ == 0) dpi_ = 96;
   closing_ = false;
   ShowWindow(hwnd_, SW_SHOWNORMAL);
   SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
@@ -155,10 +163,11 @@ void PinWindow::paint(HDC dc) {
   }
 
   RECT image_rect = client_rect;
-  image_rect.left += kBorderThickness;
-  image_rect.top += kBorderThickness;
-  image_rect.right -= kBorderThickness;
-  image_rect.bottom -= kBorderThickness;
+  const int border_thickness = scaleForDpi(kBorderThickness, dpi_);
+  image_rect.left += border_thickness;
+  image_rect.top += border_thickness;
+  image_rect.right -= border_thickness;
+  image_rect.bottom -= border_thickness;
 
   const int image_width = image_rect.right - image_rect.left;
   const int image_height = image_rect.bottom - image_rect.top;
@@ -183,7 +192,7 @@ void PinWindow::paint(HDC dc) {
 
   HBRUSH border = CreateSolidBrush(RGB(255, 82, 82));
   if (border != nullptr) {
-    for (int i = 0; i < kBorderThickness; ++i) {
+    for (int i = 0; i < border_thickness; ++i) {
       RECT border_rect{client_rect.left + i, client_rect.top + i,
                        client_rect.right - i, client_rect.bottom - i};
       FrameRect(dc, &border_rect, border);
@@ -198,10 +207,11 @@ void PinWindow::paint(HDC dc) {
     DeleteObject(close_background);
   }
 
-  HPEN close_pen = CreatePen(PS_SOLID, 2, RGB(235, 235, 235));
+  HPEN close_pen = CreatePen(PS_SOLID, (std::max)(1, scaleForDpi(2, dpi_)),
+                             RGB(235, 235, 235));
   if (close_pen != nullptr) {
     const HGDIOBJ old_pen = SelectObject(dc, close_pen);
-    const int margin = 9;
+    const int margin = scaleForDpi(9, dpi_);
     MoveToEx(dc, close_rect.left + margin, close_rect.top + margin, nullptr);
     LineTo(dc, close_rect.right - margin, close_rect.bottom - margin);
     MoveToEx(dc, close_rect.right - margin, close_rect.top + margin, nullptr);
@@ -214,10 +224,12 @@ void PinWindow::paint(HDC dc) {
 RECT PinWindow::closeButtonRect() const {
   RECT client_rect{};
   GetClientRect(hwnd_, &client_rect);
-  return RECT{client_rect.right - kBorderThickness - kCloseButtonSize,
-              client_rect.top + kBorderThickness,
-              client_rect.right - kBorderThickness,
-              client_rect.top + kBorderThickness + kCloseButtonSize};
+  const int border_thickness = scaleForDpi(kBorderThickness, dpi_);
+  const int close_button_size = scaleForDpi(kCloseButtonSize, dpi_);
+  return RECT{client_rect.right - border_thickness - close_button_size,
+              client_rect.top + border_thickness,
+              client_rect.right - border_thickness,
+              client_rect.top + border_thickness + close_button_size};
 }
 
 LRESULT PinWindow::hitTest(POINT point) const {
@@ -228,10 +240,11 @@ LRESULT PinWindow::hitTest(POINT point) const {
 
   RECT client_rect{};
   GetClientRect(hwnd_, &client_rect);
-  const bool left = point.x < client_rect.left + kResizeBorder;
-  const bool right = point.x >= client_rect.right - kResizeBorder;
-  const bool top = point.y < client_rect.top + kResizeBorder;
-  const bool bottom = point.y >= client_rect.bottom - kResizeBorder;
+  const int resize_border = scaleForDpi(kResizeBorder, dpi_);
+  const bool left = point.x < client_rect.left + resize_border;
+  const bool right = point.x >= client_rect.right - resize_border;
+  const bool top = point.y < client_rect.top + resize_border;
+  const bool bottom = point.y >= client_rect.bottom - resize_border;
 
   if (top && left) {
     return HTTOPLEFT;
@@ -319,15 +332,17 @@ void PinWindow::handleSizing(WPARAM edge, RECT* window_rect) const {
                         static_cast<double>(image_.height);
   int width = window_rect->right - window_rect->left;
   int height = window_rect->bottom - window_rect->top;
-  width = (std::max)(width, kMinClientWidth);
-  height = (std::max)(height, kMinClientHeight);
+  const int min_width = scaleForDpi(kMinClientWidth, dpi_);
+  const int min_height = scaleForDpi(kMinClientHeight, dpi_);
+  width = (std::max)(width, min_width);
+  height = (std::max)(height, min_height);
 
   const auto setWidthFromHeight = [&] {
-    width = (std::max)(kMinClientWidth,
+    width = (std::max)(min_width,
                        static_cast<int>(std::lround(height * aspect)));
   };
   const auto setHeightFromWidth = [&] {
-    height = (std::max)(kMinClientHeight,
+    height = (std::max)(min_height,
                         static_cast<int>(std::lround(width / aspect)));
   };
 
@@ -403,9 +418,9 @@ void PinWindow::handleMouseWheel(short delta) {
   const double aspect = static_cast<double>(image_.width) / image_.height;
   const int virtual_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
   const int virtual_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-  const int width = (std::max)(kMinClientWidth, (std::min)(virtual_width * 2,
+  const int width = (std::max)(scaleForDpi(kMinClientWidth, dpi_), (std::min)(virtual_width * 2,
       static_cast<int>(std::lround((rect.right - rect.left) * factor))));
-  const int height = (std::max)(kMinClientHeight, (std::min)(virtual_height * 2,
+  const int height = (std::max)(scaleForDpi(kMinClientHeight, dpi_), (std::min)(virtual_height * 2,
       static_cast<int>(std::lround(width / aspect))));
   SetWindowPos(hwnd_, nullptr, 0, 0, width, height,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -496,6 +511,9 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
       }
       break;
     case WM_DPICHANGED:
+      if (self != nullptr && HIWORD(wparam) != 0) {
+        self->dpi_ = HIWORD(wparam);
+      }
       if (const auto* suggested = reinterpret_cast<const RECT*>(lparam);
           suggested != nullptr) {
         SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
@@ -538,6 +556,8 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
 
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
-catch (...) { return recoverUiMessage(hwnd, message, wparam, lparam); }
+catch (...) {
+  return recoverUiMessage(hwnd, message, wparam, lparam, "pin.window_proc");
+}
 
 }  // namespace qingying

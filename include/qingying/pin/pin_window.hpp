@@ -28,10 +28,14 @@ class PinWindow {
   PinId pinId() const noexcept { return pin_id_; }
   PinSource source() const noexcept { return source_; }
 
-  // 按图片比例计算钉图初始客户区尺寸（max 800x600 / min 160x120，保持宽高比）。
+  // 按图片比例计算钉图初始客户区尺寸（max 800x600 / min 48x48，保持宽高比）。
   // 供 PinManager 在创建前估算窗口尺寸以计算不重叠的摆放位置。
   static void computeInitialClientSize(const Image& image, int& width,
                                        int& height);
+
+  // Convert 96-DPI layout values to physical pixels. Keeping this helper
+  // public makes high-DPI chrome behavior independently testable.
+  static int scaleForDpi(int logical_pixels, UINT dpi) noexcept;
 
   void setClosedCallback(ClosedCallback callback);
   void setActionCallbacks(ImageActionCallback copy_callback,
@@ -56,6 +60,7 @@ class PinWindow {
   PinId pin_id_{kInvalidPinId};
   PinSource source_{PinSource::Gui};
   HWND hwnd_{nullptr};
+  UINT dpi_{96};
   bool closing_{false};
   ClosedCallback closed_callback_;
   ImageActionCallback copy_callback_;

@@ -25,6 +25,12 @@ TEST(PinManagerTest, EmptyByDefault) {
   EXPECT_EQ(manager.count(), 0);
 }
 
+TEST(PinWindowTest, ChromeScaleUsesWindowDpiAndFallsBackTo96) {
+  EXPECT_EQ(qingying::PinWindow::scaleForDpi(28, 96), 28);
+  EXPECT_EQ(qingying::PinWindow::scaleForDpi(28, 144), 42);
+  EXPECT_EQ(qingying::PinWindow::scaleForDpi(28, 0), 28);
+}
+
 TEST(PinManagerTest, RejectsEmptyOrMalformedImage) {
   qingying::PinManager manager;
 

@@ -63,6 +63,12 @@ TEST(FaultBoundaryTest, RecordsAreBoundedAndDoNotContainExceptionText) {
   EXPECT_EQ(records.back().context.request_id, 300u);
   EXPECT_STREQ(records.back().provider_id.data(), "");
 }
+TEST(FaultBoundaryTest, SanitizesProviderAndMarksTransientFaultsRetryable) {
+  const auto fault = recordFault(ErrorCode::kBusy, FaultOrigin::Ui,
+                                 FaultDomain::Request, "pin/window proc");
+  EXPECT_TRUE(fault.retryable);
+  EXPECT_STREQ(fault.provider_id.data(), "pin_window_proc");
+}
 TEST(FaultBoundaryTest, WorkerKeepsCorrelationAndContinuesAfterExecuteAndRejectThrow) {
   ExportExecutor executor(8);
   std::promise<void> rejected, finished;
