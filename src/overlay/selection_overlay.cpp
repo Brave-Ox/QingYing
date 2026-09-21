@@ -26,6 +26,7 @@
 #include "qingying/window/smart_region_query.hpp"
 
 #include "browser_shell_atlas.hpp"
+#include "browser_shell_presentation.hpp"
 
 namespace qingying {
 
@@ -77,6 +78,7 @@ struct OverlayWindowData {
   SmartRegionDetector smart_region_detector;
   SmartRegionDiagnosticTrace smart_region_diagnostics;
   SmartRegionHoverStabilizer hover_stabilizer;
+  BrowserShellPresentationState browser_presentation_state;
   SmartRegionHoverRenderGate hover_render_gate;
   SmartRegionUpdateGate hover_update_gate;
   SmartRegionAsyncPresentationGate async_presentation_gate;
@@ -95,6 +97,8 @@ struct OverlayWindowData {
   std::int64_t hover_motion_delta_y{0};
   std::uint64_t hover_motion_elapsed_ms{0};
   std::uint64_t smart_region_overlay_render_count{0};
+  std::uint64_t browser_visible_replacement_count{0};
+  WindowRect browser_click_hit_rect;
   bool hover_motion_fast{false};
   bool has_deferred_uia_result{false};
   std::uint64_t uia_request_id{0};
@@ -403,6 +407,7 @@ void clearHover(OverlayWindowData* data) noexcept
     data->discovery_worker->clear();
   }
   data->hover_stabilizer.clear();
+  data->browser_presentation_state.clear();
   data->hover_timer_pending_since_ms = 0;
   data->hover_update_gate.reset();
   data->async_presentation_gate.reset();
@@ -420,6 +425,8 @@ void clearHover(OverlayWindowData* data) noexcept
   data->has_hover = false;
   data->has_pending_hover_update = false;
   data->has_deferred_uia_result = false;
+  data->browser_visible_replacement_count = 0;
+  data->browser_click_hit_rect = WindowRect{};
 }
 
 bool isBrowserShellInteractiveRole(BrowserShellRole role) noexcept
@@ -453,6 +460,8 @@ SmartRegionCandidate makeBrowserShellAtlasCandidate(
   candidate.uia_metadata.quality = candidate.uia_metadata.available
       ? SmartRegionUiaQuality::NamedActionable
       : SmartRegionUiaQuality::None;
+  candidate.accessibility_role =
+      static_cast<std::uint32_t>(entry.m_identity_hash);
   return candidate;
 }
 
@@ -468,6 +477,32 @@ BrowserShellContext makeBrowserShellAtlasContext(
   context.m_capture_session_generation = generation;
   context.m_window_generation = generation;
   return context;
+}
+
+BrowserPresentationLevel browserPresentationLevelFor(
+    const SmartRegionCandidate& candidate) noexcept
+{
+  if (candidate.source == SmartRegionDiagnosticSource::Uia &&
+      candidate.semantic == SmartRegionSemantic::ActionableControl)
+  {
+    return BrowserPresentationLevel::Exact;
+  }
+  if (candidate.source == SmartRegionDiagnosticSource::Uia ||
+      candidate.source == SmartRegionDiagnosticSource::Msaa)
+  {
+    return BrowserPresentationLevel::Cached;
+  }
+  return BrowserPresentationLevel::Coarse;
+}
+
+std::uint64_t browserCandidateIdentity(
+    const SmartRegionCandidate& candidate) noexcept
+{
+  const std::uint64_t source = static_cast<std::uint8_t>(candidate.source);
+  const std::uint64_t semantic = static_cast<std::uint8_t>(candidate.semantic);
+  const std::uint64_t role = candidate.accessibility_role;
+  return (candidate.target_window << 16) ^ (role << 8) ^ (semantic << 4) ^
+         source;
 }
 
 void destroyToolbar(OverlayWindowData* data) {
@@ -751,6 +786,54 @@ void applyHoverCandidate(OverlayWindowData* data,
   }
 
   const std::uint64_t now_ms = GetTickCount64();
+  if (data->use_browser_chrome_visual_fallback)
+  {
+    BrowserPresentedCandidate presented;
+    presented.m_hit_rect = candidate.rect;
+    presented.m_level = browserPresentationLevelFor(candidate);
+    presented.m_identity_hash = browserCandidateIdentity(candidate);
+    presented.m_window_generation = data->region_generation;
+    const std::shared_ptr<const BrowserShellAtlasSnapshot> atlas =
+        std::atomic_load_explicit(&data->m_browser_shell_atlas,
+                                  std::memory_order_acquire);
+    presented.m_layout_generation = atlas == nullptr ? 0 : atlas->m_layout_generation;
+    presented.m_pointer_sequence = data->uia_request_id + 1;
+    const BrowserPresentationDecision decision =
+        data->browser_presentation_state.update(
+            presented, screen_point, data->hover_motion_fast, now_ms);
+    static_cast<void>(data->smart_region_diagnostics.recordBrowserPresentation(
+        static_cast<std::uint8_t>(presented.m_level),
+        static_cast<std::uint8_t>(decision.m_reason), decision.m_delay_ms,
+        data->browser_visible_replacement_count));
+    if (decision.m_action == BrowserPresentationAction::Clear)
+    {
+      clearHover(data);
+      return;
+    }
+    if (decision.m_action == BrowserPresentationAction::Apply)
+    {
+      if (data->has_hover)
+      {
+        ++data->browser_visible_replacement_count;
+      }
+      static_cast<void>(KillTimer(data->overlay, kHoverStabilizeTimerId));
+      data->hover_stabilizer.clear();
+      data->hover_timer_pending_since_ms = 0;
+      data->hover_candidate = candidate;
+      data->hover_candidate.rect = data->browser_presentation_state.current().m_hit_rect;
+      data->browser_click_hit_rect = data->hover_candidate.rect;
+      data->hover_rect =
+          screenRectToOverlayClient(data->hover_candidate.rect, data->screen);
+      data->has_hover = !data->hover_rect.empty();
+      return;
+    }
+    if (data->browser_presentation_state.hasCurrent())
+    {
+      data->browser_click_hit_rect =
+          data->browser_presentation_state.current().m_hit_rect;
+    }
+    return;
+  }
   const bool had_pending_candidate =
       data->hover_stabilizer.hasPendingCandidate();
   const std::uint64_t pending_since_ms =
@@ -1644,8 +1727,21 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
           if (data->controller.selection().empty() && data->has_hover) {
             // 纯点击未拖拽：优先使用已经检测完成的最新局部候选，避免
             // 迟滞中的旧候选或整窗回退成为最终选区。
-            const SmartRegionCandidate& selection_candidate =
+            SmartRegionCandidate selection_candidate =
                 data->hover_stabilizer.selectionCandidate();
+            const POINT screen_point{
+                coord::clientToScreenX(x, data->screen),
+                coord::clientToScreenY(y, data->screen)};
+            if (data->use_browser_chrome_visual_fallback &&
+                data->browser_presentation_state.hasCurrent() &&
+                !data->browser_click_hit_rect.empty() &&
+                screen_point.x >= data->browser_click_hit_rect.left &&
+                screen_point.x < data->browser_click_hit_rect.right &&
+                screen_point.y >= data->browser_click_hit_rect.top &&
+                screen_point.y < data->browser_click_hit_rect.bottom)
+            {
+              selection_candidate.rect = data->browser_click_hit_rect;
+            }
             const OverlayClientRect selection_rect =
                 screenRectToOverlayClient(selection_candidate.rect,
                                           data->screen);

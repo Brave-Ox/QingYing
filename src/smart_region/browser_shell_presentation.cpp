@@ -43,6 +43,21 @@ BrowserPresentationDecision BrowserShellPresentationState::update(
     return {BrowserPresentationAction::Apply, 0,
             BrowserPresentationReason::FirstCandidate};
   }
+  if (incoming.m_window_generation < m_current.m_window_generation)
+  {
+    return {BrowserPresentationAction::Keep, 0,
+            BrowserPresentationReason::WindowGenerationExpired};
+  }
+  if (incoming.m_layout_generation < m_current.m_layout_generation)
+  {
+    return {BrowserPresentationAction::Keep, 0,
+            BrowserPresentationReason::LayoutGenerationExpired};
+  }
+  if (incoming.m_pointer_sequence < m_current.m_pointer_sequence)
+  {
+    return {BrowserPresentationAction::Keep, 0,
+            BrowserPresentationReason::PointerSequenceExpired};
+  }
   if (sameCandidate(m_current, incoming))
   {
     m_has_pending = false;
@@ -52,6 +67,7 @@ BrowserPresentationDecision BrowserShellPresentationState::update(
       return {BrowserPresentationAction::Apply, 0,
               BrowserPresentationReason::QualityUpgrade};
     }
+    m_current = incoming;
     return {};
   }
   if (contains(m_current.m_hit_rect, screen_point) &&
@@ -93,6 +109,17 @@ void BrowserShellPresentationState::clear() noexcept
   m_pending_since_ms = 0;
   m_has_current = false;
   m_has_pending = false;
+}
+
+bool BrowserShellPresentationState::hasCurrent() const noexcept
+{
+  return m_has_current;
+}
+
+const BrowserPresentedCandidate& BrowserShellPresentationState::current()
+    const noexcept
+{
+  return m_current;
 }
 
 }  // namespace qingying

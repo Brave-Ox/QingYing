@@ -67,5 +67,51 @@ TEST(BrowserShellPresentationState, DefersAdjacentExactUntilSecondSample)
             BrowserPresentationAction::Apply);
 }
 
+TEST(BrowserShellPresentationState, RejectsExpiredPresentationTokens)
+{
+  BrowserShellPresentationState state;
+  ASSERT_EQ(state.update(makeCandidate(BrowserPresentationLevel::Exact,
+                                       {0, 0, 100, 40}, 1, 8),
+                         {20, 20}, false, 10).m_action,
+            BrowserPresentationAction::Apply);
+
+  BrowserPresentedCandidate old_window =
+      makeCandidate(BrowserPresentationLevel::Exact, {0, 0, 100, 40}, 2, 9);
+  --old_window.m_window_generation;
+  EXPECT_EQ(state.update(old_window, {20, 20}, false, 11).m_reason,
+            BrowserPresentationReason::WindowGenerationExpired);
+
+  BrowserPresentedCandidate old_layout =
+      makeCandidate(BrowserPresentationLevel::Exact, {0, 0, 100, 40}, 2, 9);
+  --old_layout.m_layout_generation;
+  EXPECT_EQ(state.update(old_layout, {20, 20}, false, 12).m_reason,
+            BrowserPresentationReason::LayoutGenerationExpired);
+
+  EXPECT_EQ(state.update(makeCandidate(BrowserPresentationLevel::Exact,
+                                       {0, 0, 100, 40}, 2, 7),
+                         {20, 20}, false, 13).m_reason,
+            BrowserPresentationReason::PointerSequenceExpired);
+}
+
+TEST(BrowserShellPresentationState,
+     KeepsVisibleCandidateForTwoPixelJitterButRefreshesHitRect)
+{
+  BrowserShellPresentationState state;
+  ASSERT_EQ(state.update(makeCandidate(BrowserPresentationLevel::Exact,
+                                       {10, 10, 50, 40}, 1),
+                         {20, 20}, false, 10).m_action,
+            BrowserPresentationAction::Apply);
+  const BrowserPresentationDecision decision = state.update(
+      makeCandidate(BrowserPresentationLevel::Exact, {12, 8, 52, 42}, 1),
+      {20, 20}, false, 11);
+
+  EXPECT_EQ(decision.m_action, BrowserPresentationAction::Keep);
+  ASSERT_TRUE(state.hasCurrent());
+  EXPECT_EQ(state.current().m_hit_rect.left, 12);
+  EXPECT_EQ(state.current().m_hit_rect.top, 8);
+  EXPECT_EQ(state.current().m_hit_rect.right, 52);
+  EXPECT_EQ(state.current().m_hit_rect.bottom, 42);
+}
+
 }  // namespace
 }  // namespace qingying

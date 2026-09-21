@@ -1244,6 +1244,21 @@ bool SmartRegionCandidateSelector::hasValidLocalCandidate(
   return false;
 }
 
+bool SmartRegionDiagnosticTrace::recordBrowserPresentation(
+    std::uint8_t level, std::uint8_t reason, std::uint64_t delay_ms,
+    std::uint64_t visible_replacement_count) noexcept
+{
+  if (!m_enabled || !m_has_latest_event)
+  {
+    return false;
+  }
+  m_latest_event.browser_presentation_level = level;
+  m_latest_event.browser_presentation_reason = reason;
+  m_latest_event.browser_presentation_delay_ms = delay_ms;
+  m_latest_event.browser_visible_replacement_count =
+      visible_replacement_count;
+  return true;
+}
 const wchar_t* smartRegionDiagnosticSourceName(
     SmartRegionDiagnosticSource source) noexcept
 {

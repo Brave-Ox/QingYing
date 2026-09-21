@@ -138,6 +138,10 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t uia_async_poll_delay_ms{0};
   std::uint64_t browser_shell_atlas_hit_test_ms{0};
   std::uint64_t browser_shell_first_frame_ms{0};
+  std::uint64_t browser_presentation_delay_ms{0};
+  std::uint64_t browser_visible_replacement_count{0};
+  std::uint8_t browser_presentation_level{0};
+  std::uint8_t browser_presentation_reason{0};
   std::size_t uia_async_candidate_count{0};
   std::uint8_t visual_edge_mask{0};
   std::uint8_t visual_candidate_confidence{0};
@@ -193,6 +197,9 @@ class SmartRegionDiagnosticTrace {
                                BrowserShellAtlasInvalidReason invalid_reason,
                                std::uint64_t hit_test_ms,
                                std::uint64_t first_frame_ms) noexcept;
+  bool recordBrowserPresentation(std::uint8_t level, std::uint8_t reason,
+                                 std::uint64_t delay_ms,
+                                 std::uint64_t visible_replacement_count) noexcept;
   bool recordAsyncUiaResult(
       std::uint64_t request_id, std::uint64_t elapsed_ms,
       std::uint64_t age_ms, std::uint64_t poll_delay_ms, bool succeeded,

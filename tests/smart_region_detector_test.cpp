@@ -697,6 +697,20 @@ TEST(SmartRegionDiagnosticTraceTest, RecordsObservedHoverTimingParts)
   EXPECT_EQ(trace.latestEvent().msaa_lookup_ms, 0U);
 }
 
+TEST(SmartRegionDiagnosticTraceTest, RecordsBrowserPresentationDecision)
+{
+  SmartRegionDiagnosticTrace trace;
+  SmartRegionDiagnosticEvent event;
+  trace.setEnabled(true);
+  ASSERT_TRUE(trace.record(event));
+
+  EXPECT_TRUE(trace.recordBrowserPresentation(2, 6, 8, 1));
+  EXPECT_EQ(trace.latestEvent().browser_presentation_level, 2U);
+  EXPECT_EQ(trace.latestEvent().browser_presentation_reason, 6U);
+  EXPECT_EQ(trace.latestEvent().browser_presentation_delay_ms, 8U);
+  EXPECT_EQ(trace.latestEvent().browser_visible_replacement_count, 1U);
+}
+
 TEST(SmartRegionAsyncPresentationGateTest,
      DefersOnlyChromiumResultsDuringRecentFastRawMotion)
 {

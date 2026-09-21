@@ -13,6 +13,8 @@ class BrowserShellPresentationState
                                      POINT screen_point, bool fast_motion,
                                      std::uint64_t now_ms) noexcept;
   void clear() noexcept;
+  bool hasCurrent() const noexcept;
+  const BrowserPresentedCandidate& current() const noexcept;
 
  private:
   BrowserPresentedCandidate m_current;
