@@ -40,6 +40,10 @@ constexpr int HotkeyRowDividerOffset = 62;
 constexpr int LongShotFirstRowTop = 146;
 constexpr int LongShotSecondRowTop = 202;
 constexpr int LongShotRowDividerY = 196;
+constexpr int LongShotTextBlockHeight = 46;
+constexpr int LongShotControlHeight = 30;
+constexpr int LongShotControlTopOffset =
+    (LongShotTextBlockHeight - LongShotControlHeight) / 2;
 constexpr int StepperValueWidth = 76;
 constexpr int StepperButtonSize = 30;
 constexpr int StepperGap = 6;
@@ -493,17 +497,19 @@ struct SettingsWindow::Impl
     const int stepper_value_width = scale(StepperValueWidth, dpi);
     const int stepper_button_size = scale(StepperButtonSize, dpi);
     const int stepper_gap = scale(StepperGap, dpi);
-    const int stepper_first_y = scale(150, dpi);
-    const int stepper_second_y = scale(206, dpi);
+    const int stepper_first_y = scale(LongShotFirstRowTop +
+                                      LongShotControlTopOffset, dpi);
+    const int stepper_second_y = scale(LongShotSecondRowTop +
+                                       LongShotControlTopOffset, dpi);
     MoveWindow(longshot_controls[0], stepper_x, stepper_first_y,
-               stepper_value_width, scale(30, dpi), TRUE);
+               stepper_value_width, scale(LongShotControlHeight, dpi), TRUE);
     MoveWindow(longshot_controls[1], stepper_x + stepper_value_width + stepper_gap,
                stepper_first_y, stepper_button_size, stepper_button_size, TRUE);
     MoveWindow(longshot_controls[2], stepper_x + stepper_value_width + stepper_gap +
                    stepper_button_size + stepper_gap,
                stepper_first_y, stepper_button_size, stepper_button_size, TRUE);
     MoveWindow(longshot_controls[3], stepper_x, stepper_second_y,
-               stepper_value_width, scale(30, dpi), TRUE);
+               stepper_value_width, scale(LongShotControlHeight, dpi), TRUE);
     MoveWindow(longshot_controls[4], stepper_x + stepper_value_width + stepper_gap,
                stepper_second_y, stepper_button_size, stepper_button_size, TRUE);
     MoveWindow(longshot_controls[5], stepper_x + stepper_value_width + stepper_gap +
@@ -1173,22 +1179,26 @@ struct SettingsWindow::Impl
         }
         if (page == SettingsPage::LongShot)
         {
-          drawText(dc, RECT{content_x + scale(24, dpi), scale(150, dpi),
-                            content_x + scale(180, dpi), scale(178, dpi)},
+          drawText(dc, RECT{content_x + scale(24, dpi),
+                            scale(LongShotFirstRowTop, dpi),
+                            content_x + scale(300, dpi),
+                            scale(LongShotFirstRowTop + 24, dpi)},
                    L"最大帧数", body_font.get(), PrimaryTextColor, DT_LEFT);
-          drawText(dc, RECT{content_x + scale(24, dpi), scale(206, dpi),
-                            content_x + scale(180, dpi), scale(234, dpi)},
+          drawText(dc, RECT{content_x + scale(24, dpi),
+                            scale(LongShotSecondRowTop, dpi),
+                            content_x + scale(300, dpi),
+                            scale(LongShotSecondRowTop + 24, dpi)},
                    L"最大输出高度", body_font.get(), PrimaryTextColor, DT_LEFT);
           drawText(dc, RECT{content_x + scale(24, dpi),
                             scale(LongShotFirstRowTop + 24, dpi),
                             content_x + scale(340, dpi),
-                            scale(LongShotFirstRowTop + 46, dpi)},
+                            scale(LongShotFirstRowTop + LongShotTextBlockHeight, dpi)},
                    L"单次长截图允许的最大帧数", caption_font.get(),
                    HelperTextColor, DT_LEFT);
           drawText(dc, RECT{content_x + scale(24, dpi),
                             scale(LongShotSecondRowTop + 24, dpi),
                             content_x + scale(360, dpi),
-                            scale(LongShotSecondRowTop + 46, dpi)},
+                            scale(LongShotSecondRowTop + LongShotTextBlockHeight, dpi)},
                    L"长截图生成的最大高度（像素）", caption_font.get(),
                    HelperTextColor, DT_LEFT);
           PenHandle separator_pen(SettingsRowDividerColor);
