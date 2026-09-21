@@ -2961,6 +2961,60 @@ TEST(UiaRegionQueryWorkerTest, DiscoveryCompletesWhileAccessibilityProviderIsBlo
             std::string::npos);
 }
 
+TEST(UiaRegionQueryWorkerTest,
+     RefinementLaneDoesNotBlockFastPointWorker)
+{
+  LatencyQueryContext refinement;
+  CountingUiaQueryContext fast_point;
+  window_detail::UiaRegionQueryWorker refinement_worker(
+      &runLatencyQuery, &refinement, window_detail::RegionQueryLane::Refinement);
+  ReleaseLatencyQuery release{refinement};
+  window_detail::UiaRegionQueryWorker fast_point_worker(
+      &runCountingUiaQuery, &fast_point,
+      window_detail::RegionQueryLane::Accessibility);
+  ASSERT_TRUE(refinement_worker.start());
+  ASSERT_TRUE(fast_point_worker.start());
+
+  window_detail::UiaRegionQueryRequest request{
+      1, reinterpret_cast<HWND>(1), {100, 100}, {0, 0, 1000, 800},
+      GetTickCount64()};
+  request.query_depth = window_detail::BrowserQueryDepth::DeepRefinement;
+  ASSERT_TRUE(refinement_worker.request(request));
+  ASSERT_TRUE(refinement.waitEntered(1));
+
+  request.request_id = 2;
+  request.query_depth = window_detail::BrowserQueryDepth::FastPoint;
+  ASSERT_TRUE(fast_point_worker.request(request));
+  window_detail::UiaRegionQueryResult result;
+  EXPECT_TRUE(waitForUiaQueryResult(fast_point_worker, result));
+  EXPECT_EQ(result.request_id, 2U);
+  EXPECT_TRUE(refinement_worker.hasPendingWork());
+}
+
+TEST(BrowserRefinementPolicyTest, DefersOnlyChromiumRootScopedTraversal)
+{
+  EXPECT_FALSE(window_detail::shouldUseRootScopedTraversal(
+      true, window_detail::BrowserQueryDepth::FastPoint));
+  EXPECT_TRUE(window_detail::shouldUseRootScopedTraversal(
+      true, window_detail::BrowserQueryDepth::DeepRefinement));
+  EXPECT_TRUE(window_detail::shouldUseRootScopedTraversal(
+      false, window_detail::BrowserQueryDepth::FastPoint));
+}
+
+TEST(BrowserRefinementTriggerTest, RequiresDwellAndSubmitsOnlyOncePerCell)
+{
+  window_detail::BrowserRefinementTrigger trigger;
+  const window_detail::BrowserRefinementKey key{
+      reinterpret_cast<HWND>(1), 3, 5, 8, 2, 4};
+
+  EXPECT_FALSE(trigger.update(key, false, 100));
+  EXPECT_FALSE(trigger.update(key, false, 219));
+  EXPECT_TRUE(trigger.update(key, false, 220));
+  EXPECT_FALSE(trigger.update(key, false, 221));
+  EXPECT_FALSE(trigger.update(key, true, 222));
+  EXPECT_FALSE(trigger.update(key, false, 223));
+}
+
 TEST(UiaRegionQueryWorkerTest, RebindingRequiresSameContextFreshnessAndLocalGeometry) {
   window_detail::UiaRegionQueryRequest request{2, reinterpret_cast<HWND>(1),
       {100, 100}, {0, 0, 1000, 800}, 1020};

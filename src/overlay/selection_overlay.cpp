@@ -79,11 +79,13 @@ struct OverlayWindowData {
   SmartRegionDiagnosticTrace smart_region_diagnostics;
   SmartRegionHoverStabilizer hover_stabilizer;
   BrowserShellPresentationState browser_presentation_state;
+  window_detail::BrowserRefinementTrigger refinement_trigger;
   SmartRegionHoverRenderGate hover_render_gate;
   SmartRegionUpdateGate hover_update_gate;
   SmartRegionAsyncPresentationGate async_presentation_gate;
   window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
   window_detail::UiaRegionQueryWorker* discovery_worker{nullptr};
+  window_detail::UiaRegionQueryWorker* refinement_worker{nullptr};
   SmartRegionCandidate hover_candidate;
   SmartRegionCandidate fast_hover_candidate;
   std::shared_ptr<const BrowserShellAtlasSnapshot> m_browser_shell_atlas;
@@ -106,6 +108,8 @@ struct OverlayWindowData {
   std::uint64_t hover_timer_pending_since_ms{0};
   std::uint8_t minimum_visual_confidence{70};
   window_detail::UiaRegionQueryRequest current_uia_request;
+  window_detail::UiaRegionQueryRequest current_refinement_request;
+  bool has_current_refinement_request{false};
   bool has_hover{false};
   bool has_pending_hover_update{false};
   bool first_frame_committed{false};
@@ -408,6 +412,13 @@ void clearHover(OverlayWindowData* data) noexcept
   }
   data->hover_stabilizer.clear();
   data->browser_presentation_state.clear();
+  data->refinement_trigger.clear();
+  data->has_current_refinement_request = false;
+  data->current_refinement_request = window_detail::UiaRegionQueryRequest{};
+  if (data->refinement_worker != nullptr)
+  {
+    data->refinement_worker->clear();
+  }
   data->hover_timer_pending_since_ms = 0;
   data->hover_update_gate.reset();
   data->async_presentation_gate.reset();
@@ -1054,11 +1065,43 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   data->current_uia_request.background = data->background;
   data->current_uia_request.image_screen_rect = image_screen_rect;
   data->current_uia_request.notify_window = data->overlay;
+  data->current_uia_request.is_chromium_browser_chrome =
+      window_snapshot.is_chromium_browser_chrome;
   auto accessibility_request = data->current_uia_request;
   accessibility_request.background.reset();
+  if (accessibility_request.is_chromium_browser_chrome)
+  {
+    accessibility_request.query_depth =
+        window_detail::BrowserQueryDepth::FastPoint;
+  }
   const bool discovery_queued = data->discovery_worker->request(data->current_uia_request);
   const bool accessibility_queued = data->uia_query_worker->request(accessibility_request);
-  if (discovery_queued || accessibility_queued)
+  const bool has_trusted_local_candidate =
+      selected.source == SmartRegionDiagnosticSource::Uia ||
+      selected.source == SmartRegionDiagnosticSource::Msaa ||
+      selected.semantic == SmartRegionSemantic::ActionableControl;
+  bool refinement_queued = false;
+  if (window_snapshot.is_chromium_browser_chrome &&
+      data->refinement_worker != nullptr)
+  {
+    const int cell_size = (std::max)(1, MulDiv(16, data->dpi, 96));
+    const std::uint64_t layout_generation =
+        atlas == nullptr ? 0 : atlas->m_layout_generation;
+    const window_detail::BrowserRefinementKey key{
+        root, data->region_generation, layout_generation,
+        data->current_uia_request.request_id, screen_x / cell_size,
+        screen_y / cell_size};
+    if (data->refinement_trigger.update(key, has_trusted_local_candidate,
+                                        motion_now_ms))
+    {
+      auto refinement_request = accessibility_request;
+      refinement_request.query_depth =
+          window_detail::BrowserQueryDepth::DeepRefinement;
+      refinement_request.deadline_ms = motion_now_ms + 300;
+      refinement_queued = data->refinement_worker->request(refinement_request);
+    }
+  }
+  if (discovery_queued || accessibility_queued || refinement_queued)
     static_cast<void>(SetTimer(data->overlay, kUiaResultPollTimerId,
                                kUiaResultPollIntervalMs, nullptr));
 }
@@ -1168,7 +1211,8 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     }
   }
 
-  window_detail::UiaRegionQueryWorker* lanes[]{data->discovery_worker, data->uia_query_worker};
+  window_detail::UiaRegionQueryWorker* lanes[]{
+      data->discovery_worker, data->uia_query_worker, data->refinement_worker};
   for (auto* lane : lanes)
   {
     window_detail::UiaRegionQueryResult result;
@@ -1247,7 +1291,8 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
     }
   }
   if (((!data->uia_query_worker->hasPendingWork() &&
-        (data->discovery_worker == nullptr || !data->discovery_worker->hasPendingWork())) ||
+        (data->discovery_worker == nullptr || !data->discovery_worker->hasPendingWork()) &&
+        (data->refinement_worker == nullptr || !data->refinement_worker->hasPendingWork())) ||
        (data->current_uia_request.deadline_ms &&
         now_ms >= data->current_uia_request.deadline_ms)) &&
       !data->has_deferred_uia_result)
@@ -1432,6 +1477,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (data->discovery_worker != nullptr)
       {
         static_cast<void>(data->discovery_worker->start());
+      }
+      if (data->refinement_worker != nullptr)
+      {
+        static_cast<void>(data->refinement_worker->start());
       }
       if (data->phase == OverlayPhase::Selected) {
         const SelectionIntent selection_screen =
@@ -1956,6 +2005,8 @@ struct SelectionOverlay::Impl {
       nullptr, nullptr, window_detail::RegionQueryLane::Accessibility};
   window_detail::UiaRegionQueryWorker discovery_worker{
       nullptr, nullptr, window_detail::RegionQueryLane::Discovery};
+  window_detail::UiaRegionQueryWorker refinement_worker{
+      nullptr, nullptr, window_detail::RegionQueryLane::Refinement};
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<UiMessageToken> preview_token{0};
@@ -2019,6 +2070,7 @@ bool SelectionOverlay::show(
   auto data = std::make_unique<OverlayWindowData>();
   data->uia_query_worker = &impl_->uia_query_worker;
   data->discovery_worker = &impl_->discovery_worker;
+  data->refinement_worker = &impl_->refinement_worker;
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->preview_token = &impl_->preview_token;
@@ -2213,18 +2265,21 @@ void SelectionOverlay::beginShutdown() noexcept {
   impl_->accepting_messages.store(false);
   impl_->uia_query_worker.beginStop();
   impl_->discovery_worker.beginStop();
+  impl_->refinement_worker.beginStop();
 }
 
 bool SelectionOverlay::joinUntil(
     std::chrono::steady_clock::time_point deadline) noexcept {
   const bool accessibility_done = impl_->uia_query_worker.joinUntil(deadline);
   const bool discovery_done = impl_->discovery_worker.joinUntil(deadline);
-  return accessibility_done && discovery_done;
+  const bool refinement_done = impl_->refinement_worker.joinUntil(deadline);
+  return accessibility_done && discovery_done && refinement_done;
 }
 
 std::string SelectionOverlay::diagnosticSnapshot() const {
   return impl_->uia_query_worker.diagnosticSnapshot() + "\n" +
-      impl_->discovery_worker.diagnosticSnapshot();
+      impl_->discovery_worker.diagnosticSnapshot() + "\n" +
+      impl_->refinement_worker.diagnosticSnapshot();
 }
 
 void SelectionOverlay::finishShutdown() noexcept {

@@ -68,4 +68,10 @@ bool locateMsaaCandidate(HWND root_window, POINT screen_point,
                              out_diagnostic = nullptr,
                          bool* out_browser_semantic_miss = nullptr) noexcept;
 
+bool locateMsaaCandidate(HWND root_window, POINT screen_point,
+                         SmartRegionCandidate& out,
+                         SmartRegionMsaaTraversalDiagnostic* out_diagnostic,
+                         bool* out_browser_semantic_miss,
+                         bool allow_root_scoped_traversal) noexcept;
+
 }  // namespace qingying::window_detail

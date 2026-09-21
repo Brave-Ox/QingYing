@@ -767,7 +767,7 @@ bool isUsefulRootScopedUiaCandidate(
 bool UiaRegionLocatorSession::locate(
     HWND root_window, POINT screen_point,
     SmartRegionCandidate* out_candidates, std::size_t capacity,
-    std::size_t& out_count) noexcept
+    std::size_t& out_count, bool allow_root_scoped_traversal) noexcept
 {
   out_count = 0;
   const std::uint64_t begin_ms = GetTickCount64();
@@ -785,7 +785,8 @@ bool UiaRegionLocatorSession::locate(
   static_cast<void>(m_impl->collectDesktopPath(
       root_window, screen_point, begin_ms, nullptr, properties,
       (std::min)(capacity, kMaximumFastPointPathDepth), property_count));
-  if (!uiaPathBelongsToRoot(properties, property_count, root_window))
+  if (!uiaPathBelongsToRoot(properties, property_count, root_window) &&
+      allow_root_scoped_traversal)
   {
     property_count = 0;
     used_root_scoped_fallback = true;

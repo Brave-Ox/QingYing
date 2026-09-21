@@ -1011,9 +1011,19 @@ bool makeMsaaCandidate(HWND root_window, HWND target_window,
 
 bool locateMsaaCandidate(HWND root_window, POINT screen_point,
                          SmartRegionCandidate& out,
+                         SmartRegionMsaaTraversalDiagnostic* out_diagnostic,
+                         bool* out_browser_semantic_miss) noexcept
+{
+  return locateMsaaCandidate(root_window, screen_point, out, out_diagnostic,
+                             out_browser_semantic_miss, true);
+}
+
+bool locateMsaaCandidate(HWND root_window, POINT screen_point,
+                         SmartRegionCandidate& out,
                          SmartRegionMsaaTraversalDiagnostic*
                              out_diagnostic,
-                         bool* out_browser_semantic_miss) noexcept
+                         bool* out_browser_semantic_miss,
+                         bool allow_root_scoped_traversal) noexcept
 {
   out = SmartRegionCandidate{};
   if (out_browser_semantic_miss != nullptr)
@@ -1059,6 +1069,11 @@ bool locateMsaaCandidate(HWND root_window, POINT screen_point,
     if (msaaShouldDeferDirectBrowserContainerCandidate(
             is_browser_window, direct_properties))
     {
+      if (!allow_root_scoped_traversal)
+      {
+        out = direct_candidate;
+        return true;
+      }
       SmartRegionCandidate descendant_candidate;
       if (locateRootScopedMsaaCandidate(root_window, screen_point,
                                         descendant_candidate, diagnostic,
@@ -1072,6 +1087,10 @@ bool locateMsaaCandidate(HWND root_window, POINT screen_point,
         diagnostic, SmartRegionMsaaTraversalStopReason::CandidateFound);
     out = direct_candidate;
     return true;
+  }
+  if (!allow_root_scoped_traversal)
+  {
+    return false;
   }
   return locateRootScopedMsaaCandidate(root_window, screen_point, out,
                                        diagnostic, out_browser_semantic_miss);

@@ -111,7 +111,8 @@ class UiaRegionLocatorSession
 
   bool locate(HWND root_window, POINT screen_point,
               SmartRegionCandidate* out_candidates, std::size_t capacity,
-              std::size_t& out_count) noexcept;
+              std::size_t& out_count,
+              bool allow_root_scoped_traversal = true) noexcept;
   bool locateBrowserShellEntries(
       HWND root_window, POINT screen_point,
       BrowserShellEntryCollection& out_entries) noexcept;

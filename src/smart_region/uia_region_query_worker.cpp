@@ -141,10 +141,13 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
   result.candidate_count = 0;
   if (request.deadline_ms && GetTickCount64() >= request.deadline_ms) return;
 
+  const bool allow_root_scoped_traversal = shouldUseRootScopedTraversal(
+      request.is_chromium_browser_chrome, request.query_depth);
   std::size_t uia_candidate_count = 0;
   static_cast<void>(session.locate(
       request.root_window, request.screen_point, result.candidates,
-      SmartRegionMaxUiaCandidates, uia_candidate_count));
+      SmartRegionMaxUiaCandidates, uia_candidate_count,
+      allow_root_scoped_traversal));
   result.candidate_count = uia_candidate_count;
   result.succeeded = result.candidate_count != 0;
   if (progress)
@@ -189,7 +192,8 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
         request.diagnostics_enabled ? &result.msaa_diagnostic : nullptr;
     if (locateMsaaCandidate(request.root_window, request.screen_point,
                             msaa_candidate, msaa_diagnostic,
-                            &browser_semantic_miss))
+                            &browser_semantic_miss,
+                            allow_root_scoped_traversal))
     {
       result.candidates[result.candidate_count++] = msaa_candidate;
     }
@@ -228,6 +232,14 @@ bool isUiaQueryResultApplicable(
                                  current_request.screen_point,
                                  current_request.owner_rect, selected) ||
          hasApplicableBrowserShellAtlas(result, current_request);
+}
+
+bool shouldUseRootScopedTraversal(
+    bool is_chromium_browser_chrome,
+    BrowserQueryDepth query_depth) noexcept
+{
+  return !is_chromium_browser_chrome ||
+         query_depth == BrowserQueryDepth::DeepRefinement;
 }
 
 bool rebindUiaQueryResult(UiaRegionQueryResult& result,
@@ -474,8 +486,15 @@ struct UiaRegionQueryWorker::Impl
   }
 
   const char* laneName() const noexcept {
-    return lane == RegionQueryLane::Discovery ? "thread=region_discovery_worker"
-                                               : "thread=uia_query_worker";
+    if (lane == RegionQueryLane::Discovery)
+    {
+      return "thread=region_discovery_worker";
+    }
+    if (lane == RegionQueryLane::Refinement)
+    {
+      return "thread=region_refinement_worker";
+    }
+    return "thread=uia_query_worker";
   }
 
   void markDone() noexcept

@@ -17,6 +17,13 @@ struct BrowserShellAtlasSnapshot;
 
 namespace qingying::window_detail {
 
+enum class BrowserQueryDepth : std::uint8_t
+{
+  Default,
+  FastPoint,
+  DeepRefinement,
+};
+
 struct UiaRegionQueryRequest
 {
   std::uint64_t request_id{0};
@@ -31,6 +38,8 @@ struct UiaRegionQueryRequest
   std::shared_ptr<const Image> background;
   WindowRect image_screen_rect;
   HWND notify_window{nullptr};
+  BrowserQueryDepth query_depth{BrowserQueryDepth::Default};
+  bool is_chromium_browser_chrome{false};
 };
 
 struct UiaRegionQueryResult
@@ -64,7 +73,76 @@ struct UiaRegionQueryResult
   std::uint64_t m_pointer_sequence{0};
 };
 
-enum class RegionQueryLane { Combined, Discovery, Accessibility };
+enum class RegionQueryLane { Combined, Discovery, Accessibility, Refinement };
+
+bool shouldUseRootScopedTraversal(
+    bool is_chromium_browser_chrome,
+    BrowserQueryDepth query_depth) noexcept;
+
+struct BrowserRefinementKey
+{
+  HWND root_window{nullptr};
+  std::uint64_t window_generation{0};
+  std::uint64_t layout_generation{0};
+  std::uint64_t pointer_sequence{0};
+  int cell_x{0};
+  int cell_y{0};
+};
+
+class BrowserRefinementTrigger
+{
+ public:
+  static constexpr std::uint64_t DwellMs = 120;
+
+  bool update(const BrowserRefinementKey& key, bool has_trusted_local_candidate,
+              std::uint64_t now_ms) noexcept
+  {
+    if (has_trusted_local_candidate)
+    {
+      clear();
+      return false;
+    }
+    if (!m_has_key || !sameKey(m_key, key))
+    {
+      m_key = key;
+      m_started_at_ms = now_ms;
+      m_has_key = true;
+      m_submitted = false;
+      return false;
+    }
+    if (!m_submitted && now_ms >= m_started_at_ms &&
+        now_ms - m_started_at_ms >= DwellMs)
+    {
+      m_submitted = true;
+      return true;
+    }
+    m_key.pointer_sequence = key.pointer_sequence;
+    return false;
+  }
+
+  void clear() noexcept
+  {
+    m_key = BrowserRefinementKey{};
+    m_started_at_ms = 0;
+    m_has_key = false;
+    m_submitted = false;
+  }
+
+ private:
+  static bool sameKey(const BrowserRefinementKey& left,
+                      const BrowserRefinementKey& right) noexcept
+  {
+    return left.root_window == right.root_window &&
+           left.window_generation == right.window_generation &&
+           left.layout_generation == right.layout_generation &&
+           left.cell_x == right.cell_x && left.cell_y == right.cell_y;
+  }
+
+  BrowserRefinementKey m_key;
+  std::uint64_t m_started_at_ms{0};
+  bool m_has_key{false};
+  bool m_submitted{false};
+};
 
 using UiaRegionQueryFunction = void (*)(
     const UiaRegionQueryRequest& request, UiaRegionQueryResult& result,
