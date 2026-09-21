@@ -64,6 +64,7 @@ target_link_libraries(qingying_app_runtime PUBLIC qingying_automation qingying_i
 add_executable(qingying WIN32
   main.cpp
   application.cpp
+  command_window.cpp
   settings_application_service.cpp
   settings_window.cpp
   settings_window_model.cpp

@@ -391,6 +391,8 @@ void TrayController::showContextMenu() {
   fillTrayMenuItem(capture_item, TrayMenuCaptureCommandId, false);
   MENUITEMINFOW settings_item{};
   fillTrayMenuItem(settings_item, TrayMenuSettingsCommandId, false);
+  MENUITEMINFOW command_item{};
+  fillTrayMenuItem(command_item, TrayMenuCommandCommandId, false);
   MENUITEMINFOW autostart_item = {};
   fillTrayMenuItem(autostart_item, IDM_TRAY_AUTOSTART, autostart_enabled_);
   MENUITEMINFOW separator = {};
@@ -400,12 +402,13 @@ void TrayController::showContextMenu() {
   MENUITEMINFOW automation_item{};
   fillTrayMenuItem(automation_item, TrayMenuAutomationCommandId, automation_enabled_);
   if (InsertMenuItemW(menu, 0, TRUE, &capture_item) == FALSE ||
-      InsertMenuItemW(menu, 1, TRUE, &settings_item) == FALSE ||
-      InsertMenuItemW(menu, 2, TRUE, &separator) == FALSE ||
-      InsertMenuItemW(menu, 3, TRUE, &autostart_item) == FALSE ||
-      InsertMenuItemW(menu, 4, TRUE, &automation_item) == FALSE ||
-      InsertMenuItemW(menu, 5, TRUE, &separator) == FALSE ||
-      InsertMenuItemW(menu, 6, TRUE, &exit_item) == FALSE)
+      InsertMenuItemW(menu, 1, TRUE, &command_item) == FALSE ||
+      InsertMenuItemW(menu, 2, TRUE, &settings_item) == FALSE ||
+      InsertMenuItemW(menu, 3, TRUE, &separator) == FALSE ||
+      InsertMenuItemW(menu, 4, TRUE, &autostart_item) == FALSE ||
+      InsertMenuItemW(menu, 5, TRUE, &automation_item) == FALSE ||
+      InsertMenuItemW(menu, 6, TRUE, &separator) == FALSE ||
+      InsertMenuItemW(menu, 7, TRUE, &exit_item) == FALSE)
   {
     DestroyMenu(menu);
     return;
@@ -496,6 +499,9 @@ void TrayController::onCommand(UINT id) {
   switch (id) {
     case TrayMenuCaptureCommandId:
       if (begin_capture_callback_) begin_capture_callback_();
+      break;
+    case TrayMenuCommandCommandId:
+      if (command_callback_) command_callback_();
       break;
     case TrayMenuSettingsCommandId:
       if (settings_callback_) settings_callback_();

@@ -84,7 +84,7 @@
 | `qingying_longshot` | static | 通用长截图运行时、profile 注册表、插件宿主与拼接 | Notepad / Explorer / Chromium profile 已接入；3 个 DLL 已部署，真实窗口验收待做 |
 | `qingying_workflow` | static | 选区、标注、结果动作与交互式长截图编排 | CaptureWorkflow 状态机与 LongShotController 已接入 |
 | `qingying_app_handlers` | static | 生产 Action Handler 与应用层结果动作适配 | 已从 EXE / 测试中独立出来 |
-| `qingying_command` | static | 本地口令 → Action | 解析器已实现；GUI 入口与多动作调度待接线 |
+| `qingying_command` | static | 本地口令 → Action 计划 | 解析器与有序多动作计划已实现；由 app 的 F8 窗口统一调度 |
 | `qingying_mcp` | static | MCP Bridge、协议 session、stdio transport、工具目录 | 代码已实现；真实安装包/客户端验收仍需补 |
 | `qingying_app_runtime` | static | AutomationRuntime、MCP stdio runner、运行时设置 | 已接线 |
 | `qingying` | EXE | 组合根、托盘、热键、顶层消息泵和 Workflow 消息转发 | 组合根已使用 PIMPL；F9 已接入本地 Pipe/MCP 主链 |
@@ -360,7 +360,7 @@ PIMPL 只作为模块级编译防火墙，不给每个小类型套 `Impl`。
 | F5 钉图 | pin + action | 代码基本完成，人工验收待做 |
 | F6 长截图 | workflow + overlay + longshot + capture | profile registry、Notepad / Explorer / Chromium 插件与 LongShotController 已接入；真实浏览器窗口待验收 |
 | F7 托盘热键 | app | 已实现 |
-| F8 口令 | command → action / workflow | 本地解析器已实现；GUI 口令入口与多动作调度待接线 |
+| F8 口令 | command → action / workflow | `Ctrl+Alt+K` / 托盘“口令…”可打开输入窗口；支持解析并按序调度截图、复制或钉图，真实桌面验收待补 |
 | F9 MCP | mcp → ipc → automation → action / workflow | 协议、Named Pipe、工具目录和 CaptureWindow / CropCenter / Copy / Save / Pin 主链已实现；真实安装包与桌面验收待补 |
 
 ---

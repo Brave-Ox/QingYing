@@ -17,6 +17,16 @@ TEST(CommandParserTest, ParsesWindowCaptureAndTrimsFollowUpAction) {
   EXPECT_EQ(payload->window_query, L"微信");
 }
 
+TEST(CommandParserTest, BuildsOrderedPlanForCaptureAndCopy) {
+  qingying::CommandParser parser;
+  qingying::CommandPlan plan;
+
+  ASSERT_TRUE(parser.tryParsePlan(L"截取微信窗口并复制", &plan));
+  ASSERT_EQ(plan.actions.size(), 2u);
+  EXPECT_EQ(plan.actions[0].type(), qingying::ActionType::CaptureWindow);
+  EXPECT_EQ(plan.actions[1].type(), qingying::ActionType::Copy);
+}
+
 TEST(CommandParserTest, ParsesExplicitWindowCaptureWithQuotedTitle) {
   qingying::CommandParser parser;
   qingying::ActionRequest request;

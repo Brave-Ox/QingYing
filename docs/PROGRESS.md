@@ -23,10 +23,10 @@
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
 | F6 长截图 | **自动链路与预算回归完成，待真实桌面验收** | profile 优先并带通用安全回退；固定选区、稳定帧检测、保守拼接、部分结果恢复、固定边缘显式配置、暂停 / 继续 / 停止和资源预算已接线；内置 profile 为受控 DLL 插件 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
-| F8 本地口令 | **解析器完成，待入口接线** | 已解析窗口截取、中心裁剪、复制、钉图、状态与保存；尚无 GUI 口令输入与多动作调度入口 |
+| F8 本地口令 | **代码链路完成，待人工验收** | `Ctrl+Alt+K` 与托盘“口令…”可打开输入窗口；已按序调度窗口截取→复制 / 钉图，并支持中心裁剪、状态与带路径保存 |
 | F9 MCP | **代码已接线，待完整验收** | MCP protocol session、stdio、Named Pipe、AutomationEndpoint、CaptureWindow / CropCenter / Copy / Save / Pin 主链已实现；安装包和真实桌面验收仍需补 |
 
-一句话：普通截图、窗口吸附、Pin、长截图自动尝试、SmartRegion 候选链和标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是已知与未知应用的真实长截图验收、F9 安装包验收和 P0 架构风险收敛。
+一句话：普通截图、窗口吸附、Pin、长截图自动尝试、SmartRegion 候选链、标注结果 Copy / Save / Pin 与 F8 口令输入已形成代码链路；多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是已知与未知应用的真实长截图验收、F8 / F9 真实桌面验收和 P0 架构风险收敛。
 
 ---
 
@@ -152,8 +152,9 @@
 
 ### F8 本地口令
 
-- `CommandParser::tryParse` 已支持窗口截取、中心裁剪、复制、钉图、状态与保存；窗口截取会剥离“并复制 / 并保存 / 并钉图”后缀，避免把后续动作误作窗口标题；
-- 仍没有 GUI 口令输入、歧义交互或多动作调度入口。
+- `CommandParser::tryParse` 保持单动作兼容；新增 `tryParsePlan` 返回有序动作计划。窗口截取会剥离“并复制 / 并保存 / 并钉图”后缀，避免把后续动作误作窗口标题；其中“并复制 / 并钉图”会生成第二个动作；
+- app 提供 `QingYing 口令`无模态输入窗口：按 `Ctrl+Alt+K` 或在托盘菜单选择“口令…”即可打开。执行失败会区分未匹配、窗口不存在、窗口歧义和通用错误；
+- 待补：真实微信 / WPS 等窗口的人工冒烟，以及更丰富的歧义候选交互。
 
 兼容路径说明：
 

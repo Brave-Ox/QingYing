@@ -28,6 +28,7 @@ class TrayController {
   void setAutostartToggle(std::function<bool(bool)> toggle) { autostart_toggle_ = std::move(toggle); }
   void setAutostartEnabled(bool enabled) { autostart_enabled_ = enabled; }
   void setBeginCaptureCallback(std::function<void()> callback) { begin_capture_callback_ = std::move(callback); }
+  void setCommandCallback(std::function<void()> callback) { command_callback_ = std::move(callback); }
   void setSettingsCallback(std::function<void()> callback) { settings_callback_ = std::move(callback); }
   void setCaptureHotkeyDisplay(std::wstring display) { capture_hotkey_display_ = std::move(display); }
   const std::wstring& captureHotkeyDisplay() const noexcept { return capture_hotkey_display_; }
@@ -52,6 +53,7 @@ class TrayController {
   UINT taskbar_created_msg_{0};
   MessageFilter message_filter_;
   std::function<void()> begin_capture_callback_;
+  std::function<void()> command_callback_;
   std::function<void()> settings_callback_;
   std::function<bool(bool)> autostart_toggle_;
   std::function<bool(bool)> automation_toggle_;

@@ -10,6 +10,7 @@
 #include "qingying/app/app_messages.hpp"
 #include "qingying/app/ui_message_channel.h"
 #include "qingying/app/capture_workflow.hpp"
+#include "qingying/app/command_window.hpp"
 #include "qingying/app/capture_service.h"
 #include "qingying/app/export_executor.h"
 #include "qingying/app/hotkey_manager.hpp"
@@ -26,6 +27,7 @@
 #include "qingying/automation/automation_endpoint.h"
 #include "qingying/app/automation_workflow_adapter.h"
 #include "qingying/capture/capture_engine.hpp"
+#include "qingying/command/command_parser.hpp"
 #include "qingying/export/export_service.hpp"
 #include "qingying/longshot/dll_longshot_profile.h"
 #include "qingying/longshot/longshot_engine.hpp"
@@ -49,6 +51,7 @@ namespace {
 
 constexpr UINT_PTR kAutomationMaintenanceTimer = 0xF907;
 constexpr int kSettingsAvailabilityHotkeyId = 0xF914;
+constexpr int kCommandHotkeyId = 0xF8C8;
 
 qingying::ApplicationEpoch makeApplicationEpoch() {
   GUID guid{};
@@ -214,9 +217,11 @@ struct Application::Impl {
                  [this](ApplicationShutdownDeadline) {
                    if (tray_.hwnd()) {
                      KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
+                     (void)UnregisterHotKey(tray_.hwnd(), kCommandHotkeyId);
                    }
                    hotkey_.unregisterAll(tray_.hwnd());
                    settings_window_.close();
+                   command_window_.close();
                    return true;
                  },
                  [] { return std::string("hotkey_and_timer=stopped"); }},
@@ -423,6 +428,55 @@ struct Application::Impl {
     settings_window_.show(tray_.hwnd(), settings_service_.loadState());
   }
 
+  std::wstring executeCommand(const std::wstring& utterance)
+  {
+    CommandPlan plan;
+    if (!command_parser_.tryParsePlan(utterance, &plan) || plan.empty())
+    {
+      return L"未识别口令。示例：截取微信窗口并复制";
+    }
+
+    for (const ActionRequest& request : plan.actions)
+    {
+      ActionResult result;
+      if (request.type() == ActionType::Save)
+      {
+        const auto& save = std::get<SaveRequest>(request.payload);
+        result = result_actions_.save(kGuiResultScopeId, save.result, save.path);
+      }
+      else
+      {
+        result = dispatcher_.dispatch(request);
+      }
+      if (!result.ok)
+      {
+        if (result.error_code == ErrorCode::kWindowNotFound)
+        {
+          return L"未找到匹配窗口，请确认目标应用已启动。";
+        }
+        if (result.error_code == ErrorCode::kWindowAmbiguous)
+        {
+          return L"匹配到多个窗口，请补充更准确的窗口名称。";
+        }
+        return L"口令执行失败，错误码：" +
+               std::to_wstring(result.error_code);
+      }
+    }
+    if (plan.actions.size() > 1)
+    {
+      return L"口令已完成：截图与后续操作均已执行。";
+    }
+    return L"口令已执行。";
+  }
+
+  void showCommandWindow()
+  {
+    (void)command_window_.show(
+        tray_.hwnd(), [this](const std::wstring& command) {
+          return executeCommand(command);
+        });
+  }
+
   void registerHandlers() {
     registerAppHandlers(dispatcher_, capture_service_, result_store_,
                         result_actions_, &export_executor_);
@@ -462,6 +516,11 @@ struct Application::Impl {
       if (msg == WM_HOTKEY &&
           hotkey_.isCurrentCaptureHotkeyId(static_cast<int>(wparam))) {
         onCaptureHotkey();
+        *result = 0;
+        return true;
+      }
+      if (msg == WM_HOTKEY && static_cast<int>(wparam) == kCommandHotkeyId) {
+        showCommandWindow();
         *result = 0;
         return true;
       }
@@ -541,6 +600,7 @@ struct Application::Impl {
       static_cast<void>(capture_workflow_.beginSelection());
     });
     tray_.setSettingsCallback([this]() { showSettingsWindow(); });
+    tray_.setCommandCallback([this]() { showCommandWindow(); });
     tray_.setAutostartToggle([this](bool enabled) {
       if (!AutostartSettings::setEnabled(enabled))
       {
@@ -567,6 +627,11 @@ struct Application::Impl {
       OutputDebugStringW(L"轻映：已保存的截图快捷键当前不可用。\n");
       refreshExternalSettingsState();
     }
+    if (RegisterHotKey(tray_.hwnd(), kCommandHotkeyId,
+                       MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
+                       static_cast<UINT>('K')) == FALSE) {
+      OutputDebugStringW(L"轻映：口令快捷键 Ctrl+Alt+K 当前不可用，可从托盘菜单打开。\n");
+    }
 
     if (automation_settings_.enabled()) {
       const bool enabled = automation_runtime_.enable();
@@ -590,6 +655,8 @@ struct Application::Impl {
   AutomationSettings automation_settings_;
   SingleInstanceGuard single_instance_;
   TrayController tray_;
+  CommandWindow command_window_;
+  CommandParser command_parser_;
   HotkeyManager hotkey_;
   ActionDispatcher dispatcher_;
   CaptureEngine capture_;

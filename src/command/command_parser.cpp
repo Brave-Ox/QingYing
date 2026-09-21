@@ -141,24 +141,46 @@ bool CommandParser::tryParse(const std::wstring& utterance,
                              ActionRequest* out) const {
   if (out == nullptr) return false;
 
+  CommandPlan plan;
+  if (!tryParsePlan(utterance, &plan) || plan.empty()) return false;
+  *out = std::move(plan.actions.front());
+  return true;
+}
+
+bool CommandParser::tryParsePlan(const std::wstring& utterance,
+                                 CommandPlan* out) const {
+  if (out == nullptr) return false;
+
   const std::wstring command = trim(utterance);
   if (command.empty()) return false;
 
   ActionRequest parsed;
+  ActionRequest follow_up;
+  bool has_follow_up = false;
   if (command == L"复制" || command == L"复制当前截图") {
     parsed = makeActionRequest(CopyRequest{ResultSelection::current()});
   } else if (command == L"钉图" || command == L"钉住当前截图") {
     parsed = makeActionRequest(PinRequest{ResultSelection::current()});
   } else if (command == L"状态" || command == L"查看状态") {
     parsed = makeActionRequest(StatusRequest{});
-  } else if (parseSave(command, &parsed) || parseCropCenter(command, &parsed) ||
-             parseWindowCapture(command, &parsed)) {
+  } else if (parseSave(command, &parsed) || parseCropCenter(command, &parsed)) {
     // The helper has already produced a typed request.
+  } else if (parseWindowCapture(command, &parsed)) {
+    if (endsWith(command, L"并复制")) {
+      follow_up = makeActionRequest(CopyRequest{ResultSelection::current()});
+      has_follow_up = true;
+    } else if (endsWith(command, L"并钉图")) {
+      follow_up = makeActionRequest(PinRequest{ResultSelection::current()});
+      has_follow_up = true;
+    }
   } else {
     return false;
   }
 
-  *out = std::move(parsed);
+  CommandPlan plan;
+  plan.actions.push_back(std::move(parsed));
+  if (has_follow_up) plan.actions.push_back(std::move(follow_up));
+  *out = std::move(plan);
   return true;
 }
 

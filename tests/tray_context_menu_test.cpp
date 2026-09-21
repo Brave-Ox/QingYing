@@ -23,8 +23,11 @@ TEST(TrayContextMenuTest, CaptureAndSettingsAppearBeforeSystemSwitches)
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuCaptureCommandId), L"开始截图");
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuSettingsCommandId), L"设置...");
 
-  const std::array<UINT, 5> expected{
+  EXPECT_STREQ(TrayMenuCommandText, L"口令...");
+  EXPECT_STREQ(trayMenuLabelForId(TrayMenuCommandCommandId), L"口令...");
+  const std::array<UINT, 6> expected{
       TrayMenuCaptureCommandId,
+      TrayMenuCommandCommandId,
       TrayMenuSettingsCommandId,
       TrayMenuAutostartCommandId,
       TrayMenuAutomationCommandId,
@@ -34,19 +37,23 @@ TEST(TrayContextMenuTest, CaptureAndSettingsAppearBeforeSystemSwitches)
             L"开始截图\tCtrl + Shift + Q");
 }
 
-TEST(TrayControllerTest, DispatchesCaptureAndSettingsCommandsToCallbacks)
+TEST(TrayControllerTest, DispatchesCaptureCommandAndSettingsCommandsToCallbacks)
 {
   TrayController tray;
   ASSERT_TRUE(tray.create(GetModuleHandleW(nullptr)));
   int capture_requests = 0;
   int settings_requests = 0;
+  int command_requests = 0;
   tray.setBeginCaptureCallback([&capture_requests]() { ++capture_requests; });
   tray.setSettingsCallback([&settings_requests]() { ++settings_requests; });
+  tray.setCommandCallback([&command_requests]() { ++command_requests; });
 
   SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuCaptureCommandId, 0);
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuCommandCommandId, 0);
   SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuSettingsCommandId, 0);
 
   EXPECT_EQ(capture_requests, 1);
+  EXPECT_EQ(command_requests, 1);
   EXPECT_EQ(settings_requests, 1);
   tray.destroy();
 }

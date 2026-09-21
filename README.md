@@ -13,7 +13,7 @@ Windows 原生轻量截图工具（C++17 + Win32，以 EXE 为主并带受控长
 - 已接入：选区“编辑”进入就地标注，支持矩形、椭圆、箭头、画笔、文字、马赛克、撤销；确认后自动复制，并恢复同一选区的结果操作条，可继续保存、钉图或再次编辑。
 - 已调整：选区条抽为 `SelectionToolbar`，交互阶段由 `OverlayPhase` 显式管理；底层仍复用白色圆角 `ModernToolbar`、GDI+、SVG 路径图标和中文 Tooltip；Selection / Annotation Overlay 已改为非模态窗口。
 - 已接入：记事本、文件资源管理器和 Chromium 浏览器通用长截图 profile，支持固定选区滚动拼接、实时预览、暂停 / 继续、停止和失败清理；Chrome / Edge / Brave 仍需真实窗口验收。
-- 待实现：F8 本地口令、F9 MCP；`CaptureWindow` 与 `CropCenter` 仍为桩。F3 仍需重做按钮和真实窗口 / DPI 人工验收。
+- 已接入：F8 本地口令窗口，支持 `Ctrl+Alt+K` 或托盘“口令…”入口；可执行窗口截图、中心裁剪、复制、钉图、状态和带路径保存，窗口截图可串接“并复制 / 并钉图”。F9 MCP 仍需真实安装包与客户端验收；F3 仍需真实窗口 / DPI 人工验收。
 - 待验收：Chromium 浏览器、资源管理器、双屏 / 混合 DPI、Pin 和长截图的真实人工闭环。
 
 ## 文档
@@ -92,7 +92,7 @@ src/annotate        标注文档、引擎、渲染器和就地编辑 Overlay
 src/pin             多钉图窗口与捕获排除
 src/longshot        通用长截图引擎、profile registry、插件 host 与 Chromium / Explorer / Notepad 适配
 src/export          剪贴板与 WIC PNG
-src/command         本地口令桩，F8 待实现
+src/command         本地口令解析与 Action 计划
 src/mcp             MCP Bridge 桩，F9 待实现
 tests/              GoogleTest（当前 382 个用例，4 个环境相关 BitBlt 失败）
 docs/               架构、进度、分工与整改文档
