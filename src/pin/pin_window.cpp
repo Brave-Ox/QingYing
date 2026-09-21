@@ -495,6 +495,16 @@ LRESULT CALLBACK PinWindow::windowProc(HWND hwnd, UINT message,
         return TRUE;
       }
       break;
+    case WM_DPICHANGED:
+      if (const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+          suggested != nullptr) {
+        SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                     suggested->right - suggested->left,
+                     suggested->bottom - suggested->top,
+                     SWP_NOACTIVATE | SWP_NOZORDER);
+        return 0;
+      }
+      break;
     case WM_MOUSEWHEEL:
       if (self != nullptr) {
         self->handleMouseWheel(GET_WHEEL_DELTA_WPARAM(wparam));
