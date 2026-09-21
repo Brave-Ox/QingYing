@@ -408,6 +408,13 @@ void layoutEditorChrome(HWND hwnd, AnnotationEditorHost* data)
       {x, y, x + AnnotationEditorButtonWidth, y + AnnotationEditorButtonHeight}};
   ++item_index;
   x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
+  data->chrome().m_toolbar_items[static_cast<std::size_t>(item_index)] = {
+      kButtonRedoId,
+      ToolbarIconKind::Redo,
+      false,
+      {x, y, x + AnnotationEditorButtonWidth, y + AnnotationEditorButtonHeight}};
+  ++item_index;
+  x += AnnotationEditorButtonWidth + AnnotationEditorButtonGap;
   data->chrome().m_toolbar_divider_x[1] =
       x - AnnotationEditorButtonGap + AnnotationEditorDividerGap / 2;
   x += AnnotationEditorDividerGap - AnnotationEditorButtonGap;
@@ -1795,11 +1802,15 @@ void paintEditorToolbar(HDC hdc,
       default:
         break;
     }
+    const bool enabled =
+        item.id != kButtonUndoId || snapshot.document.canUndo();
+    const bool redo_enabled =
+        item.id != kButtonRedoId || snapshot.document.canRedo();
     const ToolbarItemModel toolbar_item{
         item.icon,
         i == snapshot.toolbar_hover,
         selected,
-        true,
+        enabled && redo_enabled,
         item.accent,
         item.id == kButtonGeometryId};
     drawToolbarItem(hdc, item.rect, toolbar_item);
@@ -2111,6 +2122,15 @@ void handleToolCommand(AnnotationEditorHost* data, UINT id)
       resetTextGesture(data);
       clearTextSelection(data);
       if (data->core().m_controller.undo(data->core().m_session.engine()))
+      {
+        invalidateImageArea(data);
+      }
+      break;
+    case kButtonRedoId:
+      cancelInlineText(data);
+      resetTextGesture(data);
+      clearTextSelection(data);
+      if (data->core().m_session.engine().redo())
       {
         invalidateImageArea(data);
       }

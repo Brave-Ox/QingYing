@@ -41,6 +41,8 @@ const wchar_t* toolbarIconLabel(ToolbarIconKind kind)
       return L"\x6587\x5B57";
     case ToolbarIconKind::Undo:
       return L"\x64A4\x9500";
+    case ToolbarIconKind::Redo:
+      return L"\x91CD\x505A";
     case ToolbarIconKind::Confirm:
       return L"\x5B8C\x6210";
     case ToolbarIconKind::Cancel:

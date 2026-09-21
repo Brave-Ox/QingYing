@@ -293,9 +293,39 @@ TEST(AnnotationOverlayTest, GeometryStyleDefaultsToHollowSolidLine)
 TEST(AnnotationOverlayTest, MainToolbarMergesRectangleAndEllipse)
 {
   EXPECT_EQ(AnnotationEditorMoveButtonCount, 1);
-  EXPECT_EQ(AnnotationEditorToolButtonCount, 6);
+  EXPECT_EQ(AnnotationEditorToolButtonCount, 7);
   EXPECT_EQ(AnnotationEditorToolbarControlCount,
             AnnotationEditorMoveButtonCount + AnnotationEditorButtonCount);
+}
+
+TEST(AnnotationOverlayTest, MainToolbarExposesRedoNextToUndo)
+{
+  AnnotationEditorHost host;
+  ASSERT_TRUE(host.core().m_session.begin(makeStripedCanvas()));
+
+  layoutEditorChrome(GetDesktopWindow(), &host);
+
+  bool found_undo = false;
+  bool found_redo = false;
+  RECT undo_rect{};
+  RECT redo_rect{};
+  for (const EditorToolbarItem& item : host.chrome().m_toolbar_items)
+  {
+    if (item.id == kButtonUndoId)
+    {
+      found_undo = true;
+      undo_rect = item.rect;
+    }
+    if (item.id == kButtonRedoId)
+    {
+      found_redo = true;
+      redo_rect = item.rect;
+      EXPECT_EQ(item.icon, ToolbarIconKind::Redo);
+    }
+  }
+  EXPECT_TRUE(found_undo);
+  EXPECT_TRUE(found_redo);
+  EXPECT_EQ(undo_rect.right + AnnotationEditorButtonGap, redo_rect.left);
 }
 
 TEST(AnnotationOverlayTest, ConfirmButtonHasNoPersistentHighlight)

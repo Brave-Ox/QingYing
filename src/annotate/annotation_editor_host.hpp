@@ -35,6 +35,7 @@ inline constexpr UINT kButtonPenId = 6;
 inline constexpr UINT kButtonTextId = 7;
 inline constexpr UINT kButtonUndoId = 8;
 inline constexpr UINT kButtonMosaicId = 9;
+inline constexpr UINT kButtonRedoId = 11;
 inline constexpr UINT kButtonGeometryId = 23;
 inline constexpr UINT kButtonMoveId = 24;
 inline constexpr UINT kInlineEditId = 10;
@@ -69,7 +70,7 @@ inline constexpr int kTextMinHitHeightPx = 20;
 inline constexpr std::size_t kInvalidAnnotationIndex =
     static_cast<std::size_t>(-1);
 
-inline constexpr int kToolbarIconItemCount = 9;
+inline constexpr int kToolbarIconItemCount = 10;
 inline constexpr int kGeometryShapeCount = 2;
 inline constexpr int kComboTooltipSlot = kToolbarIconItemCount;
 inline constexpr int kShapeTooltipSlot = kComboTooltipSlot + 1;

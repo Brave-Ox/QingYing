@@ -78,6 +78,7 @@ TEST(ModernToolbarTest, IconLabelsAreChineseTooltips)
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LineDashed), L"\x865A\x7EBF");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::LineDotted), L"\x70B9\x7EBF");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Undo), L"\x64A4\x9500");
+  EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Redo), L"\x91CD\x505A");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Confirm), L"\x5B8C\x6210");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Cancel), L"\x53D6\x6D88");
   EXPECT_STREQ(toolbarIconLabel(ToolbarIconKind::Move), L"\x79FB\x52A8");

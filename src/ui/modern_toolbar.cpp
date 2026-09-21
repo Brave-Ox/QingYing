@@ -593,6 +593,15 @@ void drawLegacyUndoIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen, float cx
   graphics.DrawLine(&pen, cx - s + 1.0f, cy - 0.5f, cx - 1.0f, cy + 3.5f);
 }
 
+void drawLegacyRedoIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen, float cx,
+                        float cy, float s)
+{
+  graphics.DrawArc(&pen, cx - s + 1.0f, cy - s + 2.0f, 2.0f * s - 2.0f,
+                   2.0f * s - 3.0f, -90.0f, 230.0f);
+  graphics.DrawLine(&pen, cx + s - 1.0f, cy - 0.5f, cx + 2.0f, cy - s + 3.0f);
+  graphics.DrawLine(&pen, cx + s - 1.0f, cy - 0.5f, cx + 1.0f, cy + 3.5f);
+}
+
 void drawLegacyMosaicIcon(Gdiplus::Graphics& graphics, Gdiplus::Pen& pen,
                           float cx, float cy, float s)
 {
@@ -1437,6 +1446,9 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
       {
         drawLegacyUndoIcon(graphics, pen, cx, cy, s);
       }
+      break;
+    case ToolbarIconKind::Redo:
+      drawLegacyRedoIcon(graphics, pen, cx, cy, s);
       break;
     case ToolbarIconKind::Confirm:
       graphics.DrawLine(&pen, cx - s + 2.0f, cy + 0.5f, cx - 0.5f,

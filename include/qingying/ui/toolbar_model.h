@@ -24,6 +24,7 @@ enum class ToolbarIconKind
   Text,
   StrokeWidth,
   Undo,
+  Redo,
   Confirm,
   Cancel,
   Move,
