@@ -64,6 +64,18 @@ bool SmartRegionDiagnosticTrace::recordHoverMotion(
   return true;
 }
 
+bool SmartRegionDiagnosticTrace::recordBrowserShellAtlas(
+    bool hit, bool miss, BrowserShellAtlasInvalidReason invalid_reason,
+    std::uint64_t hit_test_ms, std::uint64_t first_frame_ms) noexcept {
+  if (!m_enabled || !m_has_latest_event) return false;
+  m_latest_event.browser_shell_atlas_hit = hit;
+  m_latest_event.browser_shell_atlas_miss = miss;
+  m_latest_event.browser_shell_atlas_invalid_reason = invalid_reason;
+  m_latest_event.browser_shell_atlas_hit_test_ms = hit_test_ms;
+  m_latest_event.browser_shell_first_frame_ms = first_frame_ms;
+  return true;
+}
+
 bool SmartRegionDiagnosticTrace::recordAsyncUiaResult(
     std::uint64_t request_id, std::uint64_t elapsed_ms,
     std::uint64_t age_ms, std::uint64_t poll_delay_ms, bool succeeded,
