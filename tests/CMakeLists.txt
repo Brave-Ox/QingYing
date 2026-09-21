@@ -278,9 +278,14 @@ if(WIN32)
 endif()
 
 # SmartRegion tests deliberately link no overlay/application targets.
-add_executable(qingying_smart_region_tests smart_region_boundary_test.cpp)
+add_executable(qingying_smart_region_tests
+  smart_region_boundary_test.cpp
+  browser_shell_atlas_test.cpp
+)
 target_link_libraries(qingying_smart_region_tests PRIVATE
   qingying_smart_region GTest::gtest GTest::gtest_main)
+target_include_directories(qingying_smart_region_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/smart_region)
 if(WIN32)
   add_custom_command(TARGET qingying_smart_region_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
