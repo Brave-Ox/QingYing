@@ -74,6 +74,7 @@ add_executable(qingying_tests
   f1_selection_integration_test.cpp
   pin_manager_test.cpp
   longshot_stitcher_test.cpp
+  visual_frame_settler_test.cpp
   longshot_engine_test.cpp
   longshot_plugin_api_test.cpp
   longshot_plugin_host_test.cpp
@@ -82,6 +83,8 @@ add_executable(qingying_tests
   browser_longshot_profile_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
+  generic_scroll_target_resolver_test.cpp
+  generic_wheel_longshot_profile_test.cpp
   window_detector_test.cpp
   window_resolver_test.cpp
   smart_region_detector_test.cpp

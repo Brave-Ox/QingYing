@@ -52,7 +52,8 @@ class ResultStore {
   ResultStore(const ResultStore&) = delete;
   ResultStore& operator=(const ResultStore&) = delete;
   ResultBudget::Reservation reserve(ResultScopeId scope, int width, int height,
-                                    bool ordinary_capture = true);
+                                    bool ordinary_capture = true,
+                                    std::uint64_t capacity_bytes = 0);
   ResultId publish(ResultScopeId scope, Image image,
                    ResultBudget::Reservation reservation,
                    ScreenPhysicalRect bounds = {});

@@ -36,7 +36,161 @@ Image makeStrip(int width, int height, int first_global_y) {
   return image;
 }
 
+Image makePeriodicStrip(int width, int height, int first_global_y,
+                        int period) {
+  Image image = makeStrip(width, height, first_global_y);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      image.pixels[static_cast<std::size_t>(y) * width + x] =
+          pixelFor(x, (first_global_y + y) % period);
+    }
+  }
+  return image;
+}
+
+Image makeFixedEdgeFrame(int width, int top_rows, int body_rows,
+                         int bottom_rows, int first_body_row,
+                         std::uint32_t top_pixel,
+                         std::uint32_t bottom_pixel) {
+  Image image;
+  image.width = width;
+  image.height = top_rows + body_rows + bottom_rows;
+  image.pixels.resize(static_cast<std::size_t>(width) * image.height);
+  for (int y = 0; y < image.height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      const std::uint32_t pixel =
+          y < top_rows
+              ? top_pixel
+              : y >= top_rows + body_rows
+                    ? bottom_pixel
+                    : pixelFor(x, first_body_row + y - top_rows);
+      image.pixels[static_cast<std::size_t>(y) * width + x] = pixel;
+    }
+  }
+  return image;
+}
+
+void expectSolidRow(const Image& image, int row, std::uint32_t pixel) {
+  for (int x = 0; x < image.width; ++x) {
+    EXPECT_EQ(image.pixels[static_cast<std::size_t>(row) * image.width + x],
+              pixel);
+  }
+}
+
+void expectBodyRow(const Image& image, int row, int global_y) {
+  for (int x = 0; x < image.width; ++x) {
+    EXPECT_EQ(image.pixels[static_cast<std::size_t>(row) * image.width + x],
+              pixelFor(x, global_y));
+  }
+}
+
+void expectSameImage(const Image& actual, const Image& expected) {
+  EXPECT_EQ(actual.width, expected.width);
+  EXPECT_EQ(actual.height, expected.height);
+  EXPECT_EQ(actual.pixels, expected.pixels);
+}
+
 }  // namespace
+
+TEST(SideExclusionPolicyTest, UsesShareXBaselineAndPreservesNarrowCenter) {
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+
+  const auto wide = resolveSideExclusion(1920, policy);
+  EXPECT_TRUE(wide.valid);
+  EXPECT_EQ(wide.left_pixels, 96);
+  EXPECT_EQ(wide.right_pixels, 96);
+  EXPECT_EQ(wide.usable_width, 1728);
+
+  const auto medium = resolveSideExclusion(100, policy);
+  EXPECT_TRUE(medium.valid);
+  EXPECT_EQ(medium.left_pixels, 33);
+  EXPECT_EQ(medium.right_pixels, 33);
+  EXPECT_EQ(medium.usable_width, 34);
+
+  const auto narrow = resolveSideExclusion(30, policy);
+  EXPECT_TRUE(narrow.valid);
+  EXPECT_EQ(narrow.left_pixels, 3);
+  EXPECT_EQ(narrow.right_pixels, 3);
+  EXPECT_EQ(narrow.usable_width, 24);
+
+  const auto smaller_than_center = resolveSideExclusion(20, policy);
+  EXPECT_TRUE(smaller_than_center.valid);
+  EXPECT_EQ(smaller_than_center.left_pixels, 0);
+  EXPECT_EQ(smaller_than_center.right_pixels, 0);
+  EXPECT_EQ(smaller_than_center.usable_width, 20);
+}
+
+TEST(SideExclusionPolicyTest, RejectsInvalidExplicitRanges) {
+  SideExclusionPolicy policy;
+  policy.left_pixels = 10;
+  policy.right_pixels = 10;
+  EXPECT_FALSE(resolveSideExclusion(20, policy).valid);
+
+  policy.left_pixels = -1;
+  policy.right_pixels = 0;
+  EXPECT_FALSE(resolveSideExclusion(20, policy).valid);
+}
+
+TEST(SideExclusionPolicyTest, RejectsInvalidAutomaticConfiguration) {
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+  policy.automatic_width_divisor = 0;
+  EXPECT_FALSE(resolveSideExclusion(100, policy).valid);
+}
+
+TEST(FixedBottomDetectionTest, FindsBoundedTexturedBottomInCentralRange) {
+  Image previous = makeStrip(120, 60, 0);
+  Image current = makeStrip(120, 60, 10);
+  for (Image* image : {&previous, &current}) {
+    for (int y = 54; y < 60; ++y) {
+      for (int x = 0; x < 120; ++x) {
+        image->pixels[static_cast<std::size_t>(y) * 120u + x] =
+            (x % 7 == 0) ? 0xFF203040u : 0xFFE0D0C0u;
+      }
+    }
+  }
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+
+  const auto evidence = detectFixedBottomEdge(
+      previous, current, resolveSideExclusion(previous.width, policy));
+
+  EXPECT_TRUE(evidence.valid);
+  EXPECT_TRUE(evidence.detected);
+  EXPECT_EQ(evidence.candidate_rows, 6);
+  EXPECT_EQ(evidence.match_per_mille, 1000);
+  EXPECT_GE(evidence.texture_per_mille, 20);
+}
+
+TEST(FixedBottomDetectionTest, RejectsFlatBlankAndUnboundedStaticAreas) {
+  SideExclusionPolicy policy;
+  policy.mode = SideExclusionMode::Automatic;
+  const auto sides = resolveSideExclusion(120, policy);
+
+  Image previous = makeStrip(120, 60, 0);
+  Image current = makeStrip(120, 60, 10);
+  for (Image* image : {&previous, &current}) {
+    for (int y = 54; y < 60; ++y) {
+      for (int x = 0; x < 120; ++x) {
+        image->pixels[static_cast<std::size_t>(y) * 120u + x] =
+            0xFFF0F0F0u;
+      }
+    }
+  }
+  const auto blank = detectFixedBottomEdge(previous, current, sides);
+  EXPECT_TRUE(blank.valid);
+  EXPECT_FALSE(blank.detected);
+  EXPECT_EQ(blank.candidate_rows, 6);
+  EXPECT_EQ(blank.texture_per_mille, 0);
+
+  const Image unchanged = makeStrip(120, 60, 0);
+  const auto unbounded =
+      detectFixedBottomEdge(unchanged, unchanged, sides);
+  EXPECT_TRUE(unbounded.valid);
+  EXPECT_FALSE(unbounded.detected);
+  EXPECT_GT(unbounded.candidate_rows, 60 / 3);
+}
 
 TEST(ImageStitcherTest, FindsLargestOverlapAndAppendsOnlyNewRows) {
   Image accumulated = makeStrip(8, 10, 0);  // rows 0..9
@@ -106,7 +260,7 @@ TEST(ImageStitcherTest, IgnoresMovingRightEdgeWhenFindingOverlap) {
   }
 
   ImageStitchOptions options;
-  options.right_edge_exclusion_pixels = 2;
+  options.side_exclusion.right_pixels = 2;
   ImageStitcher stitcher(options);
 
   int overlap = 0;
@@ -168,6 +322,353 @@ TEST(ImageStitcherTest, EmptyAccumulatedImageBecomesFirstFrame) {
   EXPECT_EQ(accumulated.width, 3);
   EXPECT_EQ(accumulated.height, 4);
   EXPECT_EQ(accumulated.pixels, next.pixels);
+}
+
+TEST(ImageStitcherEvidenceTest, ReportsUniqueMultiBandOverlapEvidence) {
+  const Image accumulated = makeStrip(36, 40, 0);
+  const Image next = makeStrip(36, 32, 12);
+  ImageStitchOptions options;
+  options.sample_step = 2;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
+  EXPECT_EQ(evidence.overlap_rows, 28);
+  EXPECT_EQ(evidence.displacement_rows, 4);
+  EXPECT_EQ(evidence.matching_candidates, 1);
+  EXPECT_EQ(evidence.best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.selected_score_per_mille, 1000);
+  EXPECT_EQ(evidence.consistent_column_bands, 3);
+  EXPECT_EQ(evidence.sampled_column_bands, 3);
+  EXPECT_EQ(evidence.consistent_row_bands, 3);
+  EXPECT_EQ(evidence.sampled_row_bands, 3);
+  EXPECT_GE(evidence.vertical_texture_per_mille, 100);
+}
+
+TEST(ImageStitcherEvidenceTest, AcceptsUniqueLowTextureCurrentCandidate) {
+  const auto make_low_texture = [](int first_global_y) {
+    Image image{24, 40,
+                std::vector<std::uint32_t>(24u * 40u, 0xFF334455u)};
+    constexpr int kMarkerGlobalY = 20;
+    if (first_global_y <= kMarkerGlobalY &&
+        kMarkerGlobalY < first_global_y + image.height) {
+      const int marker_y = kMarkerGlobalY - first_global_y;
+      for (int x = 0; x < image.width; ++x) {
+        image.pixels[static_cast<std::size_t>(marker_y) * image.width + x] =
+            pixelFor(x, kMarkerGlobalY);
+      }
+    }
+    return image;
+  };
+  Image accumulated = make_low_texture(0);
+  const Image next = make_low_texture(10);
+  ImageStitchOptions options;
+  options.sample_step = 1;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.overlap_rows, 30);
+  EXPECT_EQ(evidence.displacement_rows, 10);
+  EXPECT_FALSE(evidence.texture_sufficient);
+  EXPECT_LT(evidence.vertical_texture_per_mille, 100);
+  OverlapEvidence append_evidence;
+  EXPECT_TRUE(stitcher.append(accumulated, next, append_evidence));
+  EXPECT_EQ(accumulated.height, 50);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     RanksAmbiguousCurrentCandidatesDeterministically) {
+  const Image accumulated = makePeriodicStrip(24, 24, 0, 4);
+  const Image next = makePeriodicStrip(24, 16, 8, 4);
+  ImageStitchOptions options;
+  options.min_overlap_rows = 4;
+  options.sample_step = 1;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
+  EXPECT_GT(evidence.matching_candidates, 1);
+  EXPECT_EQ(evidence.best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.second_best_score_per_mille, 1000);
+  EXPECT_EQ(evidence.score_margin_per_mille, 0);
+  EXPECT_EQ(evidence.overlap_rows, 16);
+  EXPECT_EQ(evidence.displacement_rows, 0);
+  EXPECT_FALSE(evidence.selection_used_preferred_displacement);
+}
+
+TEST(ImageStitcherEvidenceTest, ReportsButDoesNotRejectRegionInconsistency) {
+  Image accumulated = makeStrip(30, 24, 0);
+  Image next = makeStrip(30, 18, 6);
+  for (int y = 0; y < next.height; ++y) {
+    for (int x = 10; x < 20; ++x) {
+      next.pixels[static_cast<std::size_t>(y) * next.width + x] =
+          0xFF010203u;
+    }
+  }
+  ImageStitchOptions options;
+  options.sample_step = 1;
+  options.minimum_match_per_mille = 600;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::None);
+  EXPECT_FALSE(evidence.regions_consistent);
+  EXPECT_LT(evidence.consistent_column_bands,
+            evidence.sampled_column_bands);
+  EXPECT_TRUE(stitcher.append(accumulated, next));
+  EXPECT_EQ(accumulated.height, 24);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     PreferredDisplacementOnlyRanksCloseCurrentCandidates) {
+  const Image accumulated = makePeriodicStrip(24, 24, 0, 4);
+  const Image next = makePeriodicStrip(24, 16, 8, 4);
+  ImageStitchOptions options;
+  options.min_overlap_rows = 4;
+  options.sample_step = 1;
+  options.preferred_displacement_rows = 4;
+  options.has_preferred_displacement = true;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.displacement_rows, 4);
+  EXPECT_EQ(evidence.overlap_rows, 12);
+  EXPECT_TRUE(evidence.selection_used_preferred_displacement);
+}
+
+TEST(ImageStitcherEvidenceTest,
+     HistoricalDisplacementCannotCreateAMissingCurrentCandidate) {
+  const Image accumulated = makeStrip(32, 240, 0);
+  const Image next = makeStrip(32, 120, 200);
+  ImageStitchOptions options;
+  options.sample_step = 1;
+  options.preferred_displacement_rows = 200;
+  options.has_preferred_displacement = true;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_TRUE(evidence.accepted());
+  EXPECT_EQ(evidence.displacement_rows, 80);
+  EXPECT_EQ(evidence.overlap_rows, 40);
+
+  const Image no_overlap{
+      32, 120, std::vector<std::uint32_t>(32u * 120u, 0xFFDEADBEu)};
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, no_overlap, evidence));
+  EXPECT_FALSE(evidence.accepted());
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::NoCandidate);
+}
+
+TEST(ImageStitcherEvidenceTest, RejectsDisplacementOutsideConfiguredRange) {
+  Image accumulated = makeStrip(32, 40, 0);
+  const Image original = accumulated;
+  const Image next = makeStrip(32, 40, 10);
+  ImageStitchOptions options;
+  options.maximum_displacement_rows = 5;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_EQ(evidence.reject_reason,
+            OverlapRejectReason::DisplacementOutOfRange);
+  EXPECT_FALSE(stitcher.append(accumulated, next));
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherEvidenceTest, ReportsTrueNoOverlapWithoutChangingPixels) {
+  Image accumulated = makeStrip(24, 24, 0);
+  const Image original = accumulated;
+  const Image next = makeStrip(24, 18, 100);
+  ImageStitchOptions options;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.findOverlap(accumulated, next, evidence));
+  EXPECT_EQ(evidence.reject_reason, OverlapRejectReason::NoCandidate);
+  EXPECT_EQ(evidence.overlap_rows, 0);
+  EXPECT_FALSE(stitcher.append(accumulated, next));
+  expectSameImage(accumulated, original);
+}
+
+TEST(ImageStitcherFixedEdgeTest,
+     KeepsFirstTopContinuousBodyAndLatestBottomAcrossFrames) {
+  constexpr int kWidth = 24;
+  constexpr int kTop = 2;
+  constexpr int kBody = 12;
+  constexpr int kBottom = 2;
+  constexpr std::uint32_t kFirstTop = 0xFF101010u;
+  constexpr std::uint32_t kSecondTop = 0xFF202020u;
+  constexpr std::uint32_t kThirdTop = 0xFF303030u;
+  constexpr std::uint32_t kFirstBottom = 0xFF404040u;
+  constexpr std::uint32_t kSecondBottom = 0xFF505050u;
+  constexpr std::uint32_t kThirdBottom = 0xFF606060u;
+  Image accumulated = makeFixedEdgeFrame(
+      kWidth, kTop, kBody, kBottom, 0, kFirstTop, kFirstBottom);
+  const Image second = makeFixedEdgeFrame(
+      kWidth, kTop, kBody, kBottom, 5, kSecondTop, kSecondBottom);
+  const Image third = makeFixedEdgeFrame(
+      kWidth, kTop, kBody, kBottom, 10, kThirdTop, kThirdBottom);
+  ImageStitchOptions options;
+  options.fixed_top_rows = kTop;
+  options.fixed_bottom_rows = kBottom;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+
+  OverlapEvidence second_evidence;
+  ASSERT_TRUE(stitcher.append(accumulated, second, second_evidence));
+  EXPECT_EQ(second_evidence.overlap_rows, 7);
+  EXPECT_EQ(second_evidence.displacement_rows, 5);
+  EXPECT_EQ(second_evidence.accumulated_keep_rows, 14);
+  EXPECT_EQ(second_evidence.next_append_start_row, 9);
+  EXPECT_EQ(second_evidence.next_append_rows, 7);
+  EXPECT_EQ(second_evidence.output_rows, 21);
+  EXPECT_EQ(second_evidence.consistent_row_bands, 3);
+  EXPECT_EQ(second_evidence.sampled_row_bands, 3);
+
+  OverlapEvidence third_evidence;
+  ASSERT_TRUE(stitcher.append(accumulated, third, third_evidence));
+  EXPECT_EQ(third_evidence.output_rows, 26);
+  ASSERT_EQ(accumulated.height, 26);
+  for (int row = 0; row < kTop; ++row) {
+    expectSolidRow(accumulated, row, kFirstTop);
+  }
+  for (int global_y = 0; global_y <= 21; ++global_y) {
+    expectBodyRow(accumulated, kTop + global_y, global_y);
+  }
+  for (int row = accumulated.height - kBottom;
+       row < accumulated.height; ++row) {
+    expectSolidRow(accumulated, row, kThirdBottom);
+  }
+}
+
+TEST(ImageStitcherFixedEdgeTest,
+     SideExclusionsAffectMatchingButPreserveSelectedWidth) {
+  Image accumulated = makeStrip(30, 24, 0);
+  Image next = makeStrip(30, 20, 10);
+  for (int y = 0; y < next.height; ++y) {
+    next.pixels[static_cast<std::size_t>(y) * next.width] = 0xFFABCDEFu;
+    next.pixels[static_cast<std::size_t>(y) * next.width + 29] =
+        0xFF123456u;
+  }
+  ImageStitchOptions options;
+  options.side_exclusion.left_pixels = 1;
+  options.side_exclusion.right_pixels = 1;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+
+  ASSERT_TRUE(stitcher.append(accumulated, next));
+  ASSERT_EQ(accumulated.width, 30);
+  ASSERT_EQ(accumulated.height, 30);
+  EXPECT_EQ(accumulated.pixels[24u * 30u], 0xFFABCDEFu);
+  EXPECT_EQ(accumulated.pixels[24u * 30u + 29u], 0xFF123456u);
+}
+
+TEST(ImageStitcherFixedEdgeTest,
+     AutomaticSideExclusionsIgnoreBothEdgesAndReportEffectiveRange) {
+  constexpr int kWidth = 120;
+  constexpr int kHeight = 40;
+  constexpr int kDisplacement = 10;
+  constexpr int kExcludedSide = 40;
+  Image accumulated = makeStrip(kWidth, kHeight, 0);
+  Image next = makeStrip(kWidth, kHeight, kDisplacement);
+  for (int y = 0; y < next.height; ++y) {
+    for (int x = 0; x < next.width; ++x) {
+      if (x < kExcludedSide || x >= next.width - kExcludedSide) {
+        next.pixels[static_cast<std::size_t>(y) * next.width + x] =
+            x < kExcludedSide ? 0xFFABCDEFu : 0xFF123456u;
+      }
+    }
+  }
+  ImageStitchOptions options;
+  options.side_exclusion.mode = SideExclusionMode::Automatic;
+  options.require_overlap = true;
+  ImageStitcher stitcher(options);
+  OverlapEvidence evidence;
+
+  ASSERT_TRUE(stitcher.append(accumulated, next, evidence));
+  EXPECT_EQ(evidence.overlap_rows, kHeight - kDisplacement);
+  EXPECT_EQ(evidence.excluded_left_pixels, kExcludedSide);
+  EXPECT_EQ(evidence.excluded_right_pixels, kExcludedSide);
+  EXPECT_EQ(evidence.usable_match_width, 40);
+  ASSERT_EQ(accumulated.width, kWidth);
+  ASSERT_EQ(accumulated.height, kHeight + kDisplacement);
+  EXPECT_EQ(accumulated.pixels[static_cast<std::size_t>(kHeight) * kWidth],
+            0xFFABCDEFu);
+  EXPECT_EQ(accumulated.pixels[
+                static_cast<std::size_t>(kHeight) * kWidth + kWidth - 1],
+            0xFF123456u);
+}
+
+TEST(ImageStitcherFixedEdgeTest,
+     AutomaticSideExclusionsKeepLegacySeamWithoutEdgeInterference) {
+  const Image first = makeStrip(120, 40, 0);
+  const Image next = makeStrip(120, 40, 10);
+  Image explicit_output = first;
+  Image automatic_output = first;
+  ImageStitchOptions explicit_options;
+  explicit_options.require_overlap = true;
+  ImageStitchOptions automatic_options = explicit_options;
+  automatic_options.side_exclusion.mode = SideExclusionMode::Automatic;
+  ImageStitcher explicit_stitcher(explicit_options);
+  ImageStitcher automatic_stitcher(automatic_options);
+  OverlapEvidence explicit_evidence;
+  OverlapEvidence automatic_evidence;
+
+  ASSERT_TRUE(explicit_stitcher.append(explicit_output, next,
+                                       explicit_evidence));
+  ASSERT_TRUE(automatic_stitcher.append(automatic_output, next,
+                                        automatic_evidence));
+  EXPECT_EQ(automatic_evidence.overlap_rows, explicit_evidence.overlap_rows);
+  EXPECT_EQ(automatic_evidence.output_rows, explicit_evidence.output_rows);
+  expectSameImage(automatic_output, explicit_output);
+}
+
+TEST(ImageStitcherFixedEdgeTest,
+     InvalidOrUnverifiedEdgesAreRejectedWithoutMutation) {
+  for (int mode = 0; mode < 2; ++mode) {
+    SCOPED_TRACE(mode);
+    Image accumulated = makeFixedEdgeFrame(
+        20, 2, 12, 2, 0, 0xFF101010u, 0xFF202020u);
+    const Image original = accumulated;
+    const Image next = mode == 0
+                           ? makeFixedEdgeFrame(
+                                 20, 2, 12, 2, 100, 0xFF101010u,
+                                 0xFF303030u)
+                           : makeFixedEdgeFrame(
+                                 20, 2, 12, 2, 4, 0xFF101010u,
+                                 0xFF303030u);
+    ImageStitchOptions options;
+    options.fixed_top_rows = mode == 0 ? 2 : 9;
+    options.fixed_bottom_rows = mode == 0 ? 2 : 7;
+    options.require_overlap = false;
+    ImageStitcher stitcher(options);
+    OverlapEvidence evidence;
+
+    EXPECT_FALSE(stitcher.append(accumulated, next, evidence));
+    EXPECT_EQ(evidence.reject_reason,
+              mode == 0 ? OverlapRejectReason::NoCandidate
+                        : OverlapRejectReason::InvalidEdgeExclusion);
+    expectSameImage(accumulated, original);
+  }
 }
 
 }  // namespace qingying

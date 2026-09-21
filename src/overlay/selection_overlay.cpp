@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <strsafe.h>
 #include <utility>
@@ -60,6 +61,7 @@ struct OverlayWindowData {
   std::array<int, kMaximumOverlayHotkeys> registered_hotkey_ids{};
   std::size_t registered_hotkey_count{0};
   HWND overlay{nullptr};
+  std::atomic<std::uint64_t>* longshot_session{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
   OverlayPhase phase{OverlayPhase::Sniffing};
@@ -106,6 +108,8 @@ struct OverlayWindowData {
   std::shared_ptr<const Image> background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
   SelectionAction longshot_pending_action{SelectionAction::None};
+  LongShotRecoveryState longshot_recovery;
+  LongShotResultNotice longshot_notice{LongShotResultNotice::None};
   bool capture_passthrough{false};
   bool selection_locked{false};
   Image longshot_preview;
@@ -428,12 +432,13 @@ void releaseImagePayload(OverlayWindowData* data) noexcept {
 
 void refreshToolbar(OverlayWindowData* data) {
   if (data != nullptr) {
-    data->toolbar.update(data->phase);
+    data->toolbar.update(data->phase, data->longshot_recovery,
+                         data->longshot_notice);
   }
 }
 
 void requestLongShotStop(OverlayWindowData* data) {
-  if (data == nullptr || !overlayPhaseIsLongShot(data->phase) ||
+  if (data == nullptr || !overlayPhaseIsLongShotCaptureActive(data->phase) ||
       data->phase == OverlayPhase::LongShotFinishing) {
     return;
   }
@@ -444,6 +449,54 @@ void requestLongShotStop(OverlayWindowData* data) {
   refreshToolbar(data);
   if (data->longshot_control_callback) {
     data->longshot_control_callback(LongShotControl::Stop);
+  }
+}
+
+void requestLongShotRecoveryAction(OverlayWindowData* data,
+                                   LongShotControl control) {
+  if (data == nullptr || data->overlay == nullptr ||
+      (data->phase != OverlayPhase::LongShotRecoverable &&
+       data->phase != OverlayPhase::LongShotResultPending)) {
+    return;
+  }
+
+  if (control == LongShotControl::Retry) {
+    if (!transitionOverlayPhase(data->phase,
+                                OverlayPhase::LongShotRunning)) {
+      return;
+    }
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
+    data->longshot_preview = Image{};
+    data->capture_passthrough = true;
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::AdjustSelection) {
+    if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+      return;
+    }
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
+    data->longshot_preview = Image{};
+    data->capture_passthrough = false;
+    data->selection_locked = false;
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::KeepFirstFrame ||
+             control == LongShotControl::AcceptPartialResult) {
+    if (!transitionOverlayPhase(data->phase,
+                                OverlayPhase::LongShotFinishing)) {
+      return;
+    }
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::Cancel) {
+    data->action = SelectionAction::None;
+    PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+  }
+
+  if (data->longshot_control_callback) {
+    data->longshot_control_callback(control);
   }
 }
 
@@ -475,6 +528,8 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     }
     data->action = SelectionAction::LongShot;
     data->longshot_pending_action = SelectionAction::None;
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
     clearHover(data);
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
@@ -525,6 +580,22 @@ void handleToolbarCommand(OverlayWindowData* data,
     case SelectionToolbarCommand::StopLongShot:
       requestLongShotStop(data);
       break;
+    case SelectionToolbarCommand::RetryLongShot:
+      requestLongShotRecoveryAction(data, LongShotControl::Retry);
+      break;
+    case SelectionToolbarCommand::AdjustLongShotSelection:
+      requestLongShotRecoveryAction(data, LongShotControl::AdjustSelection);
+      break;
+    case SelectionToolbarCommand::KeepLongShotFrame:
+      requestLongShotRecoveryAction(data, LongShotControl::KeepFirstFrame);
+      break;
+    case SelectionToolbarCommand::AcceptLongShotPartial:
+      requestLongShotRecoveryAction(data,
+                                    LongShotControl::AcceptPartialResult);
+      break;
+    case SelectionToolbarCommand::CancelLongShot:
+      requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+      break;
     case SelectionToolbarCommand::Cancel:
       data->controller.cancel();
       data->action = SelectionAction::None;
@@ -574,7 +645,8 @@ void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
   }
 
   const bool selection_editable =
-      overlayPhaseHasSelection(data->phase) && !data->selection_locked;
+      overlayPhaseHasSelection(data->phase) &&
+      !overlayPhaseIsLongShot(data->phase) && !data->selection_locked;
   SelectionHandle handle = SelectionHandle::None;
   if (data->drag == DragKind::Resize || data->drag == DragKind::Move) {
     handle = data->active_handle;
@@ -1104,7 +1176,7 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
       overlay, placement, data->phase,
       [data](SelectionToolbarCommand command) {
         handleToolbarCommand(data, command);
-      });
+      }, data->longshot_recovery, data->longshot_notice);
 }
 
 // Re-render the layered-window frame from the current interaction state.
@@ -1117,7 +1189,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
       selection, data->hover_rect, data->background ? *data->background : emptyBackground(), data->longshot_preview,
       data->phase,
       overlayPhaseHasSelection(data->phase) && !selection.empty() &&
-          !data->selection_locked,
+          !overlayPhaseIsLongShot(data->phase) && !data->selection_locked,
       data->handle_radius, data->drag == DragKind::None && data->has_hover,
       data->capture_passthrough);
   const bool diagnostics_enabled = data->smart_region_diagnostics.enabled() &&
@@ -1194,6 +1266,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
             data->message_channel->take<SelectionOverlayLongShotPreviewMessage>(
                 static_cast<UiMessageToken>(lparam));
         if (message.has_value()) {
+          if (!data->longshot_session || message->session_id !=
+              data->longshot_session->load()) return 0;
           if (std::chrono::steady_clock::now() - message->created_at > std::chrono::seconds{2}) return 0;
           data->longshot_preview = std::move(message->image);
           updateOverlay(hwnd, data);
@@ -1210,18 +1284,36 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (data != nullptr) {
         const bool success = message.has_value() && message->success;
+        const bool recoverable = message.has_value() && message->recoverable;
         const SelectionAction pending_action = data->longshot_pending_action;
         const bool run_pending_action =
             success && pending_action != SelectionAction::None;
-        if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+        OverlayPhase completed_phase = OverlayPhase::Selected;
+        if (recoverable) {
+          completed_phase = message->recovery.hasResult()
+                                ? OverlayPhase::LongShotResultPending
+                                : OverlayPhase::LongShotRecoverable;
+        }
+        if (!transitionOverlayPhase(data->phase, completed_phase)) {
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
         data->capture_passthrough = false;
         data->longshot_pending_action = SelectionAction::None;
+        if (recoverable) {
+          data->longshot_recovery = message->recovery;
+          data->longshot_notice = LongShotResultNotice::None;
+          refreshToolbar(data);
+          updateOverlay(hwnd, data);
+          return 0;
+        }
+        data->longshot_recovery = {};
+        data->longshot_notice = message.has_value()
+                                    ? message->notice
+                                    : LongShotResultNotice::None;
         if (!success) {
-          // Failure dialogs are shown by Application only after this topmost
-          // fullscreen window has gone away.
+          // Non-recoverable compatibility behavior: close without trying to
+          // present a dialog above the topmost fullscreen overlay.
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
@@ -1496,7 +1588,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_RBUTTONDOWN: {
       if (data != nullptr) {
-        if (overlayPhaseIsLongShot(data->phase)) {
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending) {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase)) {
           requestLongShotStop(data);
           return 0;
         }
@@ -1542,7 +1639,13 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (wparam == kEscapeHotkeyId)
       {
-        if (overlayPhaseIsLongShot(data->phase))
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending)
+        {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase))
         {
           requestLongShotStop(data);
           return 0;
@@ -1558,7 +1661,13 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     {
       if (data != nullptr && wparam == VK_ESCAPE)
       {
-        if (overlayPhaseIsLongShot(data->phase))
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending)
+        {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase))
         {
           requestLongShotStop(data);
           return 0;
@@ -1648,6 +1757,8 @@ struct SelectionOverlay::Impl {
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<UiMessageToken> preview_token{0};
+  std::atomic<std::uint64_t> longshot_session{0};
+  std::mutex preview_mutex;
   std::atomic<bool> accepting_messages{false};
 };
 
@@ -1709,6 +1820,7 @@ bool SelectionOverlay::show(
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->preview_token = &impl_->preview_token;
+  data->longshot_session = &impl_->longshot_session;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
   if (!background.classifyMemory(ImageMemoryKind::VisualCache)) background = Image{};
   data->background = std::make_shared<const Image>(std::move(background));  // 空背景降级到纯遮罩。
@@ -1797,13 +1909,29 @@ bool SelectionOverlay::show(
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
+  return postLongShotPreview(image, impl_->longshot_session.load());
+}
+
+void SelectionOverlay::setLongShotSession(std::uint64_t session_id) noexcept {
+  std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+  impl_->longshot_session.store(session_id);
+  const auto previous = impl_->preview_token.exchange(0);
+  if (previous) impl_->messages.discard(previous);
+}
+
+bool SelectionOverlay::postLongShotPreview(const Image& image,
+                                           std::uint64_t session_id) {
+  if (session_id != impl_->longshot_session.load()) return false;
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
   try {
     SelectionOverlayLongShotPreviewMessage message;
+    message.session_id = session_id;
     message.image = OverlayRenderer::makeLongShotPreviewImage(image);
+    std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+    if (session_id != impl_->longshot_session.load()) return false;
     const auto token = impl_->messages.push(std::move(message));
     if (!token.has_value()) {
       return false;
@@ -1823,13 +1951,36 @@ bool SelectionOverlay::postLongShotPreview(const Image& image) {
   return true;
 }
 
-bool SelectionOverlay::postLongShotFinished(bool success) {
+bool SelectionOverlay::postLongShotFinished(bool success,
+                                            LongShotResultNotice notice) {
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
   SelectionOverlayLongShotFinishedMessage message;
   message.success = success;
+  message.notice = notice;
+  const auto token = impl_->messages.push(std::move(message));
+  if (!token.has_value()) {
+    return false;
+  }
+  if (!PostMessageW(hwnd, WM_QINGYING_SELECTION_LONGSHOT_FINISHED, 0,
+                    static_cast<LPARAM>(*token))) {
+    impl_->messages.discard(*token);
+    return false;
+  }
+  return true;
+}
+
+bool SelectionOverlay::postLongShotRecoverable(
+    LongShotRecoveryState recovery) {
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  if (hwnd == nullptr || !impl_->accepting_messages.load()) {
+    return false;
+  }
+  SelectionOverlayLongShotFinishedMessage message;
+  message.recoverable = true;
+  message.recovery = recovery;
   const auto token = impl_->messages.push(std::move(message));
   if (!token.has_value()) {
     return false;

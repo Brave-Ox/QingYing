@@ -5,6 +5,7 @@
 #include "qingying/longshot/longshot_profile.hpp"
 #include "qingying/longshot/longshot_profile_registry.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -14,13 +15,34 @@ namespace qingying {
 
 class CaptureEngine;
 
-// 一次长截图的安全限制。初始帧对已经占用两帧，因此 max_frames 至少为 2。
+// Explicit viewport rows known to be fixed across scrolls. They are never
+// inferred from one frame pair: zero disables fixed-edge output replacement.
+struct LongShotFixedEdgeExclusions {
+  int top_rows{0};
+  int bottom_rows{0};
+
+  bool valid() const noexcept { return top_rows >= 0 && bottom_rows >= 0; }
+  bool enabled() const noexcept { return top_rows > 0 || bottom_rows > 0; }
+};
+
+// 一次长截图的安全限制。帧数和滚动输入次数不再作为引擎停止条件，由时长、
+// 输出高度、重采、稳定轮询和工作内存预算共同约束。两个旧字段暂时保留，
+// 仅用于兼容已有设置快照和持久化格式。
 struct LongShotLimits {
   int max_frames{30};
   int max_output_height{30000};
+  int max_input_attempts{64};
+  int max_frame_recaptures{5};
+  int max_scroll_settle_polls{20};
+  std::uint64_t max_working_bytes{512ULL * 1024 * 1024};
+  std::chrono::milliseconds max_duration{std::chrono::minutes{3}};
+  LongShotFixedEdgeExclusions fixed_edges{};
 
   bool valid() const {
-    return max_frames >= 2 && max_output_height > 0;
+    return max_output_height > 0 && max_frame_recaptures >= 0 &&
+           max_scroll_settle_polls >= 2 && max_working_bytes > 0 &&
+           max_duration.count() > 0 &&
+           max_duration <= std::chrono::minutes{30} && fixed_edges.valid();
   }
 };
 
@@ -58,6 +80,67 @@ enum class LongShotFailureStage : std::uint8_t {
 
 const char* longShotFailureStageName(LongShotFailureStage stage) noexcept;
 
+// 图像质量和停止原因相互独立：失败也可能留下可靠图像。
+enum class LongShotResultQuality : std::uint8_t {
+  None,
+  SingleFrame,
+  VerifiedComposite,
+};
+
+enum class LongShotStopReason : std::uint8_t {
+  NotStarted,
+  RequestRejected,
+  ReachedBottom,
+  NoProgress,
+  UserStopped,
+  LimitReached,
+  MatchFailed,
+  InputUnavailable,
+  TargetInvalid,
+  CaptureFailed,
+  StitchFailed,
+  Cancelled,
+};
+
+enum class LongShotBudgetReason : std::uint8_t {
+  None,
+  OutputHeight,
+  Duration,
+  FrameRecaptures,
+  ScrollSettlePolls,
+  WorkingMemory,
+};
+
+// 内部 C++ 完成载荷，不属于 profile DLL 的 C ABI。image 只能包含已接受的
+// 帧；accepted_frames 不计重采或拒绝的帧。input_attempts 记录滚动调用，
+// recapture_attempts 记录同一次输入后的额外采样。尺寸直接取 image，避免重复
+// 元数据。捕获循环通过此模型交付，旧 ActionResult + Image 入口继续兼容。
+struct LongShotOutcome {
+  Image image;
+  int accepted_frames{0};
+  int input_attempts{0};
+  int recapture_attempts{0};
+  int preview_publications{0};
+  std::uint64_t elapsed_ms{0};
+  std::uint64_t initial_capture_ms{0};
+  std::uint64_t max_frame_processing_ms{0};
+  std::uint64_t peak_working_bytes{0};
+  LongShotStopReason stop_reason{LongShotStopReason::NotStarted};
+  LongShotBudgetReason budget_reason{LongShotBudgetReason::None};
+  std::string strategy;
+  LongShotFailureStage failure_stage{LongShotFailureStage::None};
+  ActionResult diagnostic;
+
+  // 根据有效像素载荷和接受帧数推导质量，不根据 diagnostic.ok 推断。
+  LongShotResultQuality quality() const noexcept;
+  // 取消、未启动和请求被拒绝都不能交付结果，即使仍持有内部图像。
+  bool hasExportableResult() const noexcept;
+  // 只有确定到底才称为完整；无进展、主动停止和限额结束都不证明完整。
+  bool isComplete() const noexcept;
+  // 只有首帧时仍称为普通截图，不称为部分长图。
+  bool isPartial() const noexcept;
+};
+
 class LongShotEngine {
  public:
   explicit LongShotEngine(CaptureEngine& capture, LongShotLimits limits = {});
@@ -75,7 +158,8 @@ class LongShotEngine {
   // 或达到安全限制时停止。
   ActionResult captureSelection(const LongShotRequest& request, Image& out);
 
-  // 交互版本：每捕获一帧就报告当前累计图像；should_continue 返回 false
+  // 交互版本：每接受一帧就报告当前已提交的累计输出；启用固定边缘时，
+  // 预览始终包含首帧顶部和最新可靠帧底部。should_continue 返回 false
   // 时正常停止。
   ActionResult captureSelection(const LongShotRequest& request, Image& out,
                                 LongShotProgressCallback on_progress,
@@ -88,10 +172,26 @@ class LongShotEngine {
                                 LongShotContinueCallback should_continue,
                                 const LongShotLimits& limits);
 
+  // 完成载荷入口：失败时保留已验证部分；cancel() 放弃结果，继续回调
+  // 返回 false 则表示主动停止并保留。旧入口失败时仍清空输出。
+  ActionResult captureSelection(const LongShotRequest& request,
+                                LongShotOutcome& out,
+                                LongShotProgressCallback on_progress = {},
+                                LongShotContinueCallback should_continue = {});
+
+  ActionResult captureSelection(const LongShotRequest& request,
+                                LongShotOutcome& out,
+                                LongShotProgressCallback on_progress,
+                                LongShotContinueCallback should_continue,
+                                const LongShotLimits& limits);
+
   // Requests cooperative cancellation of the active profile callback. Old
   // profiles may ignore it; LongShotController still enforces its join
   // deadline and keeps the owner context alive if the callback is stuck.
   void cancel() noexcept;
+  // Wakes an in-progress bounded settle wait so pause/stop state can be
+  // observed immediately. This does not cancel the active capture.
+  void notifyControlChange() noexcept;
   std::string activeProfileName() const;
 
   // 围绕一次滚轮输入准确捕获两帧原始图像。保留这个分阶段接口，便于独立

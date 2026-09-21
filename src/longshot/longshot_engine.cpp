@@ -3,16 +3,53 @@
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/longshot/image_stitcher.hpp"
 
+#include "generic_wheel_longshot_profile.hpp"
+#include "visual_frame_settler.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
-#include <thread>
 #include <utility>
 
 namespace qingying {
+
+LongShotResultQuality LongShotOutcome::quality() const noexcept {
+  if (accepted_frames <= 0 || image.width <= 0 || image.height <= 0) {
+    return LongShotResultQuality::None;
+  }
+  const auto width = static_cast<std::size_t>(image.width);
+  const auto height = static_cast<std::size_t>(image.height);
+  if (height > std::numeric_limits<std::size_t>::max() / width ||
+      image.pixels.size() != width * height) {
+    return LongShotResultQuality::None;
+  }
+  return accepted_frames == 1 ? LongShotResultQuality::SingleFrame
+                             : LongShotResultQuality::VerifiedComposite;
+}
+
+bool LongShotOutcome::hasExportableResult() const noexcept {
+  return stop_reason != LongShotStopReason::NotStarted &&
+         stop_reason != LongShotStopReason::RequestRejected &&
+         stop_reason != LongShotStopReason::Cancelled &&
+         quality() != LongShotResultQuality::None;
+}
+
+bool LongShotOutcome::isComplete() const noexcept {
+  return hasExportableResult() &&
+         stop_reason == LongShotStopReason::ReachedBottom;
+}
+
+bool LongShotOutcome::isPartial() const noexcept {
+  return hasExportableResult() &&
+         quality() == LongShotResultQuality::VerifiedComposite &&
+         !isComplete();
+}
 
 const char* longShotFailureStageName(LongShotFailureStage stage) noexcept {
   switch (stage) {
@@ -45,12 +82,13 @@ const char* longShotFailureStageName(LongShotFailureStage stage) noexcept {
 namespace {
 
 constexpr auto kScrollSettlePollInterval = std::chrono::milliseconds(40);
-constexpr auto kScrollSettleTimeout = std::chrono::milliseconds(800);
-constexpr auto kFallbackScrollSettleDelay = std::chrono::milliseconds(250);
 constexpr auto kRenderSettleDelay = std::chrono::milliseconds(60);
 constexpr auto kFrameRetryDelay = std::chrono::milliseconds(75);
-constexpr int kFrameCaptureAttempts = 3;
 constexpr int kRequiredStableSamples = 2;
+
+using LongShotWaitCallback =
+    std::function<bool(std::chrono::milliseconds,
+                       const LongShotContinueCallback&)>;
 
 ActionResult makeFailure(int error_code, const char* message,
                          LongShotFailureStage stage =
@@ -74,6 +112,56 @@ ActionResult makeSuccess() {
   return result;
 }
 
+std::uint64_t elapsedMilliseconds(
+    std::chrono::steady_clock::time_point started_at) noexcept {
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - started_at);
+  return elapsed.count() > 0 ? static_cast<std::uint64_t>(elapsed.count()) : 0;
+}
+
+bool checkedImageBytes(int width, int height, std::uint64_t& bytes) noexcept {
+  bytes = 0;
+  if (width <= 0 || height <= 0) return false;
+  const auto checked_width = static_cast<std::uint64_t>(width);
+  const auto checked_height = static_cast<std::uint64_t>(height);
+  constexpr auto kPixelBytes = sizeof(std::uint32_t);
+  if (checked_width > std::numeric_limits<std::uint64_t>::max() /
+                          checked_height ||
+      checked_width * checked_height >
+          std::numeric_limits<std::uint64_t>::max() / kPixelBytes) {
+    return false;
+  }
+  bytes = checked_width * checked_height * kPixelBytes;
+  return true;
+}
+
+bool imageCapacityBytes(const Image& image, std::uint64_t& bytes) noexcept {
+  constexpr auto kPixelBytes = sizeof(std::uint32_t);
+  if (image.pixels.capacity() >
+      std::numeric_limits<std::uint64_t>::max() / kPixelBytes) {
+    bytes = 0;
+    return false;
+  }
+  bytes = static_cast<std::uint64_t>(image.pixels.capacity()) * kPixelBytes;
+  return true;
+}
+
+bool checkedWorkingBytes(std::uint64_t first, std::uint64_t second,
+                         std::uint64_t third,
+                         std::uint64_t& total) noexcept {
+  if (first > std::numeric_limits<std::uint64_t>::max() - second) {
+    total = 0;
+    return false;
+  }
+  total = first + second;
+  if (total > std::numeric_limits<std::uint64_t>::max() - third) {
+    total = 0;
+    return false;
+  }
+  total += third;
+  return true;
+}
+
 ActionResult withFailureContext(ActionResult result,
                                 LongShotFailureStage stage, int frame) {
   if (!result.ok) {
@@ -85,6 +173,8 @@ ActionResult withFailureContext(ActionResult result,
 
 ActionResult validateRequest(const LongShotRequest& request,
                              const LongShotProfileRegistry& profiles,
+                             longshot_detail::GenericWheelLongShotProfile&
+                                 generic_fallback,
                              const LongShotProfile*& profile,
                              LongShotProfileResult& profile_result) {
   profile = nullptr;
@@ -96,9 +186,14 @@ ActionResult validateRequest(const LongShotRequest& request,
 
   profile = profiles.resolve(request, profile_result);
   if (profile == nullptr) {
-    return makeFailure(ErrorCode::kLongShotUnsupported,
-                       "longshot: target application is not supported",
-                       LongShotFailureStage::ProfileResolution);
+    if (generic_fallback.resolve(request, profile_result)) {
+      profile = &generic_fallback;
+    } else {
+      return makeFailure(
+          ErrorCode::kLongShotUnsupported,
+          "longshot: no profile matched and generic target is unsafe",
+          LongShotFailureStage::ProfileResolution);
+    }
   }
   return makeSuccess();
 }
@@ -189,22 +284,38 @@ bool retryableFrameFailure(const ActionResult& result) {
              longShotFailureStageName(LongShotFailureStage::FrameValidation);
 }
 
+const char* overlapFailureMessage(OverlapRejectReason reason) noexcept {
+  switch (reason) {
+    case OverlapRejectReason::AmbiguousCandidates:
+      return "longshot: overlap candidates are ambiguous";
+    case OverlapRejectReason::InsufficientTexture:
+      return "longshot: overlap has insufficient visual texture";
+    case OverlapRejectReason::InconsistentRegions:
+      return "longshot: overlap is inconsistent across image regions";
+    case OverlapRejectReason::DisplacementOutOfRange:
+      return "longshot: overlap displacement is outside the safe range";
+    case OverlapRejectReason::InvalidEdgeExclusion:
+      return "longshot: fixed edge exclusion is invalid; adjust selection";
+    default:
+      return "longshot: no reliable overlap was found";
+  }
+}
+
 ActionResult waitForScrollSettle(
     const LongShotProfile& profile, const LongShotRequest& request,
     const LongShotProfileResult& before_profile,
     const LongShotScrollState& before_scroll_state,
     const LongShotContinueCallback& should_continue,
+    const LongShotWaitCallback& wait_for,
     LongShotProfileResult& after_profile,
     LongShotScrollState& after_scroll_state, bool& has_after_scroll_state,
-    bool& no_movement, bool& stopped, int frame) {
+    bool& no_movement, bool& stopped, int max_polls, int frame) {
   after_profile = before_profile;
   after_scroll_state = before_scroll_state;
   has_after_scroll_state = false;
   no_movement = false;
   stopped = false;
 
-  const auto deadline = std::chrono::steady_clock::now() +
-                        kScrollSettleTimeout;
   LongShotProfileResult latest_profile = before_profile;
   LongShotScrollState latest_state = before_scroll_state;
   LongShotScrollState previous_state = before_scroll_state;
@@ -212,7 +323,7 @@ ActionResult waitForScrollSettle(
   bool saw_movement = false;
   int stable_samples = 0;
 
-  while (std::chrono::steady_clock::now() < deadline) {
+  for (int poll = 0; poll < max_polls; ++poll) {
     if (should_continue && !should_continue()) {
       stopped = true;
       return makeSuccess();
@@ -220,7 +331,10 @@ ActionResult waitForScrollSettle(
 
     LongShotProfileResult candidate_profile;
     if (!profile.resolve(request, candidate_profile)) {
-      std::this_thread::sleep_for(kScrollSettlePollInterval);
+      if (!wait_for(kScrollSettlePollInterval, should_continue)) {
+        stopped = true;
+        return makeSuccess();
+      }
       continue;
     }
     resolved_any = true;
@@ -235,8 +349,7 @@ ActionResult waitForScrollSettle(
       // A profile may advertise a native state while the target is being
       // recreated. Fall back to a conservative render delay and capture the
       // fixed selection instead of sending another wheel message.
-      std::this_thread::sleep_for(kFallbackScrollSettleDelay);
-      if (should_continue && !should_continue()) {
+      if (!wait_for(kRenderSettleDelay, should_continue)) {
         stopped = true;
         return makeSuccess();
       }
@@ -264,13 +377,19 @@ ActionResult waitForScrollSettle(
     previous_state = candidate_state;
 
     if (saw_movement && stable_samples >= kRequiredStableSamples) {
-      std::this_thread::sleep_for(kRenderSettleDelay);
+      if (!wait_for(kRenderSettleDelay, should_continue)) {
+        stopped = true;
+        return makeSuccess();
+      }
       after_profile = latest_profile;
       after_scroll_state = latest_state;
       return makeSuccess();
     }
 
-    std::this_thread::sleep_for(kScrollSettlePollInterval);
+    if (!wait_for(kScrollSettlePollInterval, should_continue)) {
+      stopped = true;
+      return makeSuccess();
+    }
   }
 
   if (should_continue && !should_continue()) {
@@ -293,10 +412,12 @@ ActionResult waitForScrollSettle(
     return makeSuccess();
   }
 
-  // The position changed but never reported two identical samples before the
-  // deadline. Capture the latest frame once; the render delay above is not
-  // available in this timeout path, so add the same guard here.
-  std::this_thread::sleep_for(kRenderSettleDelay);
+  // The position changed but never reported two identical samples within the
+  // poll budget. Capture the latest frame once after the same render guard.
+  if (!wait_for(kRenderSettleDelay, should_continue)) {
+    stopped = true;
+    return makeSuccess();
+  }
   return makeSuccess();
 }
 
@@ -305,7 +426,9 @@ ActionResult captureNextFrame(
     const LongShotProfile& profile, const LongShotRequest& request,
     const LongShotProfileResult& before_profile,
     const LongShotScrollState* before_scroll_state, int frame_number,
+    int max_scroll_settle_polls,
     const LongShotContinueCallback& should_continue, Image& frame,
+    const LongShotWaitCallback& wait_for,
     LongShotProfileResult* after_profile_out,
     LongShotScrollState* after_scroll_state_out,
     bool* has_after_scroll_state_out, bool* stable_scroll_out,
@@ -339,14 +462,16 @@ ActionResult captureNextFrame(
   if (before_scroll_state != nullptr) {
     result = waitForScrollSettle(
         profile, request, before_profile, *before_scroll_state, should_continue,
-        after_profile, after_scroll_state, has_after_scroll_state, no_movement,
-        stopped, frame_number);
+        wait_for, after_profile, after_scroll_state, has_after_scroll_state,
+        no_movement, stopped, max_scroll_settle_polls, frame_number);
   } else {
     if (should_continue && !should_continue()) {
       stopped = true;
       result = makeSuccess();
+    } else if (!wait_for(kRenderSettleDelay, should_continue)) {
+      stopped = true;
+      result = makeSuccess();
     } else {
-      std::this_thread::sleep_for(kFallbackScrollSettleDelay);
       result = resolveAfterScroll(profile, request, before_profile,
                                   after_profile, frame_number);
       if (result.ok) {
@@ -395,10 +520,32 @@ struct LongShotEngine::Impl {
         profiles(std::move(profile_registry)),
         limits(capture_limits) {}
 
+  bool waitFor(std::chrono::milliseconds delay,
+               const LongShotContinueCallback& should_continue) {
+    if (should_continue && !should_continue()) return false;
+    const std::uint64_t generation = wake_generation.load();
+    std::unique_lock<std::mutex> lock(wait_mutex);
+    wait_condition.wait_for(lock, delay, [&] {
+      return cancelled.load() || wake_generation.load() != generation;
+    });
+    lock.unlock();
+    return !cancelled.load() &&
+           (!should_continue || should_continue());
+  }
+
+  void wakeWaiters() noexcept {
+    wake_generation.fetch_add(1);
+    wait_condition.notify_all();
+  }
+
   LongShotCaptureCallback capture;
   LongShotProfileRegistry profiles;
   LongShotLimits limits;
   std::atomic<const LongShotProfile*> active_profile{nullptr};
+  std::atomic_bool cancelled{false};
+  std::atomic<std::uint64_t> wake_generation{0};
+  std::mutex wait_mutex;
+  std::condition_variable wait_condition;
 };
 
 LongShotEngine::LongShotEngine(CaptureEngine& capture, LongShotLimits limits)
@@ -460,31 +607,137 @@ ActionResult LongShotEngine::captureSelection(
     const LongShotLimits& limits)
 {
   out = Image{};
+  LongShotOutcome outcome;
+  ActionResult result = captureSelection(request, outcome,
+                                        std::move(on_progress),
+                                        std::move(should_continue), limits);
+  if (result.ok) out = std::move(outcome.image);
+  return result;
+}
+
+ActionResult LongShotEngine::captureSelection(
+    const LongShotRequest& request, LongShotOutcome& out,
+    LongShotProgressCallback on_progress,
+    LongShotContinueCallback should_continue) {
+  return captureSelection(request, out, std::move(on_progress),
+                          std::move(should_continue), impl_->limits);
+}
+
+ActionResult LongShotEngine::captureSelection(
+    const LongShotRequest& request, LongShotOutcome& out,
+    LongShotProgressCallback on_progress,
+    LongShotContinueCallback should_continue,
+    const LongShotLimits& limits) {
+  out = LongShotOutcome{};
+  impl_->cancelled.store(false);
+  const auto started_at = std::chrono::steady_clock::now();
+  auto frame_started_at = started_at;
+  bool frame_timing_active = false;
+  auto recordFrameTime = [&] {
+    if (!frame_timing_active) return;
+    out.max_frame_processing_ms =
+        (std::max)(out.max_frame_processing_ms,
+                   elapsedMilliseconds(frame_started_at));
+    frame_timing_active = false;
+  };
+  auto finish = [&](ActionResult result, LongShotStopReason reason) {
+    recordFrameTime();
+    out.elapsed_ms = elapsedMilliseconds(started_at);
+    out.stop_reason = reason;
+    for (const auto stage : {LongShotFailureStage::RequestValidation,
+                            LongShotFailureStage::SafetyLimit,
+                            LongShotFailureStage::ProfileResolution,
+                            LongShotFailureStage::ScrollInput,
+                            LongShotFailureStage::ScrollSettle,
+                            LongShotFailureStage::InitialCapture,
+                            LongShotFailureStage::FrameCapture,
+                            LongShotFailureStage::FrameValidation,
+                            LongShotFailureStage::OverlapDetection,
+                            LongShotFailureStage::Stitching}) {
+      if (result.failure_stage == longShotFailureStageName(stage))
+        out.failure_stage = stage;
+    }
+    if (impl_->cancelled.load()) {
+      out.image = Image{};
+      out.accepted_frames = 0;
+      out.stop_reason = LongShotStopReason::Cancelled;
+      result = makeFailure(ErrorCode::kCancelled,
+                           "longshot: capture cancelled");
+      out.failure_stage = LongShotFailureStage::None;
+    }
+    out.diagnostic = result;
+    return result;
+  };
+  auto failureReason = [](const ActionResult& result) {
+    if (result.failure_stage == "scroll_input")
+      return LongShotStopReason::InputUnavailable;
+    if (result.failure_stage == "profile_resolution" ||
+        result.failure_stage == "frame_validation")
+      return LongShotStopReason::TargetInvalid;
+    if (result.failure_stage == "overlap_detection")
+      return LongShotStopReason::MatchFailed;
+    if (result.failure_stage == "stitching")
+      return LongShotStopReason::StitchFailed;
+    return LongShotStopReason::CaptureFailed;
+  };
+  auto deadlineExceeded = [&] {
+    return limits.valid() &&
+           std::chrono::steady_clock::now() - started_at >=
+               limits.max_duration;
+  };
+  LongShotContinueCallback continue_capture = [&] {
+    return !deadlineExceeded() && !impl_->cancelled.load() &&
+           (!should_continue || should_continue());
+  };
+  LongShotWaitCallback wait_for =
+      [this, &started_at, &limits](std::chrono::milliseconds delay,
+                         const LongShotContinueCallback& keep_going) {
+        const auto deadline = started_at + limits.max_duration;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) return false;
+        const auto remaining = std::chrono::duration_cast<
+            std::chrono::milliseconds>(deadline - now);
+        return impl_->waitFor((std::min)(delay, remaining), keep_going);
+      };
   if (!request.valid()) {
-    return makeFailure(ErrorCode::kInvalidArgument,
+    return finish(makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: owner window and selection are required",
-                       LongShotFailureStage::RequestValidation);
+                       LongShotFailureStage::RequestValidation),
+                  LongShotStopReason::RequestRejected);
   }
-  if (!limits.valid())
-  {
-    return makeFailure(ErrorCode::kInvalidArgument,
+  if (!limits.valid()) {
+    return finish(makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: safety limits are invalid",
-                       LongShotFailureStage::SafetyLimit);
+                       LongShotFailureStage::SafetyLimit),
+                  LongShotStopReason::RequestRejected);
   }
-  if (request.height > limits.max_output_height)
-  {
-    return makeFailure(ErrorCode::kInvalidArgument,
+  if (request.height > limits.max_output_height) {
+    return finish(makeFailure(ErrorCode::kInvalidArgument,
                        "longshot: selection exceeds maximum output height",
-                       LongShotFailureStage::SafetyLimit, 1);
+                       LongShotFailureStage::SafetyLimit, 1),
+                  LongShotStopReason::RequestRejected);
+  }
+  std::uint64_t frame_bytes = 0;
+  if (!checkedImageBytes(request.width, request.height, frame_bytes) ||
+      frame_bytes > limits.max_working_bytes) {
+    out.budget_reason = LongShotBudgetReason::WorkingMemory;
+    return finish(makeFailure(ErrorCode::kResourceLimit,
+                       "longshot: selection exceeds working memory budget",
+                       LongShotFailureStage::SafetyLimit, 1),
+                  LongShotStopReason::RequestRejected);
   }
 
   const LongShotProfile* profile = nullptr;
   LongShotProfileResult current_profile;
-  ActionResult result = validateRequest(request, impl_->profiles, profile,
+  longshot_detail::GenericWheelLongShotProfile generic_fallback;
+  ActionResult result = validateRequest(request, impl_->profiles,
+                                        generic_fallback, profile,
                                         current_profile);
   if (!result.ok) {
-    return result;
+    return finish(result, failureReason(result));
   }
+
+  out.strategy = profile->name() ? profile->name() : "unknown";
 
   impl_->active_profile.store(profile, std::memory_order_release);
   struct ActiveProfileGuard final {
@@ -494,53 +747,117 @@ ActionResult LongShotEngine::captureSelection(
     }
   } active_profile_guard{*impl_};
 
-  Image stitched;
+  Image& stitched = out.image;
+  const auto initial_capture_started_at = std::chrono::steady_clock::now();
   result = captureFrame(impl_->capture, request, 1,
                         LongShotFailureStage::InitialCapture, stitched);
+  out.initial_capture_ms = elapsedMilliseconds(initial_capture_started_at);
   if (!result.ok) {
-    return result;
+    stitched = Image{};
+    return finish(result, failureReason(result));
   }
+  out.accepted_frames = 1;
+  std::uint64_t stitched_bytes = 0;
+  if (!imageCapacityBytes(stitched, stitched_bytes) ||
+      stitched_bytes > limits.max_working_bytes) {
+    stitched = Image{};
+    out.accepted_frames = 0;
+    out.budget_reason = LongShotBudgetReason::WorkingMemory;
+    return finish(makeFailure(ErrorCode::kResourceLimit,
+                       "longshot: initial frame exceeds working memory budget",
+                       LongShotFailureStage::SafetyLimit, 1),
+                  LongShotStopReason::RequestRejected);
+  }
+  out.peak_working_bytes = stitched_bytes;
 
   if (on_progress) {
     on_progress(stitched);
+    ++out.preview_publications;
   }
 
   // 用户主动停止属于正常完成：已经累计的帧构成有效长截图结果，仍可继续复制、
   // 保存或 Pin。
-  if (should_continue && !should_continue()) {
-    out = std::move(stitched);
-    return makeSuccess();
+  if (!continue_capture()) {
+    if (deadlineExceeded()) {
+      out.budget_reason = LongShotBudgetReason::Duration;
+      return finish(makeSuccess(), LongShotStopReason::LimitReached);
+    }
+    return finish(makeSuccess(), LongShotStopReason::UserStopped);
   }
 
   LongShotScrollState current_scroll_state;
   if (readScrollState(*profile, current_profile, current_scroll_state) &&
       current_scroll_state.atBottom()) {
-    out = std::move(stitched);
-    return makeSuccess();
+    return finish(makeSuccess(), LongShotStopReason::ReachedBottom);
   }
 
   ImageStitchOptions stitch_options;
   stitch_options.min_overlap_rows = 16;
-  stitch_options.right_edge_exclusion_pixels = 12;
+  stitch_options.side_exclusion.mode = SideExclusionMode::Automatic;
+  stitch_options.fixed_top_rows = limits.fixed_edges.top_rows;
+  stitch_options.fixed_bottom_rows = limits.fixed_edges.bottom_rows;
   // Text anti-aliasing, caret blinking and other small repaint differences
   // are expected after a real scroll. Keep the overlap requirement enabled,
   // but allow a small per-channel difference and sparse dynamic pixels.
   stitch_options.channel_tolerance = 2;
   stitch_options.minimum_match_per_mille = 960;
   stitch_options.require_overlap = true;
-  ImageStitcher stitcher(stitch_options);
+  const bool auto_bottom_enabled = stitch_options.fixed_bottom_rows == 0;
+  int provisional_bottom_rows = 0;
+  int consistent_bottom_positions = 0;
+  int confirmed_bottom_rows = 0;
+  int last_displacement_rows = 0;
+  bool has_last_displacement = false;
+  Image last_reliable_viewport;
   int frame_count = 1;
-  while (frame_count < limits.max_frames &&
-         stitched.height < limits.max_output_height)
-  {
-    if (should_continue && !should_continue()) {
+  LongShotStopReason stop_reason = LongShotStopReason::LimitReached;
+  while (true) {
+    if (deadlineExceeded()) {
+      out.budget_reason = LongShotBudgetReason::Duration;
       break;
     }
+    if (stitched.height >= limits.max_output_height) {
+      out.budget_reason = LongShotBudgetReason::OutputHeight;
+      break;
+    }
+    if (!continue_capture()) {
+      if (deadlineExceeded()) {
+        out.budget_reason = LongShotBudgetReason::Duration;
+      } else {
+        stop_reason = LongShotStopReason::UserStopped;
+      }
+      break;
+    }
+
+    if (!imageCapacityBytes(stitched, stitched_bytes)) {
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      break;
+    }
+    std::uint64_t reliable_viewport_bytes = 0;
+    if (!last_reliable_viewport.empty() &&
+        !imageCapacityBytes(last_reliable_viewport,
+                            reliable_viewport_bytes)) {
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      break;
+    }
+    std::uint64_t retained_bytes = 0;
+    std::uint64_t capture_peak_bytes = 0;
+    if (!checkedWorkingBytes(stitched_bytes, reliable_viewport_bytes, 0,
+                             retained_bytes) ||
+        !checkedWorkingBytes(retained_bytes, frame_bytes, 0,
+                             capture_peak_bytes) ||
+        capture_peak_bytes > limits.max_working_bytes) {
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      break;
+    }
+    frame_started_at = std::chrono::steady_clock::now();
+    frame_timing_active = true;
 
     LongShotScrollState before_scroll_state;
     const bool has_before_scroll_state =
         readScrollState(*profile, current_profile, before_scroll_state);
     if (has_before_scroll_state && before_scroll_state.atBottom()) {
+      stop_reason = LongShotStopReason::ReachedBottom;
       break;
     }
 
@@ -551,37 +868,77 @@ ActionResult LongShotEngine::captureSelection(
     bool has_after_scroll_state = false;
     bool stable_scroll = false;
     bool stopped = false;
+    ++out.input_attempts;
     result = captureNextFrame(impl_->capture, *profile, request,
                               current_profile,
                               has_before_scroll_state ? &before_scroll_state
                                                       : nullptr,
-                              next_frame_number, should_continue,
-                              next_frame, &after_profile, &after_scroll_state,
-                              &has_after_scroll_state, &stable_scroll,
-                              &stopped);
+                              next_frame_number,
+                              limits.max_scroll_settle_polls,
+                              continue_capture,
+                              next_frame, wait_for, &after_profile,
+                              &after_scroll_state, &has_after_scroll_state,
+                              &stable_scroll, &stopped);
     if (stopped) {
+      if (deadlineExceeded()) {
+        out.budget_reason = LongShotBudgetReason::Duration;
+      } else {
+        stop_reason = LongShotStopReason::UserStopped;
+      }
       break;
     }
     if (!result.ok && !retryableFrameFailure(result)) {
-      return result;
+      if (result.failure_stage ==
+          longShotFailureStageName(LongShotFailureStage::ScrollSettle)) {
+        out.budget_reason = LongShotBudgetReason::ScrollSettlePolls;
+      }
+      return finish(result, failureReason(result));
     }
     if (stable_scroll) {
+      stop_reason = has_after_scroll_state && after_scroll_state.atBottom()
+                        ? LongShotStopReason::ReachedBottom
+                        : LongShotStopReason::NoProgress;
       break;
     }
 
     Image candidate_frame = std::move(next_frame);
+    std::uint64_t candidate_capture_bytes = 0;
+    std::uint64_t actual_capture_bytes = 0;
+    if (imageCapacityBytes(candidate_frame, candidate_capture_bytes) &&
+        checkedWorkingBytes(retained_bytes, candidate_capture_bytes, 0,
+                            actual_capture_bytes)) {
+      out.peak_working_bytes =
+          (std::max)(out.peak_working_bytes, actual_capture_bytes);
+    }
     ActionResult last_frame_failure = result;
     int next_overlap_rows = 0;
+    int planned_output_rows = 0;
     bool matched_overlap = false;
     bool full_overlap = false;
+    bool retryable_overlap = false;
+    bool fatal_overlap = false;
     bool interrupted = false;
-    for (int attempt = 0; attempt < kFrameCaptureAttempts; ++attempt) {
-      if (attempt > 0) {
-        if (should_continue && !should_continue()) {
+    int accepted_bottom_rows = stitch_options.fixed_bottom_rows;
+    int active_bottom_rows = -1;
+    auto visual_retry_delay = kFrameRetryDelay;
+    std::unique_ptr<longshot_detail::VisualFrameSettler> frame_settler;
+    const Image& previous_viewport = last_reliable_viewport.empty()
+                                         ? stitched
+                                         : last_reliable_viewport;
+    const SideExclusionRange bottom_detection_sides = resolveSideExclusion(
+        request.width, stitch_options.side_exclusion);
+    for (int sample = 0; sample <= limits.max_frame_recaptures;
+         ++sample) {
+      if (!continue_capture()) {
+        interrupted = true;
+        break;
+      }
+      if (sample > 0) {
+        if (!wait_for(visual_retry_delay, continue_capture)) {
           interrupted = true;
           break;
         }
-        std::this_thread::sleep_for(kFrameRetryDelay);
+        ++out.recapture_attempts;
         result = captureFrame(impl_->capture, request, next_frame_number,
                               LongShotFailureStage::FrameCapture,
                               candidate_frame);
@@ -592,92 +949,236 @@ ActionResult LongShotEngine::captureSelection(
         continue;
       }
 
-      int candidate_overlap = 0;
-      if (!stitcher.findOverlap(stitched, candidate_frame,
-                                candidate_overlap)) {
-        last_frame_failure = makeFailure(
-            ErrorCode::kCaptureFailed,
-            "longshot: failed to inspect next overlap",
-            LongShotFailureStage::OverlapDetection, next_frame_number);
-        continue;
-      }
-
-      // A stale frame can still be fully identical immediately after the
-      // scroll message. Re-capture at the same position before treating it
-      // as the terminal no-new-content condition.
-      if (candidate_overlap == candidate_frame.height) {
-        if (attempt + 1 == kFrameCaptureAttempts) {
-          full_overlap = true;
+      int sample_bottom_rows = stitch_options.fixed_bottom_rows;
+      if (auto_bottom_enabled) {
+        const auto bottom_evidence = detectFixedBottomEdge(
+            previous_viewport, candidate_frame, bottom_detection_sides);
+        if (!bottom_evidence.valid ||
+            (confirmed_bottom_rows > 0 &&
+             (!bottom_evidence.detected ||
+              bottom_evidence.candidate_rows != confirmed_bottom_rows))) {
+          retryable_overlap = true;
+          last_frame_failure = makeFailure(
+              ErrorCode::kCaptureFailed,
+              "longshot: fixed bottom edge could not be verified",
+              LongShotFailureStage::OverlapDetection, next_frame_number);
+          frame_settler.reset();
+          active_bottom_rows = -1;
+          visual_retry_delay = kFrameRetryDelay;
+          continue;
         }
-        continue;
+        sample_bottom_rows = bottom_evidence.detected
+                                 ? bottom_evidence.candidate_rows
+                                 : 0;
       }
-      if (candidate_overlap == 0) {
-        last_frame_failure = makeFailure(
-            ErrorCode::kCaptureFailed,
-            "longshot: no reliable overlap was found",
-            LongShotFailureStage::OverlapDetection, next_frame_number);
-        continue;
+      if (!frame_settler || active_bottom_rows != sample_bottom_rows) {
+        ImageStitchOptions sample_options = stitch_options;
+        sample_options.fixed_bottom_rows = sample_bottom_rows;
+        sample_options.preferred_displacement_rows = last_displacement_rows;
+        sample_options.has_preferred_displacement = has_last_displacement;
+        frame_settler =
+            std::make_unique<longshot_detail::VisualFrameSettler>(
+                sample_options);
+        active_bottom_rows = sample_bottom_rows;
       }
 
-      next_overlap_rows = candidate_overlap;
-      matched_overlap = true;
-      break;
+      const auto observation = frame_settler->observe(stitched,
+                                                      candidate_frame);
+      next_overlap_rows = observation.overlap_rows;
+      planned_output_rows = observation.output_rows;
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::ObserveMore) {
+        // A valid but not-yet-stable sample supersedes an earlier transient
+        // overlap rejection. If the budget now expires, report settling rather
+        // than the stale rejection reason.
+        retryable_overlap = false;
+        last_frame_failure = makeSuccess();
+        visual_retry_delay =
+            observation.displacement_rows == 0
+                ? kFrameRetryDelay
+                : kScrollSettlePollInterval;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::StableMovement) {
+        matched_overlap = true;
+        accepted_bottom_rows = sample_bottom_rows;
+        break;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::NoProgress) {
+        full_overlap = true;
+        break;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::RetryableOverlap) {
+        retryable_overlap = true;
+        last_frame_failure = makeFailure(
+            ErrorCode::kCaptureFailed,
+            overlapFailureMessage(observation.reject_reason),
+            LongShotFailureStage::OverlapDetection, next_frame_number);
+        visual_retry_delay = kFrameRetryDelay;
+        continue;
+      }
+      if (observation.decision ==
+          longshot_detail::VisualFrameDecision::FatalOverlap) {
+        fatal_overlap = true;
+        last_frame_failure = makeFailure(
+            ErrorCode::kCaptureFailed,
+            overlapFailureMessage(observation.reject_reason),
+            LongShotFailureStage::OverlapDetection, next_frame_number);
+        break;
+      }
     }
 
     if (interrupted) {
+      if (deadlineExceeded()) {
+        out.budget_reason = LongShotBudgetReason::Duration;
+      } else {
+        stop_reason = LongShotStopReason::UserStopped;
+      }
       break;
     }
     if (full_overlap) {
+      stop_reason = LongShotStopReason::NoProgress;
       // 整帧重叠表示本次滚动没有显示新的内容。
       break;
     }
     if (!matched_overlap) {
-      return last_frame_failure.ok
+      if (retryable_overlap && !fatal_overlap) {
+        out.budget_reason = LongShotBudgetReason::FrameRecaptures;
+      } else if (!fatal_overlap && last_frame_failure.ok) {
+        out.budget_reason = LongShotBudgetReason::FrameRecaptures;
+        last_frame_failure = makeFailure(
+            ErrorCode::kCaptureFailed,
+            "longshot: frame did not become stable within retry budget",
+            LongShotFailureStage::ScrollSettle, next_frame_number);
+      }
+      result = last_frame_failure.ok
                  ? makeFailure(ErrorCode::kCaptureFailed,
                                "longshot: no reliable overlap was found",
                                LongShotFailureStage::OverlapDetection,
                                next_frame_number)
                  : last_frame_failure;
+      return finish(result, failureReason(result));
     }
 
-    const std::int64_t next_height =
-        static_cast<std::int64_t>(stitched.height) +
-        static_cast<std::int64_t>(candidate_frame.height) -
-        static_cast<std::int64_t>(next_overlap_rows);
-    if (next_height > limits.max_output_height)
-    {
+    const std::int64_t next_height = planned_output_rows;
+    if (next_height > limits.max_output_height) {
+      out.budget_reason = LongShotBudgetReason::OutputHeight;
       break;
     }
-    if (!stitcher.append(stitched, candidate_frame, &next_overlap_rows) ||
+    std::uint64_t candidate_bytes = 0;
+    std::uint64_t output_bytes = 0;
+    std::uint64_t append_peak_bytes = 0;
+    if (!imageCapacityBytes(stitched, stitched_bytes) ||
+        !imageCapacityBytes(candidate_frame, candidate_bytes) ||
+        !checkedImageBytes(request.width, planned_output_rows, output_bytes) ||
+        !checkedWorkingBytes(stitched_bytes, reliable_viewport_bytes, 0,
+                             retained_bytes) ||
+        !checkedWorkingBytes(retained_bytes, candidate_bytes, output_bytes,
+                             append_peak_bytes) ||
+        append_peak_bytes > limits.max_working_bytes) {
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      break;
+    }
+    out.peak_working_bytes =
+        (std::max)(out.peak_working_bytes, append_peak_bytes);
+    bool appended = false;
+    OverlapEvidence append_evidence;
+    try {
+      ImageStitchOptions accepted_options = stitch_options;
+      accepted_options.fixed_bottom_rows = accepted_bottom_rows;
+      accepted_options.preferred_displacement_rows = last_displacement_rows;
+      accepted_options.has_preferred_displacement = has_last_displacement;
+      ImageStitcher stitcher(accepted_options);
+      appended = stitcher.append(stitched, candidate_frame, append_evidence);
+      next_overlap_rows = append_evidence.overlap_rows;
+    } catch (const std::bad_alloc&) {
+      // append 分配新缓冲成功后才提交；预算拒绝不损坏上一可靠图像。
+      out.budget_reason = LongShotBudgetReason::WorkingMemory;
+      return finish(makeFailure(ErrorCode::kCaptureFailed,
+                                "longshot: stitching allocation rejected",
+                                LongShotFailureStage::Stitching,
+                                next_frame_number),
+                    LongShotStopReason::StitchFailed);
+    }
+    if (!appended ||
         stitched.width != request.width || stitched.height <= 0 ||
         stitched.pixels.empty()) {
-      return makeFailure(ErrorCode::kCaptureFailed,
+      return finish(makeFailure(ErrorCode::kCaptureFailed,
                          "longshot: failed to stitch next frame",
-                         LongShotFailureStage::Stitching, next_frame_number);
+                         LongShotFailureStage::Stitching, next_frame_number),
+                    LongShotStopReason::StitchFailed);
+    }
+
+    last_displacement_rows = append_evidence.displacement_rows;
+    has_last_displacement = true;
+
+    if (auto_bottom_enabled) {
+      if (accepted_bottom_rows > 0) {
+        if (provisional_bottom_rows == accepted_bottom_rows) {
+          ++consistent_bottom_positions;
+        } else {
+          provisional_bottom_rows = accepted_bottom_rows;
+          consistent_bottom_positions = 1;
+        }
+        if (consistent_bottom_positions >= 2) {
+          confirmed_bottom_rows = accepted_bottom_rows;
+        }
+      } else if (confirmed_bottom_rows == 0) {
+        provisional_bottom_rows = 0;
+        consistent_bottom_positions = 0;
+      }
+      last_reliable_viewport = std::move(candidate_frame);
     }
 
     ++frame_count;
+    out.accepted_frames = frame_count;
+    recordFrameTime();
     if (on_progress) {
       on_progress(stitched);
+      ++out.preview_publications;
     }
 
     current_profile = after_profile;
     if (has_after_scroll_state && after_scroll_state.atBottom()) {
+      stop_reason = LongShotStopReason::ReachedBottom;
       break;
     }
   }
 
-  out = std::move(stitched);
-  return makeSuccess();
+  return finish(makeSuccess(), stop_reason);
 }
 
 ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
                                                 LongShotFramePair& out) {
   out.clear();
+  if (!request.valid()) {
+    return makeFailure(ErrorCode::kInvalidArgument,
+                       "longshot: owner window and selection are required",
+                       LongShotFailureStage::RequestValidation);
+  }
+  if (!impl_->limits.valid()) {
+    return makeFailure(ErrorCode::kInvalidArgument,
+                       "longshot: safety limits are invalid",
+                       LongShotFailureStage::SafetyLimit);
+  }
+  std::uint64_t frame_bytes = 0;
+  std::uint64_t pair_bytes = 0;
+  if (request.height > impl_->limits.max_output_height ||
+      !checkedImageBytes(request.width, request.height, frame_bytes) ||
+      !checkedWorkingBytes(frame_bytes, frame_bytes, 0, pair_bytes) ||
+      pair_bytes > impl_->limits.max_working_bytes) {
+    return makeFailure(ErrorCode::kResourceLimit,
+                       "longshot: frame pair exceeds safety limits",
+                       LongShotFailureStage::SafetyLimit);
+  }
 
   const LongShotProfile* profile = nullptr;
   LongShotProfileResult before_profile;
-  ActionResult result = validateRequest(request, impl_->profiles, profile,
+  longshot_detail::GenericWheelLongShotProfile generic_fallback;
+  ActionResult result = validateRequest(request, impl_->profiles,
+                                        generic_fallback, profile,
                                         before_profile);
   if (!result.ok) {
     return result;
@@ -699,8 +1200,14 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
   }
 
   Image second_frame;
+  LongShotWaitCallback wait_for =
+      [this](std::chrono::milliseconds delay,
+             const LongShotContinueCallback& keep_going) {
+        return impl_->waitFor(delay, keep_going);
+      };
   result = captureNextFrame(impl_->capture, *profile, request, before_profile,
-                            nullptr, 2, {}, second_frame, nullptr, nullptr,
+                            nullptr, 2, impl_->limits.max_scroll_settle_polls,
+                            {}, second_frame, wait_for, nullptr, nullptr,
                             nullptr, nullptr, nullptr);
   if (!result.ok) {
     return result;
@@ -712,11 +1219,17 @@ ActionResult LongShotEngine::captureInitialPair(const LongShotRequest& request,
 }
 
 void LongShotEngine::cancel() noexcept {
+  impl_->cancelled.store(true);
+  impl_->wakeWaiters();
   const LongShotProfile* profile =
       impl_->active_profile.load(std::memory_order_acquire);
   if (profile != nullptr) {
     profile->cancel();
   }
+}
+
+void LongShotEngine::notifyControlChange() noexcept {
+  impl_->wakeWaiters();
 }
 
 std::string LongShotEngine::activeProfileName() const {

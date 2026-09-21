@@ -21,6 +21,43 @@ enum class SelectionAction {
 enum class LongShotControl {
   TogglePause,
   Stop,
+  Retry,
+  AdjustSelection,
+  KeepFirstFrame,
+  AcceptPartialResult,
+  Cancel,
+};
+
+enum class LongShotRecoveryResult {
+  None,
+  SingleFrame,
+  PartialResult,
+};
+
+enum class LongShotRecoveryCause {
+  Unsupported,
+  NoProgress,
+  MatchFailed,
+  InputUnavailable,
+  TargetInvalid,
+  CaptureFailed,
+  LimitReached,
+  UserStopped,
+  Other,
+};
+
+struct LongShotRecoveryState {
+  LongShotRecoveryResult result{LongShotRecoveryResult::None};
+  LongShotRecoveryCause cause{LongShotRecoveryCause::Other};
+
+  constexpr bool hasResult() const noexcept {
+    return result != LongShotRecoveryResult::None;
+  }
+};
+
+enum class LongShotResultNotice {
+  None,
+  CopyFailed,
 };
 
 struct SelectionIntent : ScreenPhysicalRect {

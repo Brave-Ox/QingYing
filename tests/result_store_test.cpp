@@ -239,6 +239,19 @@ TEST_F(ResultRetentionTest, LongshotReservationUsesByteLimitInsteadOfOrdinaryPix
   EXPECT_FALSE(store.reserve(3, 9, 1, false));
 }
 
+TEST_F(ResultRetentionTest, ExplicitReservationAccountsForLongshotSpareCapacity) {
+  Image padded = pixels();
+  padded.pixels.reserve(8);
+  const auto capacity_bytes = padded.pixels.capacity() * sizeof(std::uint32_t);
+  auto reservation = store.reserve(2, padded.width, padded.height, false,
+                                   capacity_bytes);
+  ASSERT_TRUE(reservation);
+
+  EXPECT_NE(store.publish(2, std::move(padded), std::move(reservation)),
+            kInvalidResultId);
+  EXPECT_EQ(store.budgetSnapshot().external_retained_bytes, capacity_bytes);
+}
+
 TEST_F(ResultRetentionTest, SpareCapacityIsChargedAndPublicationFailurePreservesOldResult) {
   Image padded = pixels(1);
   padded.pixels.reserve(8);

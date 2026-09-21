@@ -25,6 +25,18 @@ SelectionIntent selectionFor(SelectionAction action) {
   return selection;
 }
 
+LongShotOutcome longShotOutcome(LongShotStopReason reason, int frames) {
+  LongShotOutcome outcome;
+  outcome.stop_reason = reason;
+  outcome.accepted_frames = frames;
+  if (frames > 0) {
+    outcome.image = Image{1, frames, std::vector<std::uint32_t>(
+                                         static_cast<std::size_t>(frames),
+                                         0xFF123456u)};
+  }
+  return outcome;
+}
+
 }  // namespace
 
 TEST(CaptureWorkflowRouteTest, CancelledOrEmptySelectionDoesNothing) {
@@ -77,6 +89,79 @@ TEST(CaptureWorkflowRouteTest, OrdinaryResultActionsCaptureRegion) {
   EXPECT_EQ(decideCaptureWorkflowRoute(
                 selectionFor(SelectionAction::Pin), false),
             CaptureWorkflowRoute::CaptureRegion);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest, CompleteResultPublishesAndCopies) {
+  const LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::ReachedBottom, 2);
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::PublishAndCopy);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest, CancellationAlwaysDiscards) {
+  const LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::Cancelled, 2);
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition, LongShotWorkflowDisposition::Discard);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest, UnsupportedKeepsSelectionWithoutResult) {
+  LongShotOutcome outcome;
+  outcome.stop_reason = LongShotStopReason::RequestRejected;
+  outcome.diagnostic.error_code = ErrorCode::kLongShotUnsupported;
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result, LongShotRecoveryResult::None);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::Unsupported);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest, SingleFrameStaysOrdinaryCapture) {
+  const LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::CaptureFailed, 1);
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result,
+            LongShotRecoveryResult::SingleFrame);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::CaptureFailed);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest, CompositeFailureAwaitsExplicitAcceptance) {
+  const LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::MatchFailed, 3);
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result,
+            LongShotRecoveryResult::PartialResult);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::MatchFailed);
+}
+
+TEST(CaptureWorkflowLongShotDecisionTest,
+     BudgetLimitKeepsReliableCompositeForConfirmation) {
+  LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::LimitReached, 3);
+  outcome.budget_reason = LongShotBudgetReason::WorkingMemory;
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result,
+            LongShotRecoveryResult::PartialResult);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::LimitReached);
 }
 
 }  // namespace qingying

@@ -53,7 +53,13 @@ class SelectionOverlay {
   // These methods are safe to call from the long-shot worker thread. Updates
   // are posted back to the overlay's UI thread.
   bool postLongShotPreview(const Image& image);
-  bool postLongShotFinished(bool success);
+  bool postLongShotPreview(const Image& image, std::uint64_t session_id);
+  // 设置新会话时释放旧预览载荷；已排队的旧 token 不再显示。
+  void setLongShotSession(std::uint64_t session_id) noexcept;
+  bool postLongShotFinished(
+      bool success,
+      LongShotResultNotice notice = LongShotResultNotice::None);
+  bool postLongShotRecoverable(LongShotRecoveryState recovery);
 
   bool isVisible() const noexcept;
 

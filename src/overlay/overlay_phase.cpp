@@ -1,4 +1,4 @@
-#include "qingying/overlay/overlay_phase.hpp"
+﻿#include "qingying/overlay/overlay_phase.hpp"
 
 namespace qingying {
 
@@ -8,6 +8,8 @@ bool overlayPhaseHasSelection(OverlayPhase phase) noexcept {
     case OverlayPhase::LongShotRunning:
     case OverlayPhase::LongShotPaused:
     case OverlayPhase::LongShotFinishing:
+    case OverlayPhase::LongShotRecoverable:
+    case OverlayPhase::LongShotResultPending:
       return true;
     case OverlayPhase::Sniffing:
     case OverlayPhase::Creating:
@@ -18,6 +20,14 @@ bool overlayPhaseHasSelection(OverlayPhase phase) noexcept {
 }
 
 bool overlayPhaseIsLongShot(OverlayPhase phase) noexcept {
+  return phase == OverlayPhase::LongShotRunning ||
+         phase == OverlayPhase::LongShotPaused ||
+         phase == OverlayPhase::LongShotFinishing ||
+         phase == OverlayPhase::LongShotRecoverable ||
+         phase == OverlayPhase::LongShotResultPending;
+}
+
+bool overlayPhaseIsLongShotCaptureActive(OverlayPhase phase) noexcept {
   return phase == OverlayPhase::LongShotRunning ||
          phase == OverlayPhase::LongShotPaused ||
          phase == OverlayPhase::LongShotFinishing;
@@ -42,13 +52,24 @@ bool canTransitionOverlayPhase(OverlayPhase from, OverlayPhase to) noexcept {
     case OverlayPhase::LongShotRunning:
       return to == OverlayPhase::LongShotPaused ||
              to == OverlayPhase::LongShotFinishing ||
+             to == OverlayPhase::LongShotRecoverable ||
+             to == OverlayPhase::LongShotResultPending ||
              to == OverlayPhase::Selected;
     case OverlayPhase::LongShotPaused:
       return to == OverlayPhase::LongShotRunning ||
              to == OverlayPhase::LongShotFinishing ||
+             to == OverlayPhase::LongShotRecoverable ||
+             to == OverlayPhase::LongShotResultPending ||
              to == OverlayPhase::Selected;
     case OverlayPhase::LongShotFinishing:
-      return to == OverlayPhase::Selected;
+      return to == OverlayPhase::Selected ||
+             to == OverlayPhase::LongShotRecoverable ||
+             to == OverlayPhase::LongShotResultPending;
+    case OverlayPhase::LongShotRecoverable:
+    case OverlayPhase::LongShotResultPending:
+      return to == OverlayPhase::Selected ||
+             to == OverlayPhase::LongShotRunning ||
+             to == OverlayPhase::LongShotFinishing;
     case OverlayPhase::Closing:
       return false;
   }

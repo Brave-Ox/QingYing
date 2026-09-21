@@ -2,10 +2,13 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/action/action_result.hpp"
+#include "qingying/longshot/longshot_engine.hpp"
+#include "qingying/overlay/selection_types.h"
 
 #include <Windows.h>
 
 #include <cstdint>
+#include <chrono>
 
 namespace qingying {
 
@@ -47,17 +50,21 @@ struct AutomationCompletionMessage {
 };
 
 struct LongShotCompletionMessage {
-  ActionResult result;
-  Image image;
+  std::uint64_t session_id{0};
+  LongShotOutcome outcome;
 };
 
 struct SelectionOverlayLongShotPreviewMessage {
+  std::uint64_t session_id{0};
   Image image;
   std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
 };
 
 struct SelectionOverlayLongShotFinishedMessage {
   bool success{false};
+  bool recoverable{false};
+  LongShotRecoveryState recovery;
+  LongShotResultNotice notice{LongShotResultNotice::None};
 };
 
 namespace HotkeyIds {

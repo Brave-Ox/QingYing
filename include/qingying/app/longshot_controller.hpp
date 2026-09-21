@@ -34,8 +34,8 @@ class LongShotController {
   // any previous worker, so at most one session can be active.
   bool start(const LongShotRequest& request);
 
-  // Called by SelectionOverlay's UI callback; it only changes atomics and
-  // never joins the worker from inside the overlay event.
+  // Called by SelectionOverlay's UI callback; updates control state and wakes
+  // paused work, never joins the worker from inside the overlay event.
   void handleControl(LongShotControl control) noexcept;
 
   // Takes the WM_QINGYING_LONGSHOT_COMPLETE token, joins the worker, and moves
@@ -44,6 +44,9 @@ class LongShotController {
   // down.
   bool handleCompletion(UiMessageToken token, ActionResult& result,
                         Image& image);
+  // Full payload hand-off, including verified pixels on failure. Invalid or
+  // stale tokens are rejected before joining and leave the output unchanged.
+  bool handleCompletion(UiMessageToken token, LongShotOutcome& outcome);
 
   // Requests cancellation without blocking the overlay callback. Call join()
   // after the overlay has returned when the caller needs a completed worker.

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "qingying/overlay/overlay_phase.hpp"
+#include "qingying/overlay/selection_types.h"
 #include "qingying/ui/shortcut_types.hpp"
 
 namespace qingying {
@@ -19,6 +20,11 @@ enum class SelectionToolbarCommand {
   Edit,
   Pin,
   StopLongShot,
+  RetryLongShot,
+  AdjustLongShotSelection,
+  KeepLongShotFrame,
+  AcceptLongShotPartial,
+  CancelLongShot,
   Cancel,
 };
 
@@ -42,12 +48,31 @@ struct SelectionToolbarItemModel {
   bool enabled{false};
 };
 
+enum class SelectionToolbarStatus {
+  None,
+  Running,
+  Paused,
+  Finishing,
+  Recoverable,
+  SingleFramePending,
+  PartialResultPending,
+  CopyFailed,
+};
+
 inline constexpr std::size_t SelectionToolbarItemCount = 6;
 using SelectionToolbarItems =
     std::array<SelectionToolbarItemModel, SelectionToolbarItemCount>;
 
 // 纯状态映射：Win32 工具栏只消费该描述，不自行推导业务状态。
-SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept;
+SelectionToolbarItems buildSelectionToolbarItems(
+    OverlayPhase phase,
+    LongShotRecoveryState recovery = {},
+    LongShotResultNotice notice = LongShotResultNotice::None) noexcept;
+
+SelectionToolbarStatus selectionToolbarStatus(
+    OverlayPhase phase,
+    LongShotRecoveryState recovery = {},
+    LongShotResultNotice notice = LongShotResultNotice::None) noexcept;
 
 bool selectionToolbarShortcutCommand(
     OverlayPhase phase, const SelectionShortcutSettings& shortcuts,
@@ -82,8 +107,11 @@ class SelectionToolbar {
 
   bool show(HWND owner_window,
             const SelectionToolbarPlacement& placement, OverlayPhase phase,
-            CommandCallback callback);
-  void update(OverlayPhase phase);
+            CommandCallback callback,
+            LongShotRecoveryState recovery = {},
+            LongShotResultNotice notice = LongShotResultNotice::None);
+  void update(OverlayPhase phase, LongShotRecoveryState recovery = {},
+              LongShotResultNotice notice = LongShotResultNotice::None);
   void hide();
   bool visible() const noexcept;
 
