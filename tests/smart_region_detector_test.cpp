@@ -1,6 +1,7 @@
 ﻿#include "qingying/window/smart_region_diagnostics.hpp"
 #include "smart_region_visual_cache.hpp"
 #include "qingying/window/smart_region_window_snapshot_cache.hpp"
+#include <array>
 #include <cstdint>
 #include <chrono>
 #include <condition_variable>
@@ -2185,6 +2186,92 @@ TEST(UiaBrowserShellEntryTest,
   EXPECT_EQ(entries.entryAt(0).m_role, BrowserShellRole::Button);
   EXPECT_EQ(entries.entryAt(1).m_role, BrowserShellRole::Tab);
   EXPECT_EQ(entries.entryAt(2).m_role, BrowserShellRole::BookmarkFolder);
+}
+
+TEST(UiaBrowserShellEntryTest, MapsAllSupportedBrowserShellSemanticRoles)
+{
+  const HWND root = reinterpret_cast<HWND>(123);
+  const WindowRect target_row{0, 0, 900, 80};
+  const window_detail::UiaRegionProperties properties[] = {
+      {{10, 8, 40, 36}, window_detail::UiaControlType::Button, true, true,
+       true, false, false, nullptr, UIA_ButtonControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke)},
+      {{50, 8, 180, 36}, window_detail::UiaControlType::TabItem, true, true,
+       true, false, true, nullptr, UIA_TabItemControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::SelectionItem)},
+      {{190, 8, 240, 36}, window_detail::UiaControlType::MenuItem, true, true,
+       true, false, true, nullptr, UIA_MenuItemControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke)},
+      {{250, 8, 300, 36}, window_detail::UiaControlType::MenuItem, true, true,
+       true, false, true, nullptr, UIA_MenuItemControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::ExpandCollapse)},
+      {{310, 8, 420, 36}, window_detail::UiaControlType::Hyperlink, true, true,
+       true, false, true, nullptr, UIA_HyperlinkControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke)},
+      {{430, 8, 700, 36}, window_detail::UiaControlType::Edit, true, true,
+       true, true, true, nullptr, UIA_EditControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Value)},
+  };
+
+  BrowserShellEntryCollection entries;
+  ASSERT_TRUE(window_detail::collectBrowserShellEntries(
+      root, {320, 20}, target_row, properties, std::size(properties),
+      entries));
+  ASSERT_EQ(entries.count(), std::size(properties));
+  EXPECT_EQ(entries.entryAt(0).m_role, BrowserShellRole::Button);
+  EXPECT_EQ(entries.entryAt(1).m_role, BrowserShellRole::Tab);
+  EXPECT_EQ(entries.entryAt(2).m_role, BrowserShellRole::MenuButton);
+  EXPECT_EQ(entries.entryAt(3).m_role, BrowserShellRole::BookmarkFolder);
+  EXPECT_EQ(entries.entryAt(4).m_role, BrowserShellRole::Bookmark);
+  EXPECT_EQ(entries.entryAt(5).m_role, BrowserShellRole::AddressBar);
+}
+
+TEST(UiaBrowserShellEntryTest, LimitsSemanticPrefetchToDirectSixtyFourEntries)
+{
+  constexpr std::size_t kInputCount = 65;
+  const HWND root = reinterpret_cast<HWND>(123);
+  const WindowRect target_row{0, 0, 2000, 80};
+  std::array<window_detail::UiaRegionProperties, kInputCount> properties{};
+  for (std::size_t index = 0; index < properties.size(); ++index)
+  {
+    properties.at(index) = {
+        {static_cast<int>(index * 20), 8,
+         static_cast<int>(index * 20 + 16), 32},
+        window_detail::UiaControlType::Button, true, true, true, false, false,
+        nullptr, UIA_ButtonControlTypeId,
+        static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke)};
+  }
+
+  BrowserShellEntryCollection entries;
+  ASSERT_TRUE(window_detail::collectBrowserShellEntries(
+      root, {10, 20}, target_row, properties.data(), properties.size(),
+      entries));
+  EXPECT_EQ(entries.count(), BrowserShellEntryCollection::MaximumEntries);
+}
+
+TEST(UiaCacheRequestProfileTest, SeparatesFastPointAndLocalSemanticProperties)
+{
+  const auto fast = window_detail::fastPointCacheRequestProfile();
+  EXPECT_FALSE(fast.include_name);
+  EXPECT_EQ(fast.pattern_flags, 0U);
+
+  const auto button = window_detail::localSemanticCacheRequestProfile(
+      window_detail::UiaControlType::Button);
+  EXPECT_TRUE(button.include_name);
+  EXPECT_NE(button.pattern_flags &
+                static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke),
+            0U);
+  EXPECT_EQ(
+      button.pattern_flags &
+          static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Value),
+      0U);
+
+  const auto address_bar = window_detail::localSemanticCacheRequestProfile(
+      window_detail::UiaControlType::Edit);
+  EXPECT_TRUE(address_bar.include_name);
+  EXPECT_NE(address_bar.pattern_flags &
+                static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Value),
+            0U);
 }
 
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)

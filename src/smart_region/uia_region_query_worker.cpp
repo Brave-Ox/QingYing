@@ -146,6 +146,11 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
       request.root_window, request.screen_point, result.candidates,
       SmartRegionMaxUiaCandidates, uia_candidate_count));
   result.candidate_count = uia_candidate_count;
+  result.succeeded = result.candidate_count != 0;
+  if (progress)
+  {
+    progress(result);
+  }
 
   if (lane != RegionQueryLane::Discovery &&
       (!request.deadline_ms || GetTickCount64() < request.deadline_ms))
@@ -161,6 +166,10 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
           result.m_browser_shell_atlas->m_layout_generation;
       result.m_window_generation = request.generation;
       result.m_pointer_sequence = request.request_id;
+      if (progress)
+      {
+        progress(result);
+      }
     }
   }
 

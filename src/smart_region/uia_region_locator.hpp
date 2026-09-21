@@ -47,6 +47,17 @@ enum class UiaPatternFlag : std::uint8_t {
   ScrollItem = 1U << 6,
 };
 
+struct UiaCacheRequestProfile
+{
+  bool include_name{false};
+  std::uint8_t pattern_flags{0};
+};
+
+UiaCacheRequestProfile fastPointCacheRequestProfile() noexcept;
+
+UiaCacheRequestProfile localSemanticCacheRequestProfile(
+    UiaControlType control_type) noexcept;
+
 struct UiaRegionProperties {
   WindowRect rect;
   UiaControlType control_type{UiaControlType::Unknown};
