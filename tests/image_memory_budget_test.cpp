@@ -122,14 +122,20 @@ TEST(ImageMemoryBudgetTest, CaptureRejectsNativeBitmapAndDibCopyBeforeAllocating
 TEST(ImageMemoryBudgetTest, DibOutputKeepsScratchChargedUntilBufferDestruction) {
   const auto baseline = ImageMemoryBudget::global().snapshot().used_bytes;
   MemoryLimit limit{64};
-  Image image{1, 1, {1}};
+  Image image;
+  image.width = 1;
+  image.height = 1;
+  // Snapshot the input allocation so this test isolates the DIB scratch buffer.
+  image.pixels.assign(1, 1);
+  const auto input_bytes = ImageMemoryBudget::global().snapshot().used_bytes;
+  ASSERT_GT(input_bytes, baseline);
   {
     const auto bytes = dib::encodeDib(image);
     EXPECT_EQ(bytes.size(), 44u);
-    EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline + 48);
+    EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, input_bytes + 44);
     EXPECT_THROW(dib::encodeDib(image), std::bad_alloc);
   }
-  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, baseline + 4);
+  EXPECT_EQ(ImageMemoryBudget::global().snapshot().used_bytes, input_bytes);
 }
 TEST(ImageMemoryBudgetTest, PreviewCountAndBytesHaveIndependentLimits) {
   ImageMemoryBudget budget{64ULL * 1024 * 1024};

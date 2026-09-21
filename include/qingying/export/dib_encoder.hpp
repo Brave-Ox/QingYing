@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <new>
-#include <vector>
 
 #include "qingying/action/image.hpp"
 
@@ -20,7 +20,8 @@ class DibBytes {
       : m_budget(ImageMemoryBudget::global().reserve(
             size, ImageMemoryKind::EncodeScratch)) {
     if (!m_budget) throw std::bad_alloc{};
-    m_bytes.resize(size);
+    m_bytes = std::make_unique<std::uint8_t[]>(size);
+    m_size = size;
   }
 
   DibBytes(const DibBytes&) = delete;
@@ -28,14 +29,15 @@ class DibBytes {
   DibBytes(DibBytes&&) noexcept = default;
   DibBytes& operator=(DibBytes&&) noexcept = default;
 
-  bool empty() const noexcept { return m_bytes.empty(); }
-  std::size_t size() const noexcept { return m_bytes.size(); }
-  std::uint8_t* data() noexcept { return m_bytes.data(); }
-  const std::uint8_t* data() const noexcept { return m_bytes.data(); }
+  bool empty() const noexcept { return m_size == 0; }
+  std::size_t size() const noexcept { return m_size; }
+  std::uint8_t* data() noexcept { return m_bytes.get(); }
+  const std::uint8_t* data() const noexcept { return m_bytes.get(); }
 
  private:
   ImageMemoryBudget::Token m_budget;
-  std::vector<std::uint8_t> m_bytes;
+  std::unique_ptr<std::uint8_t[]> m_bytes;
+  std::size_t m_size{0};
 };
 DibBytes encodeDib(const Image& image);
 
