@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <string>
 
 namespace qingying {
 
@@ -79,6 +80,17 @@ TEST(CaptureEngineTest, CaptureRegionRejectsCoordinateAndStrideOverflow) {
                 .error_code,
             ErrorCode::kInvalidArgument);
   EXPECT_TRUE(out.empty());
+}
+
+TEST(CaptureEngineTest, FailedDesktopCaptureIncludesWin32Diagnostic) {
+  CaptureEngine engine;
+  Image out;
+
+  const ActionResult result = engine.captureRegion(0, 0, 1, 1, out);
+
+  if (!result.ok) {
+    EXPECT_NE(result.message.find("win32="), std::string::npos);
+  }
 }
 
 }  // namespace qingying

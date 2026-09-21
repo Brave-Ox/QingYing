@@ -197,11 +197,13 @@ ActionResult CaptureEngine::captureRegion(int x, int y, int width, int height,
       BitBlt(mem_dc.get(), dst_x, dst_y, static_cast<int>(e_w),
              static_cast<int>(e_h), screen_dc.get(), static_cast<int>(e_x1),
              static_cast<int>(e_y1), SRCCOPY);
+  const DWORD blt_error = blt_ok ? ERROR_SUCCESS : GetLastError();
   SelectObject(mem_dc.get(), old_bitmap);
   if (!blt_ok) {
     r.ok = false;
     r.error_code = ErrorCode::kCaptureFailed;
-    r.message = "captureRegion: BitBlt failed";
+    r.message = "captureRegion: BitBlt failed (win32=" +
+                std::to_string(blt_error) + ")";
     out = Image{};
     return r;
   }
