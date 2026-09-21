@@ -281,6 +281,7 @@ endif()
 add_executable(qingying_smart_region_tests
   smart_region_boundary_test.cpp
   browser_shell_atlas_test.cpp
+  browser_shell_presentation_test.cpp
 )
 target_link_libraries(qingying_smart_region_tests PRIVATE
   qingying_smart_region GTest::gtest GTest::gtest_main)

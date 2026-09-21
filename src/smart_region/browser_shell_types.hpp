@@ -72,6 +72,52 @@ struct BrowserShellAtlasSnapshot
   std::uint64_t m_layout_generation{0};
 };
 
+enum class BrowserPresentationLevel : std::uint8_t
+{
+  Coarse,
+  Cached,
+  Exact,
+};
+
+enum class BrowserPresentationAction : std::uint8_t
+{
+  Keep,
+  Apply,
+  Defer,
+  Clear,
+};
+
+enum class BrowserPresentationReason : std::uint8_t
+{
+  None,
+  FirstCandidate,
+  QualityUpgrade,
+  CurrentCandidateLeft,
+  AdjacentCandidateWait,
+  LowQualityFallback,
+  FastMotion,
+  WindowGenerationExpired,
+  LayoutGenerationExpired,
+  PointerSequenceExpired,
+};
+
+struct BrowserPresentedCandidate
+{
+  WindowRect m_hit_rect;
+  BrowserPresentationLevel m_level{BrowserPresentationLevel::Coarse};
+  std::uint64_t m_identity_hash{0};
+  std::uint64_t m_window_generation{0};
+  std::uint64_t m_layout_generation{0};
+  std::uint64_t m_pointer_sequence{0};
+};
+
+struct BrowserPresentationDecision
+{
+  BrowserPresentationAction m_action{BrowserPresentationAction::Keep};
+  std::uint64_t m_delay_ms{0};
+  BrowserPresentationReason m_reason{BrowserPresentationReason::None};
+};
+
 class BrowserShellEntryCollection
 {
  public:

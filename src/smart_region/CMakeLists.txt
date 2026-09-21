@@ -1,5 +1,6 @@
 add_library(qingying_smart_region STATIC
   browser_shell_atlas.cpp
+  browser_shell_presentation.cpp
   browser_shell_policy.cpp
   smart_region_detector.cpp
   smart_region_diagnostics.cpp
