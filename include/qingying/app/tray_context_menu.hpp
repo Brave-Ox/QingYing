@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include <array>
+#include <string>
+
 #include <Windows.h>
 
 namespace qingying {
@@ -7,6 +10,10 @@ namespace qingying {
 inline constexpr UINT TrayMenuAutostartCommandId = 40001;
 inline constexpr UINT TrayMenuExitCommandId = 40002;
 inline constexpr UINT TrayMenuAutomationCommandId = 40003;
+inline constexpr UINT TrayMenuCaptureCommandId = 40004;
+inline constexpr UINT TrayMenuSettingsCommandId = 40005;
+inline constexpr wchar_t TrayMenuCaptureText[] = L"开始截图";
+inline constexpr wchar_t TrayMenuSettingsText[] = L"设置...";
 inline constexpr wchar_t TrayMenuAutomationText[] = L"允许本机 Agent 接口";
 inline constexpr wchar_t TrayMenuAutostartText[] = L"开机自启";
 inline constexpr wchar_t TrayMenuExitText[] = L"退出";
@@ -21,20 +28,14 @@ inline constexpr int TrayMenuSeparatorInsetPx = 12;
 inline constexpr int TrayMenuSeparatorThicknessPx = 1;
 inline constexpr int TrayMenuMinItemHeightPx = 30;
 inline constexpr int TrayMenuCheckStrokePx = 2;
-inline constexpr COLORREF TrayMenuTextColor = RGB(55, 59, 66);
-inline constexpr COLORREF TrayMenuHoverFill = RGB(245, 247, 249);
+inline constexpr COLORREF TrayMenuTextColor = RGB(31, 35, 41);
 inline constexpr COLORREF TrayMenuFill = RGB(255, 255, 255);
-inline constexpr COLORREF TrayMenuSeparatorColor = RGB(226, 229, 234);
+inline constexpr COLORREF TrayMenuSeparatorColor = RGB(236, 239, 244);
 inline constexpr int TrayMenuHoverInsetX = 6;
 inline constexpr int TrayMenuHoverInsetY = 3;
 inline constexpr int TrayMenuHoverRadius = 6;
-inline constexpr int TrayMenuHoverShadowOffsetX = 2;
-inline constexpr int TrayMenuHoverShadowOffsetY = 3;
-inline constexpr int TrayMenuHoverShadowLayers = 5;
-inline constexpr int TrayMenuHoverShadowSpreadPx = 1;
-inline constexpr COLORREF TrayMenuHoverCardFill = RGB(255, 255, 255);
-inline constexpr COLORREF TrayMenuHoverCardBorder = RGB(226, 229, 234);
-inline constexpr COLORREF TrayMenuHoverShadow = RGB(148, 152, 158);
+inline constexpr COLORREF TrayMenuHoverCardFill = RGB(238, 245, 255);
+inline constexpr COLORREF TrayMenuHoverCardBorder = RGB(229, 236, 245);
 
 enum class TrayMenuItemKind : ULONG_PTR
 {
@@ -43,6 +44,8 @@ enum class TrayMenuItemKind : ULONG_PTR
   Separator = 2,
   Exit = 3,
   Automation = 4,
+  Capture = 5,
+  Settings = 6,
 };
 
 inline int trayMenuScalePx(int px, int dpi)
@@ -57,6 +60,8 @@ inline int trayMenuScalePx(int px, int dpi)
 
 inline const wchar_t* trayMenuLabelForId(UINT menu_id)
 {
+  if (menu_id == TrayMenuCaptureCommandId) return TrayMenuCaptureText;
+  if (menu_id == TrayMenuSettingsCommandId) return TrayMenuSettingsText;
   if (menu_id == TrayMenuAutomationCommandId) return TrayMenuAutomationText;
   if (menu_id == TrayMenuAutostartCommandId)
   {
@@ -69,8 +74,30 @@ inline const wchar_t* trayMenuLabelForId(UINT menu_id)
   return L"";
 }
 
+inline const std::array<UINT, 5>& trayMenuCommandOrder()
+{
+  static constexpr std::array<UINT, 5> Order{
+      TrayMenuCaptureCommandId,
+      TrayMenuSettingsCommandId,
+      TrayMenuAutostartCommandId,
+      TrayMenuAutomationCommandId,
+      TrayMenuExitCommandId};
+  return Order;
+}
+
+inline std::wstring trayMenuCaptureDisplayText(const std::wstring& hotkey)
+{
+  if (hotkey.empty())
+  {
+    return TrayMenuCaptureText;
+  }
+  return std::wstring(TrayMenuCaptureText) + L"\t" + hotkey;
+}
+
 inline TrayMenuItemKind trayMenuKindFromId(UINT menu_id)
 {
+  if (menu_id == TrayMenuCaptureCommandId) return TrayMenuItemKind::Capture;
+  if (menu_id == TrayMenuSettingsCommandId) return TrayMenuItemKind::Settings;
   if (menu_id == TrayMenuAutomationCommandId) return TrayMenuItemKind::Automation;
   if (menu_id == TrayMenuAutostartCommandId)
   {
@@ -87,6 +114,10 @@ inline const wchar_t* trayMenuLabelForKind(TrayMenuItemKind kind)
 {
   switch (kind)
   {
+    case TrayMenuItemKind::Capture:
+      return TrayMenuCaptureText;
+    case TrayMenuItemKind::Settings:
+      return TrayMenuSettingsText;
     case TrayMenuItemKind::Automation:
       return TrayMenuAutomationText;
     case TrayMenuItemKind::Autostart:
@@ -143,59 +174,15 @@ inline RECT trayMenuHoverCardRect(const RECT& item, int dpi)
   RECT card = item;
   const int inset_x = trayMenuScalePx(TrayMenuHoverInsetX, dpi);
   const int inset_y = trayMenuScalePx(TrayMenuHoverInsetY, dpi);
-  const int shadow_x = trayMenuScalePx(TrayMenuHoverShadowOffsetX, dpi);
-  const int shadow_y = trayMenuScalePx(TrayMenuHoverShadowOffsetY, dpi);
   card.left += inset_x;
   card.top += inset_y;
-  card.right -= inset_x + shadow_x;
-  card.bottom -= inset_y + shadow_y;
+  card.right -= inset_x;
+  card.bottom -= inset_y;
   if (card.right <= card.left || card.bottom <= card.top)
   {
     return item;
   }
   return card;
-}
-
-inline int trayMenuRed(COLORREF color)
-{
-  return static_cast<int>(color & 0xFFu);
-}
-
-inline int trayMenuGreen(COLORREF color)
-{
-  return static_cast<int>((color >> 8) & 0xFFu);
-}
-
-inline int trayMenuBlue(COLORREF color)
-{
-  return static_cast<int>((color >> 16) & 0xFFu);
-}
-
-inline COLORREF trayMenuHoverShadowLayerColor(int layer_from_outside)
-{
-  int layer = layer_from_outside;
-  if (layer < 1)
-  {
-    layer = 1;
-  }
-  if (layer > TrayMenuHoverShadowLayers)
-  {
-    layer = TrayMenuHoverShadowLayers;
-  }
-  const int lighten = TrayMenuHoverShadowLayers - layer;
-  const int r =
-      trayMenuRed(TrayMenuHoverShadow) +
-      (trayMenuRed(TrayMenuFill) - trayMenuRed(TrayMenuHoverShadow)) * lighten /
-          TrayMenuHoverShadowLayers;
-  const int g =
-      trayMenuGreen(TrayMenuHoverShadow) +
-      (trayMenuGreen(TrayMenuFill) - trayMenuGreen(TrayMenuHoverShadow)) *
-          lighten / TrayMenuHoverShadowLayers;
-  const int b =
-      trayMenuBlue(TrayMenuHoverShadow) +
-      (trayMenuBlue(TrayMenuFill) - trayMenuBlue(TrayMenuHoverShadow)) * lighten /
-          TrayMenuHoverShadowLayers;
-  return RGB(r, g, b);
 }
 
 inline void fillTrayMenuItem(MENUITEMINFOW& info, UINT command_id, bool checked)

@@ -11,8 +11,73 @@ namespace longshot_detail {
 namespace {
 
 constexpr UINT kScrollDispatchTimeoutMs = 500;
+constexpr UINT kGenericScrollDispatchTimeoutMs = 200;
 
 }  // 匿名命名空间
+
+bool windowBelongsToOwner(std::uintptr_t owner_window,
+                          std::uintptr_t target_window) noexcept {
+  const HWND owner = reinterpret_cast<HWND>(owner_window);
+  const HWND target = reinterpret_cast<HWND>(target_window);
+  return owner != nullptr && target != nullptr &&
+         (owner == target || IsChild(owner, target));
+}
+
+bool windowClientScreenRect(std::uintptr_t window,
+                            ScreenPhysicalRect& out) noexcept {
+  out = {};
+  const HWND target = reinterpret_cast<HWND>(window);
+  if (target == nullptr || !IsWindow(target)) return false;
+  RECT client{};
+  if (!GetClientRect(target, &client)) return false;
+  POINT top_left{client.left, client.top};
+  POINT bottom_right{client.right, client.bottom};
+  if (!ClientToScreen(target, &top_left) ||
+      !ClientToScreen(target, &bottom_right)) {
+    return false;
+  }
+  const auto width = static_cast<std::int64_t>(bottom_right.x) - top_left.x;
+  const auto height = static_cast<std::int64_t>(bottom_right.y) - top_left.y;
+  if (width <= 0 || height <= 0 ||
+      width > (std::numeric_limits<int>::max)() ||
+      height > (std::numeric_limits<int>::max)()) {
+    return false;
+  }
+  out = {top_left.x, top_left.y, static_cast<int>(width),
+         static_cast<int>(height)};
+  return true;
+}
+
+std::uint32_t windowProcessId(std::uintptr_t window) noexcept {
+  DWORD process_id = 0;
+  const HWND target = reinterpret_cast<HWND>(window);
+  if (target != nullptr) GetWindowThreadProcessId(target, &process_id);
+  return static_cast<std::uint32_t>(process_id);
+}
+
+bool sendBoundedWheelDown(std::uintptr_t owner_window,
+                          std::uintptr_t target_window, int screen_x,
+                          int screen_y) noexcept {
+  if (!windowBelongsToOwner(owner_window, target_window)) return false;
+  if (screen_x < (std::numeric_limits<SHORT>::min)() ||
+      screen_x > (std::numeric_limits<SHORT>::max)() ||
+      screen_y < (std::numeric_limits<SHORT>::min)() ||
+      screen_y > (std::numeric_limits<SHORT>::max)()) {
+    return false;
+  }
+  const HWND target = reinterpret_cast<HWND>(target_window);
+  if (target == nullptr || !IsWindow(target)) return false;
+
+  const WORD wheel_delta = static_cast<WORD>(static_cast<SHORT>(-WHEEL_DELTA));
+  const WPARAM wheel_parameters = MAKEWPARAM(0, wheel_delta);
+  const LPARAM screen_point =
+      MAKELPARAM(static_cast<WORD>(screen_x), static_cast<WORD>(screen_y));
+  DWORD_PTR message_result = 0;
+  return SendMessageTimeoutW(
+             target, WM_MOUSEWHEEL, wheel_parameters, screen_point,
+             SMTO_ABORTIFHUNG | SMTO_BLOCK, kGenericScrollDispatchTimeoutMs,
+             &message_result) != 0;
+}
 
 bool sendWheelDown(const LongShotRequest& request,
                    const LongShotProfileResult& profile) {

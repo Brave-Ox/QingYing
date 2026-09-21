@@ -17,6 +17,7 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -24,61 +25,63 @@ namespace qingying {
 
 namespace {
 
-const wchar_t* longShotFailureStageText(const std::string& stage) {
-  if (stage == "request_validation") {
-    return L"请求校验";
+LongShotRecoveryCause recoveryCause(const LongShotOutcome& outcome) noexcept {
+  if (outcome.diagnostic.error_code == ErrorCode::kLongShotUnsupported) {
+    return LongShotRecoveryCause::Unsupported;
   }
-  if (stage == "safety_limit") {
-    return L"安全限制";
+  switch (outcome.stop_reason) {
+    case LongShotStopReason::NoProgress:
+      return LongShotRecoveryCause::NoProgress;
+    case LongShotStopReason::MatchFailed:
+    case LongShotStopReason::StitchFailed:
+      return LongShotRecoveryCause::MatchFailed;
+    case LongShotStopReason::InputUnavailable:
+      return LongShotRecoveryCause::InputUnavailable;
+    case LongShotStopReason::TargetInvalid:
+      return LongShotRecoveryCause::TargetInvalid;
+    case LongShotStopReason::CaptureFailed:
+      return LongShotRecoveryCause::CaptureFailed;
+    case LongShotStopReason::LimitReached:
+      return LongShotRecoveryCause::LimitReached;
+    case LongShotStopReason::UserStopped:
+      return LongShotRecoveryCause::UserStopped;
+    case LongShotStopReason::NotStarted:
+    case LongShotStopReason::RequestRejected:
+    case LongShotStopReason::ReachedBottom:
+    case LongShotStopReason::Cancelled:
+      return LongShotRecoveryCause::Other;
   }
-  if (stage == "profile_resolution") {
-    return L"滚动目标识别";
-  }
-  if (stage == "scroll_input") {
-    return L"滚动输入";
-  }
-  if (stage == "scroll_settle") {
-    return L"等待滚动稳定";
-  }
-  if (stage == "initial_capture" || stage == "frame_capture") {
-    return L"屏幕采集";
-  }
-  if (stage == "frame_validation") {
-    return L"图像帧校验";
-  }
-  if (stage == "overlap_detection") {
-    return L"重叠区域匹配";
-  }
-  if (stage == "stitching") {
-    return L"图像拼接";
-  }
-  return L"未知阶段";
-}
-
-std::wstring longShotFailureText(const ActionResult& result) {
-  if (result.error_code == ErrorCode::kLongShotUnsupported &&
-      (result.failure_stage.empty() ||
-       (result.failure_stage == "profile_resolution" &&
-        result.failure_frame == 0))) {
-    return L"当前窗口或框选区域不支持长截图。\n"
-           L"请在受支持应用的可滚动内容区域内重新框选。";
-  }
-
-  std::wstring text = L"长截图失败";
-  if (!result.failure_stage.empty()) {
-    text += L"\n失败阶段：";
-    text += longShotFailureStageText(result.failure_stage);
-  }
-  if (result.failure_frame > 0) {
-    text += L"（第 ";
-    text += std::to_wstring(result.failure_frame);
-    text += L" 帧）";
-  }
-  text += L"。\n请重新框选后再试。";
-  return text;
+  return LongShotRecoveryCause::Other;
 }
 
 }  // 匿名命名空间
+
+LongShotWorkflowDecision decideLongShotWorkflow(
+    const LongShotOutcome& outcome) noexcept {
+  LongShotWorkflowDecision decision;
+  if (outcome.stop_reason == LongShotStopReason::Cancelled) {
+    return decision;
+  }
+  if (outcome.isComplete()) {
+    decision.disposition = LongShotWorkflowDisposition::PublishAndCopy;
+    return decision;
+  }
+
+  decision.disposition = LongShotWorkflowDisposition::AwaitConfirmation;
+  decision.recovery.cause = recoveryCause(outcome);
+  switch (outcome.quality()) {
+    case LongShotResultQuality::None:
+      decision.recovery.result = LongShotRecoveryResult::None;
+      break;
+    case LongShotResultQuality::SingleFrame:
+      decision.recovery.result = LongShotRecoveryResult::SingleFrame;
+      break;
+    case LongShotResultQuality::VerifiedComposite:
+      decision.recovery.result = LongShotRecoveryResult::PartialResult;
+      break;
+  }
+  return decision;
+}
 
 CaptureWorkflowRoute decideCaptureWorkflowRoute(
     const SelectionIntent& selection,
@@ -129,6 +132,11 @@ struct CaptureWorkflow::Impl {
     longshot_controller.setOwnerWindow(window);
   }
 
+  void setSelectionShortcuts(
+      const SelectionShortcutSettings& shortcuts) noexcept {
+    selection_shortcuts = shortcuts;
+  }
+
   void postContinuation() {
     if (owner_window != nullptr && IsWindow(owner_window)) {
       PostMessageW(owner_window, WM_QINGYING_WORKFLOW_CONTINUE, 0, 0);
@@ -160,7 +168,8 @@ void showSelectionOverlay() {
           selection_closed = true;
           postContinuation();
         },
-        annotated_result_ready);
+        annotated_result_ready,
+        selection_shortcuts);
     if (!shown) {
       stage = WorkflowStage::Idle;
       active = false;
@@ -266,6 +275,104 @@ void showSelectionOverlay() {
     }
   }
 
+  void clearPendingLongShot() noexcept {
+    pending_longshot_outcome = LongShotOutcome{};
+    pending_longshot_confirmation = false;
+  }
+
+  void closeAfterLongShotUiFailure() {
+    clearPendingLongShot();
+    selection_overlay.hide();
+    selection_closed = true;
+    postContinuation();
+  }
+
+  bool showLongShotRecovery(LongShotRecoveryState recovery) {
+    if (pending_longshot_confirmation &&
+        pending_longshot_outcome.hasExportableResult()) {
+      (void)selection_overlay.postLongShotPreview(
+          pending_longshot_outcome.image);
+    }
+    if (!selection_overlay.postLongShotRecoverable(recovery)) {
+      closeAfterLongShotUiFailure();
+      return false;
+    }
+    return true;
+  }
+
+  bool publishPendingLongShot(bool auto_copy) {
+    if (!pending_longshot_confirmation ||
+        !pending_longshot_outcome.hasExportableResult()) {
+      return false;
+    }
+    const Image& candidate = pending_longshot_outcome.image;
+    if (candidate.pixels.capacity() >
+        (std::numeric_limits<std::uint64_t>::max)() /
+            sizeof(std::uint32_t)) {
+      return false;
+    }
+    auto reservation = results.reserve(
+        kGuiResultScopeId, candidate.width, candidate.height, false,
+        static_cast<std::uint64_t>(candidate.pixels.capacity()) *
+            sizeof(std::uint32_t));
+    if (!reservation) {
+      return false;
+    }
+
+    active_result_id = results.publish(
+        kGuiResultScopeId, std::move(pending_longshot_outcome.image),
+        std::move(reservation), pending_longshot_request.selectionRect());
+    if (active_result_id == kInvalidResultId) {
+      clearPendingLongShot();
+      return false;
+    }
+    clearPendingLongShot();
+    longshot_result_ready = true;
+
+    LongShotResultNotice notice = LongShotResultNotice::None;
+    if (auto_copy) {
+      const ActionResult copy_result = result_actions.copy(
+          kGuiResultScopeId, ResultSelection::specific(active_result_id),
+          gate_owner());
+      if (!copy_result.ok) {
+        notice = LongShotResultNotice::CopyFailed;
+      }
+    }
+    if (!selection_overlay.postLongShotFinished(true, notice)) {
+      closeAfterLongShotUiFailure();
+      return false;
+    }
+    return true;
+  }
+
+  void recoverAfterPublishFailure() {
+    LongShotRecoveryState recovery;
+    recovery.cause = LongShotRecoveryCause::LimitReached;
+    if (pending_longshot_outcome.quality() ==
+        LongShotResultQuality::SingleFrame) {
+      recovery.result = LongShotRecoveryResult::SingleFrame;
+    } else if (pending_longshot_outcome.quality() ==
+               LongShotResultQuality::VerifiedComposite) {
+      recovery.result = LongShotRecoveryResult::PartialResult;
+    }
+    (void)showLongShotRecovery(recovery);
+  }
+
+  bool startLongShot() {
+    clearPendingLongShot();
+    longshot_result_ready = false;
+    interaction.setKind(InteractionKind::LongShot);
+    if (longshot_controller.start(pending_longshot_request)) {
+      return true;
+    }
+    interaction.setKind(InteractionKind::Capture);
+    pending_longshot_confirmation = true;
+    pending_longshot_outcome.stop_reason =
+        LongShotStopReason::RequestRejected;
+    return showLongShotRecovery(
+        {LongShotRecoveryResult::None, LongShotRecoveryCause::Other});
+  }
+
   void runCapturePipeline(const SelectionIntent& region) {
     const CaptureWorkflowRoute route = decideCaptureWorkflowRoute(
         region, longshot_result_ready, annotated_result_ready);
@@ -278,15 +385,7 @@ void showSelectionOverlay() {
         annotated_result_ready = false;
         return;
       case CaptureWorkflowRoute::StartLongShot:
-        interaction.setKind(InteractionKind::LongShot);
-        longshot_result_ready = false;
-        if (!longshot_controller.start(pending_longshot_request)) {
-          interaction.setKind(InteractionKind::Capture);
-          pending_overlay_error = L"长截图无法启动，请重新框选后再试。";
-          if (!selection_overlay.postLongShotFinished(false)) {
-            selection_overlay.hide();
-          }
-        }
+        (void)startLongShot();
         return;
       case CaptureWorkflowRoute::ExistingLongShotResult:
         dispatchResultAction(region.action, active_result_id);
@@ -314,7 +413,38 @@ void showSelectionOverlay() {
   }
 
   void onLongShotControl(LongShotControl control) {
-    longshot_controller.handleControl(control);
+    if (control == LongShotControl::TogglePause ||
+        control == LongShotControl::Stop) {
+      longshot_controller.handleControl(control);
+      return;
+    }
+    if (control == LongShotControl::Retry) {
+      (void)startLongShot();
+      return;
+    }
+    if (control == LongShotControl::AdjustSelection) {
+      clearPendingLongShot();
+      pending_longshot_request = LongShotRequest{};
+      interaction.setKind(InteractionKind::Capture);
+      return;
+    }
+    if (control == LongShotControl::Cancel) {
+      clearPendingLongShot();
+      longshot_controller.cancel();
+      interaction.setKind(InteractionKind::Capture);
+      return;
+    }
+
+    const bool expected_result =
+        (control == LongShotControl::KeepFirstFrame &&
+         pending_longshot_outcome.quality() ==
+             LongShotResultQuality::SingleFrame) ||
+        (control == LongShotControl::AcceptPartialResult &&
+         pending_longshot_outcome.quality() ==
+             LongShotResultQuality::VerifiedComposite);
+    if (!expected_result || !publishPendingLongShot(false)) {
+      recoverAfterPublishFailure();
+    }
   }
 
   void stopLongShotWorker() {
@@ -324,57 +454,36 @@ void showSelectionOverlay() {
   }
 
   void handleLongShotCompletion(UiMessageToken token) {
-    ActionResult completion_result;
-    Image completion_image;
+    LongShotOutcome outcome;
     const bool completion_received = longshot_controller.handleCompletion(
-        token, completion_result, completion_image);
+        token, outcome);
     if (completion_received) interaction.setKind(InteractionKind::Capture);
     if (shutting_down.load() || !active || stage != WorkflowStage::Selecting) {
       return;
     }
     if (!completion_received) {
-      longshot_result_ready = false;
-      pending_overlay_error = L"长截图失败，请重新框选后再试。";
+      // 过期、重复或已清理的完成 token 不得终止当前截图会话。
+      return;
+    }
+
+    const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+    if (decision.disposition == LongShotWorkflowDisposition::Discard) {
+      clearPendingLongShot();
       if (!selection_overlay.postLongShotFinished(false)) {
-        selection_overlay.hide();
-        selection_closed = true;
-        postContinuation();
+        closeAfterLongShotUiFailure();
       }
       return;
     }
 
-    bool overlay_success = completion_result.ok;
-    if (completion_result.ok) {
-      active_result_id = results.publish(kGuiResultScopeId, std::move(completion_image));
-      longshot_result_ready = active_result_id != kInvalidResultId;
-      if (!longshot_result_ready) {
-        overlay_success = false;
-        pending_overlay_error = L"长截图生成了无效结果，请重新框选后再试。";
-      } else {
-        // 保持现有行为：第一份完成的结果立即可用，同时保留遮罩以便继续执行操作。
-        const ActionResult copy_result = result_actions.copy(kGuiResultScopeId, ResultSelection::specific(active_result_id), gate_owner());
-        if (!copy_result.ok) {
-          overlay_success = false;
-          longshot_result_ready = false;
-          pending_overlay_error = L"长截图已生成，但复制到剪贴板失败。";
-        }
-      }
-      if (!overlay_success) {
-        active_result_id = kInvalidResultId;
-      }
-    } else {
-      longshot_result_ready = false;
-      pending_overlay_error =
-          longShotFailureText(completion_result);
+    pending_longshot_outcome = std::move(outcome);
+    pending_longshot_confirmation = true;
+    if (decision.disposition ==
+        LongShotWorkflowDisposition::AwaitConfirmation) {
+      (void)showLongShotRecovery(decision.recovery);
+      return;
     }
-
-    if (!selection_overlay.postLongShotFinished(overlay_success)) {
-      if (overlay_success) {
-        longshot_result_ready = false;
-      }
-      selection_overlay.hide();
-      selection_closed = true;
-      postContinuation();
+    if (!publishPendingLongShot(true)) {
+      recoverAfterPublishFailure();
     }
   }
 
@@ -385,7 +494,7 @@ void showSelectionOverlay() {
     }
 
     // Do not overwrite the existing guard on rejection: active may already be
-    // false while finishWorkflow is still inside a modal error message.
+    // false while finishWorkflow is still unwinding a completion callback.
     auto admitted = gate.acquire(InteractionKind::Capture);
     if (!admitted) return false;
     interaction = std::move(admitted);
@@ -407,6 +516,7 @@ void showSelectionOverlay() {
     }
     recorded_owner_window = target;
     pending_longshot_request = LongShotRequest{};
+    clearPendingLongShot();
     // 截屏失败时 background 为空，遮罩仍会退回纯半透明模式。
     ++capture_generation;
     capture_cancellation = CancellationSource{};
@@ -448,7 +558,15 @@ void showSelectionOverlay() {
           decideCaptureWorkflowRoute(pending_selection, longshot_result_ready,
                                      annotated_result_ready);
       if (route == CaptureWorkflowRoute::Edit) {
-        if (!beginAnnotation(pending_selection)) {
+        Image source;
+        if (longshot_result_ready && active_result_id != kInvalidResultId) {
+          const auto lease =
+              results.acquire(kGuiResultScopeId, active_result_id);
+          if (lease.image() != nullptr) {
+            source = *lease.image();
+          }
+        }
+        if (!beginAnnotation(pending_selection, std::move(source))) {
           finishWorkflow();
         }
         return;
@@ -520,6 +638,7 @@ void showSelectionOverlay() {
     active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
+    clearPendingLongShot();
     selection_background = Image{};
     initial_selection = SelectionIntent{};
     pending_selection = SelectionIntent{};
@@ -532,19 +651,10 @@ void showSelectionOverlay() {
     active = false;
 
     if (shutting_down.load()) {
-      pending_overlay_error.clear();
       interaction.reset();
       return;
     }
 
-    // 顶层全屏遮罩存在时，不能打开模态对话框。
-    // 长截图失败时先关闭遮罩，再显示错误信息。
-    std::wstring error = std::move(pending_overlay_error);
-    pending_overlay_error.clear();
-    if (!error.empty() && IsWindow(owner_window)) {
-      MessageBoxW(owner_window, error.c_str(), L"轻映 QingYing",
-                  MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
-    }
     interaction.reset();
   }
 
@@ -561,6 +671,7 @@ void showSelectionOverlay() {
     active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
+    clearPendingLongShot();
     selection_background = Image{};
     initial_selection = SelectionIntent{};
     pending_selection = SelectionIntent{};
@@ -569,7 +680,6 @@ void showSelectionOverlay() {
     selection_result_ready = false;
     annotation_result_ready = false;
     annotated_result_ready = false;
-    pending_overlay_error.clear();
     interaction.reset();
   }
 
@@ -615,6 +725,7 @@ void showSelectionOverlay() {
     active_result_id = kInvalidResultId;
     recorded_owner_window = 0;
     pending_longshot_request = LongShotRequest{};
+    clearPendingLongShot();
     selection_background = Image{};
     initial_selection = SelectionIntent{};
     pending_selection = SelectionIntent{};
@@ -623,7 +734,6 @@ void showSelectionOverlay() {
     selection_result_ready = false;
     annotation_result_ready = false;
     annotated_result_ready = false;
-    pending_overlay_error.clear();
     owner_window = nullptr;
     interaction.reset();
   }
@@ -653,6 +763,7 @@ void showSelectionOverlay() {
   WorkflowStage stage{WorkflowStage::Idle};
   HWND recorded_owner_window{nullptr};
   LongShotRequest pending_longshot_request{};
+  LongShotOutcome pending_longshot_outcome;
   Image selection_background;
   SelectionIntent initial_selection;
   SelectionIntent pending_selection;
@@ -663,14 +774,16 @@ void showSelectionOverlay() {
   CancellationSource capture_cancellation;
   std::shared_ptr<void> capture_lifetime{std::make_shared<int>(0)};
   bool longshot_result_ready{false};
+  bool pending_longshot_confirmation{false};
   bool annotated_result_ready{false};
   ResultId active_result_id{kInvalidResultId};
   bool selection_closed{false};
   bool selection_result_ready{false};
   bool annotation_result_ready{false};
-  std::wstring pending_overlay_error;
   InteractionGate local_gate;
   InteractionGate& gate;
+  SelectionShortcutSettings selection_shortcuts{
+      defaultSelectionShortcutSettings()};
   InteractionGate::Guard interaction;
 };
 
@@ -689,6 +802,11 @@ CaptureWorkflow::~CaptureWorkflow() {
 
 void CaptureWorkflow::setOwnerWindow(HWND owner_window) noexcept {
   impl_->setOwnerWindow(owner_window);
+}
+
+void CaptureWorkflow::setSelectionShortcuts(
+    const SelectionShortcutSettings& selection_shortcuts) noexcept {
+  impl_->setSelectionShortcuts(selection_shortcuts);
 }
 
 bool CaptureWorkflow::beginSelection() {

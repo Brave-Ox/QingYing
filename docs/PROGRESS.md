@@ -1,12 +1,12 @@
 # 轻映 QingYing — 开发进度（PROGRESS）
 
-> 当前提交基线：`a21f2ac4b4e04f8f777daccb4d355146fee9b069`
-> 更新日期：2026-09-17
+> 当前提交基线：`c512ed0f`（移除帧数与输入次数上限的调整待提交）
+> 更新日期：2026-09-20
 > 判定规则：实现、接线、自动测试和人工验收分别记录；提交标题只作佐证。
 
 功能范围见 [开发清单](../轻映-QingYing-开发清单.md)，当前结构见 [architecture.md](architecture.md)，交接摘要见 [项目理解.md](项目理解.md)，整改顺序见 [架构如何调整.md](架构如何调整.md)。
 
-2026-09-17 P0-3：SmartRegion 内容/视觉与辅助功能分别进入独立 latest-wins worker；UI 保留有界快照与严格提交校验。普通捕获、编辑采集和预览合成改为 CaptureExecutor 异步续接，GUI PNG 保存交给 ExportExecutor。新增阻塞/取消/deadline/窗口移动/lease 与线程边界测试，Capture worker 纳入共享关闭预算，并修复 Region/Export/LongShot join 虚假唤醒处理。吸附延迟回归修复：稳定窗口上下文 generation、近期局部结果重绑当前请求、不可变截图缓存复用、直接完成通知和跨通道候选合并；回退不重置局部稳定计时。`./build.bat Release test`：Release 编译成功，896/896 测试通过。新增 7 项吸附延迟/缓存/完成通知/点击边界回归。真实高 DPI/多显示器交互仍待人工验收，不响应取消的 provider 仍可能占据后台 worker。
+2026-09-20 F6 自动长截图 C11：在现有 profile 优先、通用滚轮回退和保守拼接链路上保留总时长、同位置重采、滚动稳定轮询、输出尺寸和工作内存预算；帧数与滚轮输入次数不设硬上限，输入次数只作诊断。超限前使用检查算术，已有可靠图像按 `LimitReached` 进入确认态。完成载荷记录首帧耗时、总耗时、最慢帧、峰值工作内存和预览发布次数。自动回归覆盖预算、部分结果恢复、停止响应及 latest-wins 预览；真实 Notepad / Explorer / Chromium、Qt / Electron、混合 DPI 和多屏仍待人工验收，不能据代码与 mock 测试宣称兼容。
 
 ---
 
@@ -21,12 +21,12 @@
 | F3 标注 | **代码动作闭环，待人工验收** | 六类工具、样式二级栏、撤销；非模态编辑器确认后自动复制并恢复结果操作条，可继续保存 / Pin / 再编辑 |
 | F4 导出 | **完成** | CF_DIB 剪贴板和 WIC PNG |
 | F5 Pin | **代码基本完成，待人工验收** | 多 Pin、自动避让、缩放、独立导出、捕获排除 |
-| F6 长截图 | **Notepad / Explorer / Chromium profile 已接入，待人工验收** | 固定选区拼接、应用 profile 定位滚动控件、滚动状态 / 到底 / 无新增停止、预览、暂停 / 继续 / 停止、失败清理；内置 profile 已改为受控 DLL 插件 |
+| F6 长截图 | **自动链路与预算回归完成，待真实桌面验收** | profile 优先并带通用安全回退；固定选区、稳定帧检测、保守拼接、部分结果恢复、固定边缘显式配置、暂停 / 继续 / 停止和资源预算已接线；内置 profile 为受控 DLL 插件 |
 | F7 托盘热键 | **完成** | 单实例、托盘、热键、冲突提示、开机自启开关 |
 | F8 本地口令 | **Stub** | `CommandParser` 仍未实现 |
 | F9 MCP | **代码已接线，待完整验收** | MCP protocol session、stdio、Named Pipe、AutomationEndpoint、CaptureWindow / CropCenter / Copy / Save / Pin 主链已实现；安装包和真实桌面验收仍需补 |
 
-一句话：普通截图、窗口吸附、Pin、Notepad / Explorer / Chromium 长截图、SmartRegion 候选链和标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是三类应用真实验收、F9 安装包验收和 P0 架构风险收敛。
+一句话：普通截图、窗口吸附、Pin、长截图自动尝试、SmartRegion 候选链和标注结果 Copy / Save / Pin 已形成代码链路，多步编排已从 Application 收口到 `CaptureWorkflow`，长截图异步生命周期已收口到 `LongShotController`，Selection / Annotation Overlay 已改为非模态；下一步是已知与未知应用的真实长截图验收、F9 安装包验收和 P0 架构风险收敛。
 
 ---
 
@@ -80,7 +80,7 @@
 - UIA/MSAA 查询由 latest-wins worker 异步执行，SelectionOverlay 在 UI 线程按 root HWND、矩形、generation 和结果年龄校验后合并；手动框选优先于迟到结果；
 - VisualLocator 已覆盖 Electron 工作台、Chromium 外壳、小控件、弱边界和有限候选缓存；Chromium Tab、按钮、书签/扩展入口以及受支持浏览器所属 WS_POPUP 临时弹窗已有代码和回归测试；
 - 当前仍需真实 Chrome / Edge / Brave、VS Code/Cursor 和混合 DPI 桌面复测；普通 Window/known/visual 路径的同步耗时、UIA/MSAA provider 阻塞和 SmartRegion target 边界列入架构整改；
-- SmartRegion 的专项自动测试已有多批回归，但当前工作区的旧 CTest discovery 元数据损坏，不能直接据此报告全量通过数。
+- SmartRegion 的专项自动测试已有多批回归；当前完整验证统一以第 4 节记录的 `build.bat Release test` 结果为准。
 
 ### 2.4 F3 标注
 
@@ -125,17 +125,20 @@
 - CaptureWorkflow 在 Overlay 前记录原前台顶层窗口；
 - Notepad / Explorer / Chromium profile 校验目标窗口、选区所在内容控件、内容区和滚动状态；
 - 首帧、滚动后帧、重叠查找与追加拼接；
-- 到底、无新增内容、最大 30 帧和最大 30000 像素停止；
+- 到底、无新增内容和最大 30000 像素停止；总时长、同位置重采、滚动状态轮询和工作内存也有独立预算，帧数与滚轮输入次数不设硬上限；
+- 尺寸与工作集计算使用检查算术，预计拼接峰值超限时在新输出分配前停止，并保留上一可靠图像；
+- `LongShotOutcome` 记录具体预算原因、首帧/总耗时、最慢帧、峰值工作内存与预览发布次数；
 - `LongShotController` 管理长截图 worker、暂停 / 停止 token 与 UI 线程完成消息；
 - Overlay 保持选区孔洞透传并显示累计预览；
 - 暂停 / 继续、停止，以及暂停后选择复制 / 保存 / Pin 的收尾行为；
-- 失败时结束 worker、关闭或恢复 Overlay，并清理当前 ResultStore 结果，避免常驻进程保留上一张大图。
+- 失败或预算结束时进入非模态恢复；可靠部分需用户确认后发布，取消不发布，避免常驻进程保留上一张大图。
 
 尚未完成：
 
 - 记事本真实长文手工闭环记录；
 - 资源管理器真实长文手工闭环记录；
 - 三应用完整验收。
+- Qt / Electron 等未知应用使用通用回退的真实桌面记录，以及混合 DPI、多屏、权限边界和干扰场景验收。
 
 ---
 
@@ -176,8 +179,7 @@
 build.bat Release test
 ```
 
-2026-09-14 当前工作区静态检索约有 851 个 TEST / TEST_F 宏，包含 Action、Workflow、ResultStore、SmartRegion、UIA/MSAA 夹具、Overlay、Pin、长截图、IPC/MCP、进程级测试和关闭协调器测试。
-本次通过 CMake 重新生成后，CTest 已发现 851 个产品/单元用例；`build.bat Release test` 的 Release 编译和链接成功，851/851 个用例通过。
+2026-09-20 移除帧数与输入次数硬上限后的原有长截图定向测试 34/34 通过；随后新增连续接受 31 帧和发送 65 次滚轮输入两项回归，两项均通过；`build.bat Release test` 的 Release 配置、编译和链接成功，1047/1047 个测试通过（47.02 秒）。
 `build.bat Release test` 是当前验证入口。测试源和生产 Handler 已通过同一 CMake target 接入。
 
 自动测试不能替代：
@@ -187,7 +189,7 @@ build.bat Release test
 - 多 Pin 的交互和隐藏 / 恢复闪烁；
 - 真实长文滚动拼接；
 - 就地标注与选区 Overlay 的组合验收（当前非模态状态机已接线，仍需真实窗口验证）。
-- 插件目录篡改拒绝、线程阻塞关闭、UIA/MSAA provider 阻塞和端到端图像内存峰值。
+- 插件目录篡改拒绝、线程阻塞关闭、UIA/MSAA provider 阻塞，以及包含驱动/DWM/目标应用自身缓存的进程级内存峰值。
 
 ---
 

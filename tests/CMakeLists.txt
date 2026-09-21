@@ -1,11 +1,19 @@
 # 轻映单元测试（通过 vcpkg 引入 GoogleTest）
 
 add_executable(qingying_tests
+  user_settings_test.cpp
+  user_settings_store_test.cpp
+  hotkey_manager_test.cpp
+  settings_application_service_test.cpp
+  settings_window_model_test.cpp
   image_memory_budget_test.cpp
   fault_boundary_test.cpp
   command_parser_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
   ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/hotkey_manager.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/settings_application_service.cpp
+  ${PROJECT_SOURCE_DIR}/src/app/settings_window_model.cpp
   mcp_process_integration_test.cpp
   mcp_result_lifecycle_integration_test.cpp
   application_shutdown_coordinator_test.cpp
@@ -42,6 +50,7 @@ add_executable(qingying_tests
   mcp_tool_catalog_test.cpp
   stdio_transport_test.cpp
   longshot_controller_test.cpp
+  longshot_limits_provider_test.cpp
   capture_engine_test.cpp
   capture_preview_test.cpp
   capture_workflow_test.cpp
@@ -66,6 +75,7 @@ add_executable(qingying_tests
   f1_selection_integration_test.cpp
   pin_manager_test.cpp
   longshot_stitcher_test.cpp
+  visual_frame_settler_test.cpp
   longshot_engine_test.cpp
   longshot_plugin_api_test.cpp
   longshot_plugin_host_test.cpp
@@ -74,6 +84,8 @@ add_executable(qingying_tests
   browser_longshot_profile_test.cpp
   notepad_longshot_profile_test.cpp
   explorer_longshot_profile_test.cpp
+  generic_scroll_target_resolver_test.cpp
+  generic_wheel_longshot_profile_test.cpp
   window_detector_test.cpp
   window_resolver_test.cpp
   smart_region_detector_test.cpp

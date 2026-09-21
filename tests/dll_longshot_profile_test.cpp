@@ -1,6 +1,7 @@
 ﻿#include "qingying/longshot/dll_longshot_profile.h"
 
 #include "qingying/app/longshot_controller.hpp"
+#include "qingying/app/longshot_limits_provider.hpp"
 
 #include <Windows.h>
 
@@ -214,7 +215,8 @@ TEST(DllLongShotProfileTest,
       },
       std::move(registry));
   SelectionOverlay overlay;
-  LongShotController controller(engine, overlay);
+  LongShotLimitsProvider limits_provider;
+  LongShotController controller(engine, overlay, limits_provider);
   struct ReleaseGuard final {
     ReleaseFn release;
     ~ReleaseGuard() {

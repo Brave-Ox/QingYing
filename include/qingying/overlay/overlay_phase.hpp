@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 namespace qingying {
 
@@ -11,11 +11,14 @@ enum class OverlayPhase {
   LongShotRunning,
   LongShotPaused,
   LongShotFinishing,
+  LongShotRecoverable,
+  LongShotResultPending,
   Closing,
 };
 
 bool overlayPhaseHasSelection(OverlayPhase phase) noexcept;
 bool overlayPhaseIsLongShot(OverlayPhase phase) noexcept;
+bool overlayPhaseIsLongShotCaptureActive(OverlayPhase phase) noexcept;
 bool canTransitionOverlayPhase(OverlayPhase from, OverlayPhase to) noexcept;
 bool transitionOverlayPhase(OverlayPhase& current, OverlayPhase next) noexcept;
 

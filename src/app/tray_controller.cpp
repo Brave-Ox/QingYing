@@ -80,8 +80,17 @@ void measureTrayMenuItem(HWND hwnd, MEASUREITEMSTRUCT* item)
   item->itemHeight =
       static_cast<UINT>(trayMenuMeasureHeight(item->itemData, dpi));
 
-  const wchar_t* label = trayMenuLabelForKind(
-      static_cast<TrayMenuItemKind>(item->itemData));
+  const TrayMenuItemKind kind = static_cast<TrayMenuItemKind>(item->itemData);
+  std::wstring capture_label;
+  const wchar_t* label = trayMenuLabelForKind(kind);
+  if (kind == TrayMenuItemKind::Capture)
+  {
+    const auto* tray = reinterpret_cast<const TrayController*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    capture_label = trayMenuCaptureDisplayText(
+        tray == nullptr ? std::wstring{} : tray->captureHotkeyDisplay());
+    label = capture_label.c_str();
+  }
   int text_width =
       trayMenuScalePx(TrayMenuFontSizePx, dpi) * kFallbackGlyphCount;
   if (label[0] != L'\0' && hwnd != nullptr)
@@ -153,18 +162,6 @@ void drawTrayMenuHoverCard(HDC hdc, const RECT& item_rect, int dpi)
 {
   const RECT card = trayMenuHoverCardRect(item_rect, dpi);
   const int radius = trayMenuScalePx(TrayMenuHoverRadius, dpi);
-  const int offset_x = trayMenuScalePx(TrayMenuHoverShadowOffsetX, dpi);
-  const int offset_y = trayMenuScalePx(TrayMenuHoverShadowOffsetY, dpi);
-  const int spread = trayMenuScalePx(TrayMenuHoverShadowSpreadPx, dpi);
-  for (int layer = TrayMenuHoverShadowLayers; layer >= 1; --layer)
-  {
-    RECT shadow = card;
-    OffsetRect(&shadow, offset_x * layer / TrayMenuHoverShadowLayers,
-               offset_y * layer / TrayMenuHoverShadowLayers);
-    InflateRect(&shadow, spread * (layer - 1), spread * (layer - 1));
-    const COLORREF shade = trayMenuHoverShadowLayerColor(layer);
-    fillRoundRect(hdc, shadow, shade, shade, radius);
-  }
   fillRoundRect(hdc, card, TrayMenuHoverCardFill, TrayMenuHoverCardBorder,
                 radius);
 }
@@ -221,7 +218,16 @@ void drawTrayMenuItem(HWND hwnd, const DRAWITEMSTRUCT* item)
     drawTrayMenuCheck(item->hDC, rc, dpi);
   }
 
+  std::wstring capture_label;
   const wchar_t* label = trayMenuLabelForKind(kind);
+  if (kind == TrayMenuItemKind::Capture)
+  {
+    const auto* tray = reinterpret_cast<const TrayController*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    capture_label = trayMenuCaptureDisplayText(
+        tray == nullptr ? std::wstring{} : tray->captureHotkeyDisplay());
+    label = capture_label.c_str();
+  }
   if (label[0] == L'\0')
   {
     return;
@@ -381,19 +387,25 @@ void TrayController::showContextMenu() {
     return;
   }
 
-  const bool autostart = AutostartSettings::isEnabled();
+  MENUITEMINFOW capture_item{};
+  fillTrayMenuItem(capture_item, TrayMenuCaptureCommandId, false);
+  MENUITEMINFOW settings_item{};
+  fillTrayMenuItem(settings_item, TrayMenuSettingsCommandId, false);
   MENUITEMINFOW autostart_item = {};
-  fillTrayMenuItem(autostart_item, IDM_TRAY_AUTOSTART, autostart);
+  fillTrayMenuItem(autostart_item, IDM_TRAY_AUTOSTART, autostart_enabled_);
   MENUITEMINFOW separator = {};
   fillTrayMenuSeparator(separator);
   MENUITEMINFOW exit_item = {};
   fillTrayMenuItem(exit_item, IDM_TRAY_EXIT, false);
   MENUITEMINFOW automation_item{};
   fillTrayMenuItem(automation_item, TrayMenuAutomationCommandId, automation_enabled_);
-  if (InsertMenuItemW(menu, 0, TRUE, &autostart_item) == FALSE ||
-      InsertMenuItemW(menu, 1, TRUE, &automation_item) == FALSE ||
+  if (InsertMenuItemW(menu, 0, TRUE, &capture_item) == FALSE ||
+      InsertMenuItemW(menu, 1, TRUE, &settings_item) == FALSE ||
       InsertMenuItemW(menu, 2, TRUE, &separator) == FALSE ||
-      InsertMenuItemW(menu, 3, TRUE, &exit_item) == FALSE)
+      InsertMenuItemW(menu, 3, TRUE, &autostart_item) == FALSE ||
+      InsertMenuItemW(menu, 4, TRUE, &automation_item) == FALSE ||
+      InsertMenuItemW(menu, 5, TRUE, &separator) == FALSE ||
+      InsertMenuItemW(menu, 6, TRUE, &exit_item) == FALSE)
   {
     DestroyMenu(menu);
     return;
@@ -482,15 +494,25 @@ LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
 
 void TrayController::onCommand(UINT id) {
   switch (id) {
+    case TrayMenuCaptureCommandId:
+      if (begin_capture_callback_) begin_capture_callback_();
+      break;
+    case TrayMenuSettingsCommandId:
+      if (settings_callback_) settings_callback_();
+      break;
     case IDM_TRAY_AUTOSTART: {
-      const bool next = !AutostartSettings::isEnabled();
-      AutostartSettings::setEnabled(next);
+      const bool next = !autostart_enabled_;
+      if (autostart_toggle_ && autostart_toggle_(next)) autostart_enabled_ = next;
       break;
     }
-    case TrayMenuAutomationCommandId:
-      if (automation_toggle_ && automation_toggle_(!automation_enabled_))
-        automation_enabled_ = !automation_enabled_;
+    case TrayMenuAutomationCommandId: {
+      const bool next = !automation_enabled_;
+      if (automation_toggle_ && automation_toggle_(next))
+      {
+        automation_enabled_ = next;
+      }
       break;
+    }
     case IDM_TRAY_EXIT:
       PostMessageW(hwnd_, WM_CLOSE, 0, 0);
       break;

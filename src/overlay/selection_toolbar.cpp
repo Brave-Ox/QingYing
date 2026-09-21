@@ -10,7 +10,41 @@
 
 namespace qingying {
 
-SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept {
+namespace {
+
+bool isRecoveryPhase(OverlayPhase phase) noexcept {
+  return phase == OverlayPhase::LongShotRecoverable ||
+         phase == OverlayPhase::LongShotResultPending;
+}
+
+SelectionToolbarItems buildRecoveryItems(
+    LongShotRecoveryState recovery) noexcept {
+  SelectionToolbarCommand accept_command =
+      SelectionToolbarCommand::KeepLongShotFrame;
+  if (recovery.result == LongShotRecoveryResult::PartialResult) {
+    accept_command = SelectionToolbarCommand::AcceptLongShotPartial;
+  }
+  const bool has_result = recovery.hasResult();
+  return {{{SelectionToolbarCommand::RetryLongShot,
+            SelectionToolbarIcon::LongShot, true},
+           {SelectionToolbarCommand::AdjustLongShotSelection,
+            SelectionToolbarIcon::Edit, true},
+           {accept_command, SelectionToolbarIcon::Save, has_result},
+           {SelectionToolbarCommand::Copy, SelectionToolbarIcon::Copy,
+            false},
+           {SelectionToolbarCommand::Pin, SelectionToolbarIcon::Pin, false},
+           {SelectionToolbarCommand::CancelLongShot,
+            SelectionToolbarIcon::Stop, true}}};
+}
+
+}  // namespace
+
+SelectionToolbarItems buildSelectionToolbarItems(
+    OverlayPhase phase, LongShotRecoveryState recovery,
+    LongShotResultNotice) noexcept {
+  if (isRecoveryPhase(phase)) {
+    return buildRecoveryItems(recovery);
+  }
   const bool result_actions_enabled =
       phase == OverlayPhase::Selected || phase == OverlayPhase::LongShotPaused;
   const bool toggle_enabled = phase == OverlayPhase::Selected ||
@@ -41,16 +75,47 @@ SelectionToolbarItems buildSelectionToolbarItems(OverlayPhase phase) noexcept {
             stop_enabled}}};
 }
 
-bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
-                                     WPARAM key,
-                                     SelectionToolbarCommand& command) noexcept
+SelectionToolbarStatus selectionToolbarStatus(
+    OverlayPhase phase, LongShotRecoveryState recovery,
+    LongShotResultNotice notice) noexcept {
+  if (phase == OverlayPhase::Selected &&
+      notice == LongShotResultNotice::CopyFailed) {
+    return SelectionToolbarStatus::CopyFailed;
+  }
+  switch (phase) {
+    case OverlayPhase::LongShotRunning:
+      return SelectionToolbarStatus::Running;
+    case OverlayPhase::LongShotPaused:
+      return SelectionToolbarStatus::Paused;
+    case OverlayPhase::LongShotFinishing:
+      return SelectionToolbarStatus::Finishing;
+    case OverlayPhase::LongShotRecoverable:
+      return SelectionToolbarStatus::Recoverable;
+    case OverlayPhase::LongShotResultPending:
+      return recovery.result == LongShotRecoveryResult::PartialResult
+                 ? SelectionToolbarStatus::PartialResultPending
+                 : SelectionToolbarStatus::SingleFramePending;
+    case OverlayPhase::Sniffing:
+    case OverlayPhase::Creating:
+    case OverlayPhase::Selected:
+    case OverlayPhase::Closing:
+      return SelectionToolbarStatus::None;
+  }
+  return SelectionToolbarStatus::None;
+}
+
+bool selectionToolbarShortcutCommand(
+    OverlayPhase phase, const SelectionShortcutSettings& shortcuts,
+    const ShortcutBinding& shortcut,
+    SelectionToolbarCommand& command) noexcept
 {
   SelectionToolbarCommand requested = SelectionToolbarCommand::Cancel;
-  if (control_down && key == SelectionToolbarCopyShortcutVirtualKey)
+  if (!shortcuts.m_copy.empty() && shortcut == shortcuts.m_copy)
   {
     requested = SelectionToolbarCommand::Copy;
   }
-  else if (!control_down && key == SelectionToolbarLongShotShortcutVirtualKey)
+  else if (!shortcuts.m_toggle_longshot.empty() &&
+           shortcut == shortcuts.m_toggle_longshot)
   {
     requested = SelectionToolbarCommand::ToggleLongShot;
   }
@@ -71,18 +136,20 @@ bool selectionToolbarShortcutCommand(OverlayPhase phase, bool control_down,
   return false;
 }
 
-bool selectionToolbarHotkeyCommand(OverlayPhase phase, int hotkey_id,
+bool selectionToolbarHotkeyCommand(OverlayPhase phase,
+                                   const SelectionShortcutSettings& shortcuts,
+                                   int hotkey_id,
                                    SelectionToolbarCommand& command) noexcept
 {
   if (hotkey_id == SelectionToolbarCopyHotkeyId)
   {
-    return selectionToolbarShortcutCommand(
-        phase, true, SelectionToolbarCopyShortcutVirtualKey, command);
+    return selectionToolbarShortcutCommand(phase, shortcuts, shortcuts.m_copy,
+                                           command);
   }
   if (hotkey_id == SelectionToolbarLongShotHotkeyId)
   {
     return selectionToolbarShortcutCommand(
-        phase, false, SelectionToolbarLongShotShortcutVirtualKey, command);
+        phase, shortcuts, shortcuts.m_toggle_longshot, command);
   }
   return false;
 }
@@ -90,7 +157,51 @@ bool selectionToolbarHotkeyCommand(OverlayPhase phase, int hotkey_id,
 namespace {
 
 constexpr int kToolbarDividerPadExtraPx = 6;
+constexpr int kStatusRowHeight = 30;
+constexpr int kStatusToolbarMinimumWidth = 360;
 const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbarV4";
+
+ToolbarIconKind toModernToolbarIcon(SelectionToolbarIcon icon) noexcept;
+
+const wchar_t* statusText(SelectionToolbarStatus status) noexcept {
+  switch (status) {
+    case SelectionToolbarStatus::Running:
+      return L"\x81EA\x52A8\x957F\x622A\x56FE\x4E2D";
+    case SelectionToolbarStatus::Paused:
+      return L"\x957F\x622A\x56FE\x5DF2\x6682\x505C";
+    case SelectionToolbarStatus::Finishing:
+      return L"\x6B63\x5728\x7ED3\x675F\x957F\x622A\x56FE...";
+    case SelectionToolbarStatus::Recoverable:
+      return L"\x65E0\x6CD5\x7EE7\x7EED\xFF0C\x53EF\x91CD\x8BD5\x6216\x8C03\x6574\x9009\x533A";
+    case SelectionToolbarStatus::SingleFramePending:
+      return L"\x4EC5\x4FDD\x7559\x9996\x5E27\xFF0C\x53EF\x4F5C\x4E3A\x666E\x901A\x622A\x56FE";
+    case SelectionToolbarStatus::PartialResultPending:
+      return L"\x672A\x5B8C\x6574\xFF0C\x5DF2\x4FDD\x7559\x53EF\x9760\x7684\x957F\x56FE\x5185\x5BB9";
+    case SelectionToolbarStatus::CopyFailed:
+      return L"\x5DF2\x4FDD\x7559\x7ED3\x679C\xFF0C\x590D\x5236\x5931\x8D25\xFF0C\x53EF\x91CD\x8BD5";
+    case SelectionToolbarStatus::None:
+      return L"";
+  }
+  return L"";
+}
+
+const wchar_t* commandTooltip(SelectionToolbarCommand command,
+                              SelectionToolbarIcon icon) noexcept {
+  switch (command) {
+    case SelectionToolbarCommand::RetryLongShot:
+      return L"\x91CD\x8BD5\x957F\x622A\x56FE";
+    case SelectionToolbarCommand::AdjustLongShotSelection:
+      return L"\x8C03\x6574\x9009\x533A";
+    case SelectionToolbarCommand::KeepLongShotFrame:
+      return L"\x4FDD\x7559\x666E\x901A\x622A\x56FE";
+    case SelectionToolbarCommand::AcceptLongShotPartial:
+      return L"\x63A5\x53D7\x5DF2\x6709\x5185\x5BB9";
+    case SelectionToolbarCommand::CancelLongShot:
+      return L"\x53D6\x6D88\x5E76\x653E\x5F03";
+    default:
+      return toolbarIconLabel(toModernToolbarIcon(icon));
+  }
+}
 
 ToolbarIconKind toModernToolbarIcon(SelectionToolbarIcon icon) noexcept {
   switch (icon) {
@@ -131,7 +242,51 @@ struct SelectionToolbar::Impl {
   int hover{-1};
   int divider_x{0};
   OverlayPhase phase{OverlayPhase::Sniffing};
+  LongShotRecoveryState recovery;
+  LongShotResultNotice notice{LongShotResultNotice::None};
+  SelectionToolbarPlacement placement;
   CommandCallback callback;
+
+  int statusHeight() const noexcept {
+    return selectionToolbarStatus(phase, recovery, notice) ==
+                   SelectionToolbarStatus::None
+               ? 0
+               : kStatusRowHeight;
+  }
+
+  void geometry(int& x, int& y, int& width, int& height) const noexcept {
+    const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+    width = modernToolbarWidth(static_cast<int>(SelectionToolbarItemCount),
+                               metrics.divider_gap - metrics.gap, metrics);
+    if (statusHeight() > 0) {
+      width = (std::max)(width, kStatusToolbarMinimumWidth);
+    }
+    height = modernToolbarHeight(metrics) + statusHeight();
+    const int selection_right =
+        placement.selection_x + placement.selection_width;
+    const int selection_bottom =
+        placement.selection_y + placement.selection_height;
+    if (selection_bottom + 8 + height <= placement.screen_bottom) {
+      x = placement.selection_x;
+      y = selection_bottom + 8;
+    } else if (placement.selection_y - 8 - height >= placement.screen_top) {
+      x = placement.selection_x;
+      y = placement.selection_y - height - 8;
+    } else if (selection_right + 8 + width <= placement.screen_right) {
+      x = selection_right + 8;
+      y = placement.selection_y;
+    } else if (placement.selection_x - 8 - width >= placement.screen_left) {
+      x = placement.selection_x - width - 8;
+      y = placement.selection_y;
+    } else {
+      x = placement.selection_x;
+      y = selection_bottom + 8;
+    }
+    x = (std::max)(placement.screen_left,
+                   (std::min)(x, placement.screen_right - width));
+    y = (std::max)(placement.screen_top,
+                   (std::min)(y, placement.screen_bottom - height));
+  }
 
   bool registerWindowClass() {
     WNDCLASSEXW wc{};
@@ -146,12 +301,26 @@ struct SelectionToolbar::Impl {
            GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
   }
 
+  void applyWindowRegion(int width, int height) {
+    if (hwnd == nullptr || width <= 0 || height <= 0) {
+      return;
+    }
+    const HRGN region = CreateRoundRectRgn(
+        0, 0, width + 1, height + 1,
+        DefaultModernToolbarMetrics.corner_radius * 2,
+        DefaultModernToolbarMetrics.corner_radius * 2);
+    if (region != nullptr && SetWindowRgn(hwnd, region, TRUE) == 0) {
+      DeleteObject(region);
+    }
+  }
+
   void layout(int height) {
     const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-    const int y = (height - metrics.item_size) / 2;
+    const int y = statusHeight() +
+                  (height - statusHeight() - metrics.item_size) / 2;
     int x = metrics.bar_padding;
     const SelectionToolbarItems model_items =
-        buildSelectionToolbarItems(phase);
+        buildSelectionToolbarItems(phase, recovery, notice);
     for (std::size_t i = 0; i < items.size(); ++i) {
       items[i].model = model_items[i];
       items[i].rect = {x, y, x + metrics.item_size, y + metrics.item_size};
@@ -178,8 +347,8 @@ struct SelectionToolbar::Impl {
       return;
     }
     for (std::size_t i = 0; i < items.size(); ++i) {
-      const ToolbarIconKind icon = toModernToolbarIcon(items[i].model.icon);
-      const wchar_t* label = toolbarIconLabel(icon);
+      const wchar_t* label = commandTooltip(items[i].model.command,
+                                            items[i].model.icon);
       if (items[i].model.command == SelectionToolbarCommand::StopLongShot &&
           phase == OverlayPhase::LongShotFinishing) {
         label = L"\x505C\x6B62\x4E2D";
@@ -190,14 +359,27 @@ struct SelectionToolbar::Impl {
     }
   }
 
-  void refresh(OverlayPhase next_phase) {
+  void refresh(OverlayPhase next_phase,
+               LongShotRecoveryState next_recovery = {},
+               LongShotResultNotice next_notice = LongShotResultNotice::None) {
     phase = next_phase;
+    recovery = next_recovery;
+    notice = next_notice;
     const SelectionToolbarItems model_items =
-        buildSelectionToolbarItems(phase);
+        buildSelectionToolbarItems(phase, recovery, notice);
     for (std::size_t i = 0; i < items.size(); ++i) {
       items[i].model = model_items[i];
     }
     if (hwnd != nullptr) {
+      int x = 0;
+      int y = 0;
+      int width = 0;
+      int height = 0;
+      geometry(x, y, width, height);
+      SetWindowPos(hwnd, nullptr, x, y, width, height,
+                   SWP_NOACTIVATE | SWP_NOZORDER);
+      applyWindowRegion(width, height);
+      layout(height);
       bindTooltips();
       InvalidateRect(hwnd, nullptr, FALSE);
     }
@@ -237,8 +419,23 @@ struct SelectionToolbar::Impl {
 
     const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
     const int divider_pad = metrics.bar_padding + kToolbarDividerPadExtraPx;
-    drawToolbarDivider(mem_dc, divider_x, client.top + divider_pad,
+    drawToolbarDivider(mem_dc, divider_x,
+                       client.top + statusHeight() + divider_pad,
                        client.bottom - divider_pad);
+    const SelectionToolbarStatus status =
+        selectionToolbarStatus(phase, recovery, notice);
+    if (status != SelectionToolbarStatus::None) {
+      RECT status_rect{DefaultModernToolbarMetrics.bar_padding, 4,
+                       client.right - DefaultModernToolbarMetrics.bar_padding,
+                       statusHeight()};
+      const HGDIOBJ old_font =
+          SelectObject(mem_dc, GetStockObject(DEFAULT_GUI_FONT));
+      SetBkMode(mem_dc, TRANSPARENT);
+      SetTextColor(mem_dc, DefaultModernToolbarColors.label);
+      DrawTextW(mem_dc, statusText(status), -1, &status_rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+      SelectObject(mem_dc, old_font);
+    }
     for (std::size_t i = 0; i < items.size(); ++i) {
       const ToolbarItemModel toolbar_item{
           toModernToolbarIcon(items[i].model.icon),
@@ -298,15 +495,7 @@ struct SelectionToolbar::Impl {
         RECT client{};
         GetClientRect(window, &client);
         self->layout(client.bottom - client.top);
-        const HRGN region = CreateRoundRectRgn(
-            0, 0, client.right + 1, client.bottom + 1,
-            DefaultModernToolbarMetrics.corner_radius * 2,
-            DefaultModernToolbarMetrics.corner_radius * 2);
-        if (region != nullptr) {
-          if (SetWindowRgn(window, region, TRUE) == 0) {
-            DeleteObject(region);
-          }
-        }
+        self->applyWindowRegion(client.right, client.bottom);
         self->tooltip = createToolbarTooltip(window);
         self->refresh(self->phase);
         return 0;
@@ -380,30 +569,25 @@ SelectionToolbar::~SelectionToolbar() { hide(); }
 
 bool SelectionToolbar::show(HWND owner_window,
                             const SelectionToolbarPlacement& placement,
-                            OverlayPhase phase, CommandCallback callback) {
+                            OverlayPhase phase, CommandCallback callback,
+                            LongShotRecoveryState recovery,
+                            LongShotResultNotice notice) {
   hide();
   if (!impl_->registerWindowClass()) {
     return false;
   }
 
   impl_->phase = phase;
+  impl_->recovery = recovery;
+  impl_->notice = notice;
+  impl_->placement = placement;
   impl_->callback = std::move(callback);
 
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-  const int toolbar_width = modernToolbarWidth(
-      static_cast<int>(SelectionToolbarItemCount),
-      metrics.divider_gap - metrics.gap, metrics);
-  const int toolbar_height = modernToolbarHeight(metrics);
-
-  int x = placement.selection_x;
-  int y = placement.selection_y + placement.selection_height + 8;
-  if (y + toolbar_height > placement.screen_bottom) {
-    y = placement.selection_y - toolbar_height - 8;
-  }
-  x = (std::max)(placement.screen_left,
-                 (std::min)(x, placement.screen_right - toolbar_width));
-  y = (std::max)(placement.screen_top,
-                 (std::min)(y, placement.screen_bottom - toolbar_height));
+  int x = 0;
+  int y = 0;
+  int toolbar_width = 0;
+  int toolbar_height = 0;
+  impl_->geometry(x, y, toolbar_width, toolbar_height);
 
   const HWND window = CreateWindowExW(
       WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -430,7 +614,11 @@ bool SelectionToolbar::show(HWND owner_window,
   return true;
 }
 
-void SelectionToolbar::update(OverlayPhase phase) { impl_->refresh(phase); }
+void SelectionToolbar::update(OverlayPhase phase,
+                              LongShotRecoveryState recovery,
+                              LongShotResultNotice notice) {
+  impl_->refresh(phase, recovery, notice);
+}
 
 void SelectionToolbar::hide() {
   if (impl_ == nullptr) {

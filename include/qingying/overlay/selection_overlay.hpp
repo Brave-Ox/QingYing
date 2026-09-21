@@ -2,6 +2,7 @@
 
 #include "qingying/action/image.hpp"
 #include "qingying/overlay/selection_types.h"
+#include "qingying/ui/shortcut_types.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -40,10 +41,25 @@ class SelectionOverlay {
             SelectionClosedCallback closed_callback = {},
             bool initial_selection_locked = false);
 
+  // Each visible overlay consumes an immutable shortcut snapshot. Subsequent
+  // settings changes take effect only when the next screenshot starts.
+  bool show(Image background, SelectionCallback callback,
+            LongShotControlCallback longshot_control_callback,
+            const SelectionIntent& initial_selection,
+            SelectionClosedCallback closed_callback,
+            bool initial_selection_locked,
+            const SelectionShortcutSettings& selection_shortcuts);
+
   // These methods are safe to call from the long-shot worker thread. Updates
   // are posted back to the overlay's UI thread.
   bool postLongShotPreview(const Image& image);
-  bool postLongShotFinished(bool success);
+  bool postLongShotPreview(const Image& image, std::uint64_t session_id);
+  // 设置新会话时释放旧预览载荷；已排队的旧 token 不再显示。
+  void setLongShotSession(std::uint64_t session_id) noexcept;
+  bool postLongShotFinished(
+      bool success,
+      LongShotResultNotice notice = LongShotResultNotice::None);
+  bool postLongShotRecoverable(LongShotRecoveryState recovery);
 
   bool isVisible() const noexcept;
 

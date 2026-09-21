@@ -1,6 +1,10 @@
 ﻿#include "qingying/app/tray_context_menu.hpp"
 
+#include <array>
+
 #include <gtest/gtest.h>
+
+#include "qingying/app/tray_controller.hpp"
 
 namespace qingying {
 
@@ -10,6 +14,61 @@ TEST(TrayContextMenuTest, AutostartAndExitLabelsAreChinese)
   EXPECT_STREQ(TrayMenuExitText, L"退出");
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuAutostartCommandId), L"开机自启");
   EXPECT_STREQ(trayMenuLabelForId(TrayMenuExitCommandId), L"退出");
+}
+
+TEST(TrayContextMenuTest, CaptureAndSettingsAppearBeforeSystemSwitches)
+{
+  EXPECT_STREQ(TrayMenuCaptureText, L"开始截图");
+  EXPECT_STREQ(TrayMenuSettingsText, L"设置...");
+  EXPECT_STREQ(trayMenuLabelForId(TrayMenuCaptureCommandId), L"开始截图");
+  EXPECT_STREQ(trayMenuLabelForId(TrayMenuSettingsCommandId), L"设置...");
+
+  const std::array<UINT, 5> expected{
+      TrayMenuCaptureCommandId,
+      TrayMenuSettingsCommandId,
+      TrayMenuAutostartCommandId,
+      TrayMenuAutomationCommandId,
+      TrayMenuExitCommandId};
+  EXPECT_EQ(trayMenuCommandOrder(), expected);
+  EXPECT_EQ(trayMenuCaptureDisplayText(L"Ctrl + Shift + Q"),
+            L"开始截图\tCtrl + Shift + Q");
+}
+
+TEST(TrayControllerTest, DispatchesCaptureAndSettingsCommandsToCallbacks)
+{
+  TrayController tray;
+  ASSERT_TRUE(tray.create(GetModuleHandleW(nullptr)));
+  int capture_requests = 0;
+  int settings_requests = 0;
+  tray.setBeginCaptureCallback([&capture_requests]() { ++capture_requests; });
+  tray.setSettingsCallback([&settings_requests]() { ++settings_requests; });
+
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuCaptureCommandId, 0);
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuSettingsCommandId, 0);
+
+  EXPECT_EQ(capture_requests, 1);
+  EXPECT_EQ(settings_requests, 1);
+  tray.destroy();
+}
+
+TEST(TrayControllerTest, AutomationCommandUsesTheCurrentStateAfterCallbackSync)
+{
+  TrayController tray;
+  ASSERT_TRUE(tray.create(GetModuleHandleW(nullptr)));
+
+  std::vector<bool> requested_states;
+  tray.setAutomationToggle([&tray, &requested_states](bool enabled) {
+    requested_states.push_back(enabled);
+    tray.setAutomationEnabled(enabled);
+    return true;
+  });
+
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuAutomationCommandId, 0);
+  SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuAutomationCommandId, 0);
+
+  const std::vector<bool> expected{true, false};
+  EXPECT_EQ(requested_states, expected);
+  tray.destroy();
 }
 
 TEST(TrayContextMenuTest, FontIsMicrosoftYaHeiUiAt14Px)
@@ -45,30 +104,21 @@ TEST(TrayContextMenuTest, MenuItemsAreOwnerDrawnWithComfortablePadding)
   EXPECT_GE(item_height, 30);
 }
 
-TEST(TrayContextMenuTest, HoverCardLeavesRoomForQqMusicStyleDropShadow)
+TEST(TrayContextMenuTest, HoverCardUsesALightBlueFlatHighlight)
 {
-  EXPECT_GE(TrayMenuHoverShadowOffsetX, 2);
-  EXPECT_GE(TrayMenuHoverShadowOffsetY, 3);
-  EXPECT_GE(TrayMenuHoverShadowLayers, 4);
-  EXPECT_GE(TrayMenuHoverRadius, 6);
-
-  const int shadow_sum = trayMenuRed(TrayMenuHoverShadow) +
-                         trayMenuGreen(TrayMenuHoverShadow) +
-                         trayMenuBlue(TrayMenuHoverShadow);
-  const int fill_sum = trayMenuRed(TrayMenuFill) + trayMenuGreen(TrayMenuFill) +
-                       trayMenuBlue(TrayMenuFill);
-  EXPECT_LE(shadow_sum, 520);
-  EXPECT_GE(fill_sum - shadow_sum, 240);
+  EXPECT_EQ(TrayMenuHoverCardFill, RGB(238, 245, 255));
+  EXPECT_EQ(TrayMenuHoverCardBorder, RGB(229, 236, 245));
+  EXPECT_EQ(TrayMenuHoverRadius, 6);
+  EXPECT_EQ(TrayMenuSeparatorColor, RGB(236, 239, 244));
 
   RECT item = {};
   item.right = 160;
   item.bottom = trayMenuItemHeightPx(TrayMenuDefaultDpi);
   const RECT card = trayMenuHoverCardRect(item, TrayMenuDefaultDpi);
-  EXPECT_GT(card.left, item.left);
-  EXPECT_LT(card.right, item.right);
-  EXPECT_GT(card.top, item.top);
-  EXPECT_LT(card.bottom, item.bottom);
-  EXPECT_LE(card.bottom + TrayMenuHoverShadowOffsetY, item.bottom);
+  EXPECT_EQ(card.left, TrayMenuHoverInsetX);
+  EXPECT_EQ(card.right, item.right - TrayMenuHoverInsetX);
+  EXPECT_EQ(card.top, TrayMenuHoverInsetY);
+  EXPECT_EQ(card.bottom, item.bottom - TrayMenuHoverInsetY);
 }
 
 }  // namespace qingying

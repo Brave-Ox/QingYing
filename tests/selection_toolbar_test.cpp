@@ -1,6 +1,9 @@
-#include "qingying/overlay/selection_toolbar.hpp"
+﻿#include "qingying/overlay/selection_toolbar.hpp"
+#include "qingying/ui/shortcut_types.hpp"
 
 #include <gtest/gtest.h>
+
+#include "qingying/ui/toolbar_model.h"
 
 namespace qingying {
 
@@ -34,6 +37,13 @@ const SelectionToolbarItemModel& itemFor(const SelectionToolbarItems& items,
     }
   }
   return items.front();
+}
+
+SelectionShortcutSettings defaultSelectionShortcuts()
+{
+  return SelectionShortcutSettings{
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')},
+      ShortcutBinding{0, static_cast<UINT>('L')}};
 }
 
 }  // namespace
@@ -93,52 +103,156 @@ TEST(SelectionToolbarTest, FinishingPhaseDisablesEveryCommand) {
   }
 }
 
+TEST(SelectionToolbarTest, RecoverableWithoutImageDisablesResultAcceptance) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::None, LongShotRecoveryCause::InputUnavailable};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotRecoverable, recovery);
+
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::RetryLongShot).enabled);
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::AdjustLongShotSelection).enabled);
+  EXPECT_FALSE(
+      itemFor(items, SelectionToolbarCommand::KeepLongShotFrame).enabled);
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::CancelLongShot).enabled);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotRecoverable,
+                                   recovery),
+            SelectionToolbarStatus::Recoverable);
+}
+
+TEST(SelectionToolbarTest, SingleFrameIsPresentedAsOrdinaryCapture) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::SingleFrame, LongShotRecoveryCause::NoProgress};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotResultPending, recovery);
+
+  EXPECT_TRUE(
+      itemFor(items, SelectionToolbarCommand::KeepLongShotFrame).enabled);
+  EXPECT_EQ(items[2].command, SelectionToolbarCommand::KeepLongShotFrame);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotResultPending,
+                                   recovery),
+            SelectionToolbarStatus::SingleFramePending);
+}
+
+TEST(SelectionToolbarTest, VerifiedCompositeEnablesPartialResultAcceptance) {
+  const LongShotRecoveryState recovery{
+      LongShotRecoveryResult::PartialResult,
+      LongShotRecoveryCause::MatchFailed};
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::LongShotResultPending, recovery);
+
+  EXPECT_TRUE(itemFor(items,
+                      SelectionToolbarCommand::AcceptLongShotPartial)
+                  .enabled);
+  EXPECT_EQ(items[2].command,
+            SelectionToolbarCommand::AcceptLongShotPartial);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotResultPending,
+                                   recovery),
+            SelectionToolbarStatus::PartialResultPending);
+}
+
+TEST(SelectionToolbarTest, LongShotLifecycleHasDistinctStatusTextStates) {
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotRunning),
+            SelectionToolbarStatus::Running);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotPaused),
+            SelectionToolbarStatus::Paused);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::LongShotFinishing),
+            SelectionToolbarStatus::Finishing);
+}
+
+TEST(SelectionToolbarTest, CopyFailureKeepsPublishedResultActionsEnabled) {
+  const SelectionToolbarItems items = buildSelectionToolbarItems(
+      OverlayPhase::Selected, {}, LongShotResultNotice::CopyFailed);
+
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Copy).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Save).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Edit).enabled);
+  EXPECT_TRUE(itemFor(items, SelectionToolbarCommand::Pin).enabled);
+  EXPECT_EQ(selectionToolbarStatus(OverlayPhase::Selected, {},
+                                   LongShotResultNotice::CopyFailed),
+            SelectionToolbarStatus::CopyFailed);
+}
+
 TEST(SelectionToolbarTest, ShortcutsMatchEnabledToolbarCommands)
 {
   SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+  const SelectionShortcutSettings shortcuts = defaultSelectionShortcuts();
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
-                                              SelectionToolbarCopyShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::Copy);
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
-                                              SelectionToolbarLongShotShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('L')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, false,
-                                               SelectionToolbarCopyShortcutVirtualKey,
-                                               command));
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::Selected, true,
-                                               SelectionToolbarLongShotShortcutVirtualKey,
-                                               command));
-  EXPECT_FALSE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
-                                               true,
-                                               SelectionToolbarCopyShortcutVirtualKey,
-                                               command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('C')}, command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('L')}, command));
+  EXPECT_FALSE(selectionToolbarShortcutCommand(
+      OverlayPhase::LongShotRunning, shortcuts,
+      ShortcutBinding{MOD_CONTROL, static_cast<UINT>('C')}, command));
 
-  EXPECT_TRUE(selectionToolbarShortcutCommand(OverlayPhase::LongShotRunning,
-                                              false,
-                                              SelectionToolbarLongShotShortcutVirtualKey,
-                                              command));
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::LongShotRunning, shortcuts,
+      ShortcutBinding{0, static_cast<UINT>('L')}, command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 }
 
 TEST(SelectionToolbarTest, HotkeysRouteWithoutKeyboardFocus)
 {
   SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+  const SelectionShortcutSettings shortcuts = defaultSelectionShortcuts();
 
   EXPECT_TRUE(selectionToolbarHotkeyCommand(
-      OverlayPhase::Selected, SelectionToolbarCopyHotkeyId, command));
+      OverlayPhase::Selected, shortcuts, SelectionToolbarCopyHotkeyId,
+      command));
   EXPECT_EQ(command, SelectionToolbarCommand::Copy);
 
   EXPECT_TRUE(selectionToolbarHotkeyCommand(
-      OverlayPhase::Selected, SelectionToolbarLongShotHotkeyId, command));
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
   EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
 
-  EXPECT_FALSE(selectionToolbarHotkeyCommand(OverlayPhase::Selected, -1,
-                                             command));
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(OverlayPhase::Selected, shortcuts,
+                                             -1, command));
+}
+
+TEST(SelectionToolbarTest, CustomShortcutSnapshotRoutesConfiguredCommands)
+{
+  const SelectionShortcutSettings shortcuts{
+      ShortcutBinding{MOD_ALT, static_cast<UINT>('X')},
+      ShortcutBinding{MOD_SHIFT, static_cast<UINT>('Y')}};
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_TRUE(selectionToolbarShortcutCommand(
+      OverlayPhase::Selected, shortcuts,
+      ShortcutBinding{MOD_ALT, static_cast<UINT>('X')}, command));
+  EXPECT_EQ(command, SelectionToolbarCommand::Copy);
+
+  EXPECT_TRUE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
+  EXPECT_EQ(command, SelectionToolbarCommand::ToggleLongShot);
+}
+
+TEST(SelectionToolbarTest, EmptyConfiguredShortcutsDoNotRouteCommands)
+{
+  const SelectionShortcutSettings shortcuts{};
+  SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
+
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarCopyHotkeyId,
+      command));
+  EXPECT_FALSE(selectionToolbarHotkeyCommand(
+      OverlayPhase::Selected, shortcuts, SelectionToolbarLongShotHotkeyId,
+      command));
 }
 
 TEST(SelectionToolbarTest, InitialAndHoverFramesUseAtomicLayeredPresentation)
@@ -190,6 +304,29 @@ TEST(SelectionToolbarTest, InitialAndHoverFramesUseAtomicLayeredPresentation)
 
   toolbar.hide();
   EXPECT_FALSE(toolbar.visible());
+}
+
+TEST(SelectionToolbarTest, StatusToolbarUsesSideSpaceBeforeCoveringSelection)
+{
+  SelectionToolbar toolbar;
+  const SelectionToolbarPlacement placement{
+      400, 10, 400, 980, 0, 0, 1200, 1000};
+  ASSERT_TRUE(toolbar.show(nullptr, placement,
+                           OverlayPhase::LongShotRecoverable,
+                           [](SelectionToolbarCommand) {},
+                           {LongShotRecoveryResult::None,
+                            LongShotRecoveryCause::InputUnavailable}));
+
+  const HWND hwnd = findCurrentThreadToolbarWindow();
+  ASSERT_NE(hwnd, nullptr);
+  RECT rect{};
+  ASSERT_TRUE(GetWindowRect(hwnd, &rect));
+  EXPECT_GT(rect.bottom - rect.top,
+            modernToolbarHeight(DefaultModernToolbarMetrics));
+  EXPECT_TRUE(rect.left >= placement.selection_x + placement.selection_width ||
+              rect.right <= placement.selection_x);
+
+  toolbar.hide();
 }
 
 }  // namespace qingying

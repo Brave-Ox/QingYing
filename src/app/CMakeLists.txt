@@ -3,6 +3,7 @@ add_library(qingying_workflow STATIC
   capture_service.cpp
   capture_workflow.cpp
   export_executor.cpp
+  longshot_limits_provider.cpp
   longshot_controller.cpp
   save_policy.cpp
   result_action_service.cpp
@@ -55,6 +56,7 @@ add_library(qingying_app_runtime STATIC
   automation_runtime.cpp
   automation_settings.cpp
   mcp_stdio_runner.cpp
+  user_settings_store.cpp
 )
 target_include_directories(qingying_app_runtime PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(qingying_app_runtime PUBLIC qingying_automation qingying_ipc qingying_mcp PRIVATE advapi32)
@@ -62,6 +64,9 @@ target_link_libraries(qingying_app_runtime PUBLIC qingying_automation qingying_i
 add_executable(qingying WIN32
   main.cpp
   application.cpp
+  settings_application_service.cpp
+  settings_window.cpp
+  settings_window_model.cpp
   single_instance_guard.cpp
   autostart_settings.cpp
   tray_controller.cpp

@@ -4,8 +4,10 @@
 #include "qingying/diagnostics/ui_message_boundary.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <strsafe.h>
 #include <utility>
@@ -33,6 +35,7 @@ const Image& emptyBackground() { static const Image empty; return empty; }
 constexpr int kEscapeHotkeyId = 2;
 constexpr int kCandidateNextHotkeyId = 7;
 constexpr int kCandidatePreviousHotkeyId = 8;
+constexpr std::size_t kMaximumOverlayHotkeys = 11;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
 constexpr UINT_PTR kUiaResultPollTimerId = 5;
@@ -54,7 +57,11 @@ struct OverlayWindowData {
   std::atomic<UiMessageToken>* preview_token{nullptr};
   UiMessageChannel* message_channel{nullptr};
   bool window_destroyed{false};
+  SelectionShortcutSettings selection_shortcuts;
+  std::array<int, kMaximumOverlayHotkeys> registered_hotkey_ids{};
+  std::size_t registered_hotkey_count{0};
   HWND overlay{nullptr};
+  std::atomic<std::uint64_t>* longshot_session{nullptr};
   SelectionToolbar toolbar;
   SelectionAction action{SelectionAction::None};
   OverlayPhase phase{OverlayPhase::Sniffing};
@@ -101,6 +108,8 @@ struct OverlayWindowData {
   std::shared_ptr<const Image> background;                // 遮罩界面背景（桌面截图，物理像素）；空则纯遮罩
   LongShotControlCallback longshot_control_callback;
   SelectionAction longshot_pending_action{SelectionAction::None};
+  LongShotRecoveryState longshot_recovery;
+  LongShotResultNotice longshot_notice{LongShotResultNotice::None};
   bool capture_passthrough{false};
   bool selection_locked{false};
   Image longshot_preview;
@@ -289,13 +298,13 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
   }
 }
 
-void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
+bool registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
                            UINT virtual_key,
                            const wchar_t* description) noexcept
 {
   if (RegisterHotKey(hwnd, hotkey_id, modifiers, virtual_key) != FALSE)
   {
-    return;
+    return true;
   }
 
   wchar_t message[256]{};
@@ -308,6 +317,61 @@ void registerOverlayHotkey(HWND hwnd, int hotkey_id, UINT modifiers,
   {
     OutputDebugStringW(message);
   }
+  return false;
+}
+
+void registerTrackedOverlayHotkey(OverlayWindowData* data, int hotkey_id,
+                                  UINT modifiers, UINT virtual_key,
+                                  const wchar_t* description) noexcept
+{
+  if (data == nullptr ||
+      !registerOverlayHotkey(data->overlay, hotkey_id, modifiers, virtual_key,
+                             description))
+  {
+    return;
+  }
+
+  if (data->registered_hotkey_count < data->registered_hotkey_ids.size())
+  {
+    data->registered_hotkey_ids.at(data->registered_hotkey_count++) = hotkey_id;
+    return;
+  }
+
+  static_cast<void>(UnregisterHotKey(data->overlay, hotkey_id));
+  OutputDebugStringW(L"[QingYing] overlay hotkey tracking capacity exhausted\n");
+}
+
+bool overlayHotkeyWasRegistered(const OverlayWindowData* data,
+                                int hotkey_id) noexcept
+{
+  if (data == nullptr)
+  {
+    return false;
+  }
+
+  for (std::size_t index = 0; index < data->registered_hotkey_count; ++index)
+  {
+    if (data->registered_hotkey_ids.at(index) == hotkey_id)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void unregisterTrackedOverlayHotkeys(OverlayWindowData* data) noexcept
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  for (std::size_t index = 0; index < data->registered_hotkey_count; ++index)
+  {
+    static_cast<void>(
+        UnregisterHotKey(data->overlay, data->registered_hotkey_ids.at(index)));
+  }
+  data->registered_hotkey_count = 0;
 }
 
 void clearHover(OverlayWindowData* data) noexcept
@@ -368,12 +432,13 @@ void releaseImagePayload(OverlayWindowData* data) noexcept {
 
 void refreshToolbar(OverlayWindowData* data) {
   if (data != nullptr) {
-    data->toolbar.update(data->phase);
+    data->toolbar.update(data->phase, data->longshot_recovery,
+                         data->longshot_notice);
   }
 }
 
 void requestLongShotStop(OverlayWindowData* data) {
-  if (data == nullptr || !overlayPhaseIsLongShot(data->phase) ||
+  if (data == nullptr || !overlayPhaseIsLongShotCaptureActive(data->phase) ||
       data->phase == OverlayPhase::LongShotFinishing) {
     return;
   }
@@ -384,6 +449,54 @@ void requestLongShotStop(OverlayWindowData* data) {
   refreshToolbar(data);
   if (data->longshot_control_callback) {
     data->longshot_control_callback(LongShotControl::Stop);
+  }
+}
+
+void requestLongShotRecoveryAction(OverlayWindowData* data,
+                                   LongShotControl control) {
+  if (data == nullptr || data->overlay == nullptr ||
+      (data->phase != OverlayPhase::LongShotRecoverable &&
+       data->phase != OverlayPhase::LongShotResultPending)) {
+    return;
+  }
+
+  if (control == LongShotControl::Retry) {
+    if (!transitionOverlayPhase(data->phase,
+                                OverlayPhase::LongShotRunning)) {
+      return;
+    }
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
+    data->longshot_preview = Image{};
+    data->capture_passthrough = true;
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::AdjustSelection) {
+    if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+      return;
+    }
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
+    data->longshot_preview = Image{};
+    data->capture_passthrough = false;
+    data->selection_locked = false;
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::KeepFirstFrame ||
+             control == LongShotControl::AcceptPartialResult) {
+    if (!transitionOverlayPhase(data->phase,
+                                OverlayPhase::LongShotFinishing)) {
+      return;
+    }
+    refreshToolbar(data);
+    updateOverlay(data->overlay, data);
+  } else if (control == LongShotControl::Cancel) {
+    data->action = SelectionAction::None;
+    PostMessageW(data->overlay, WM_CLOSE, 0, 0);
+  }
+
+  if (data->longshot_control_callback) {
+    data->longshot_control_callback(control);
   }
 }
 
@@ -415,6 +528,8 @@ void chooseToolbarAction(OverlayWindowData* data, SelectionAction action) {
     }
     data->action = SelectionAction::LongShot;
     data->longshot_pending_action = SelectionAction::None;
+    data->longshot_recovery = {};
+    data->longshot_notice = LongShotResultNotice::None;
     clearHover(data);
     // During capture the selection hole must remain a real transparent hole;
     // otherwise the static desktop background would be captured repeatedly.
@@ -465,6 +580,22 @@ void handleToolbarCommand(OverlayWindowData* data,
     case SelectionToolbarCommand::StopLongShot:
       requestLongShotStop(data);
       break;
+    case SelectionToolbarCommand::RetryLongShot:
+      requestLongShotRecoveryAction(data, LongShotControl::Retry);
+      break;
+    case SelectionToolbarCommand::AdjustLongShotSelection:
+      requestLongShotRecoveryAction(data, LongShotControl::AdjustSelection);
+      break;
+    case SelectionToolbarCommand::KeepLongShotFrame:
+      requestLongShotRecoveryAction(data, LongShotControl::KeepFirstFrame);
+      break;
+    case SelectionToolbarCommand::AcceptLongShotPartial:
+      requestLongShotRecoveryAction(data,
+                                    LongShotControl::AcceptPartialResult);
+      break;
+    case SelectionToolbarCommand::CancelLongShot:
+      requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+      break;
     case SelectionToolbarCommand::Cancel:
       data->controller.cancel();
       data->action = SelectionAction::None;
@@ -514,7 +645,8 @@ void updateOverlayCursor(OverlayWindowData* data, int x, int y) {
   }
 
   const bool selection_editable =
-      overlayPhaseHasSelection(data->phase) && !data->selection_locked;
+      overlayPhaseHasSelection(data->phase) &&
+      !overlayPhaseIsLongShot(data->phase) && !data->selection_locked;
   SelectionHandle handle = SelectionHandle::None;
   if (data->drag == DragKind::Resize || data->drag == DragKind::Move) {
     handle = data->active_handle;
@@ -1044,7 +1176,7 @@ bool showToolbar(HWND overlay, OverlayWindowData* data,
       overlay, placement, data->phase,
       [data](SelectionToolbarCommand command) {
         handleToolbarCommand(data, command);
-      });
+      }, data->longshot_recovery, data->longshot_notice);
 }
 
 // Re-render the layered-window frame from the current interaction state.
@@ -1057,7 +1189,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
       selection, data->hover_rect, data->background ? *data->background : emptyBackground(), data->longshot_preview,
       data->phase,
       overlayPhaseHasSelection(data->phase) && !selection.empty() &&
-          !data->selection_locked,
+          !overlayPhaseIsLongShot(data->phase) && !data->selection_locked,
       data->handle_radius, data->drag == DragKind::None && data->has_hover,
       data->capture_passthrough);
   const bool diagnostics_enabled = data->smart_region_diagnostics.enabled() &&
@@ -1134,6 +1266,8 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
             data->message_channel->take<SelectionOverlayLongShotPreviewMessage>(
                 static_cast<UiMessageToken>(lparam));
         if (message.has_value()) {
+          if (!data->longshot_session || message->session_id !=
+              data->longshot_session->load()) return 0;
           if (std::chrono::steady_clock::now() - message->created_at > std::chrono::seconds{2}) return 0;
           data->longshot_preview = std::move(message->image);
           updateOverlay(hwnd, data);
@@ -1150,18 +1284,36 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       }
       if (data != nullptr) {
         const bool success = message.has_value() && message->success;
+        const bool recoverable = message.has_value() && message->recoverable;
         const SelectionAction pending_action = data->longshot_pending_action;
         const bool run_pending_action =
             success && pending_action != SelectionAction::None;
-        if (!transitionOverlayPhase(data->phase, OverlayPhase::Selected)) {
+        OverlayPhase completed_phase = OverlayPhase::Selected;
+        if (recoverable) {
+          completed_phase = message->recovery.hasResult()
+                                ? OverlayPhase::LongShotResultPending
+                                : OverlayPhase::LongShotRecoverable;
+        }
+        if (!transitionOverlayPhase(data->phase, completed_phase)) {
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
         data->capture_passthrough = false;
         data->longshot_pending_action = SelectionAction::None;
+        if (recoverable) {
+          data->longshot_recovery = message->recovery;
+          data->longshot_notice = LongShotResultNotice::None;
+          refreshToolbar(data);
+          updateOverlay(hwnd, data);
+          return 0;
+        }
+        data->longshot_recovery = {};
+        data->longshot_notice = message.has_value()
+                                    ? message->notice
+                                    : LongShotResultNotice::None;
         if (!success) {
-          // Failure dialogs are shown by Application only after this topmost
-          // fullscreen window has gone away.
+          // Non-recoverable compatibility behavior: close without trying to
+          // present a dialog above the topmost fullscreen overlay.
           PostMessageW(hwnd, WM_CLOSE, 0, 0);
           return 0;
         }
@@ -1436,7 +1588,12 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_RBUTTONDOWN: {
       if (data != nullptr) {
-        if (overlayPhaseIsLongShot(data->phase)) {
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending) {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase)) {
           requestLongShotStop(data);
           return 0;
         }
@@ -1450,6 +1607,10 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_HOTKEY:
     {
       if (data == nullptr)
+      {
+        return 0;
+      }
+      if (!overlayHotkeyWasRegistered(data, static_cast<int>(wparam)))
       {
         return 0;
       }
@@ -1470,15 +1631,21 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       SelectionToolbarCommand command = SelectionToolbarCommand::Cancel;
-      if (selectionToolbarHotkeyCommand(data->phase, static_cast<int>(wparam),
-                                        command))
+      if (selectionToolbarHotkeyCommand(data->phase, data->selection_shortcuts,
+                                        static_cast<int>(wparam), command))
       {
         handleToolbarCommand(data, command);
         return 0;
       }
       if (wparam == kEscapeHotkeyId)
       {
-        if (overlayPhaseIsLongShot(data->phase))
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending)
+        {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase))
         {
           requestLongShotStop(data);
           return 0;
@@ -1494,7 +1661,13 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     {
       if (data != nullptr && wparam == VK_ESCAPE)
       {
-        if (overlayPhaseIsLongShot(data->phase))
+        if (data->phase == OverlayPhase::LongShotRecoverable ||
+            data->phase == OverlayPhase::LongShotResultPending)
+        {
+          requestLongShotRecoveryAction(data, LongShotControl::Cancel);
+          return 0;
+        }
+        if (overlayPhaseIsLongShotCaptureActive(data->phase))
         {
           requestLongShotStop(data);
           return 0;
@@ -1535,17 +1708,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         if (data->message_channel != nullptr) {
           data->message_channel->drain();
         }
-        UnregisterHotKey(hwnd, kEscapeHotkeyId);
-        UnregisterHotKey(hwnd, kCandidateNextHotkeyId);
-        UnregisterHotKey(hwnd, kCandidatePreviousHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDetectElementsModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionWindowOnlyModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDisabledModeHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDetectElementsAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SmartRegionDisabledAlternateHotkeyId);
-        UnregisterHotKey(hwnd, SelectionToolbarCopyHotkeyId);
-        UnregisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId);
+        unregisterTrackedOverlayHotkeys(data);
         if (callback && result.action != SelectionAction::LongShot) {
           callback(result);
         }
@@ -1594,6 +1757,8 @@ struct SelectionOverlay::Impl {
   std::unique_ptr<OverlayWindowData> window_data;
   UiMessageChannel messages;
   std::atomic<UiMessageToken> preview_token{0};
+  std::atomic<std::uint64_t> longshot_session{0};
+  std::mutex preview_mutex;
   std::atomic<bool> accepting_messages{false};
 };
 
@@ -1609,7 +1774,21 @@ bool SelectionOverlay::show(Image background,
                                  longshot_control_callback,
                              const SelectionIntent& initial_selection,
                              SelectionClosedCallback closed_callback,
-                             bool initial_selection_locked) {
+                             bool initial_selection_locked)
+{
+  return show(std::move(background), std::move(callback),
+              std::move(longshot_control_callback), initial_selection,
+              std::move(closed_callback), initial_selection_locked,
+              defaultSelectionShortcutSettings());
+}
+
+bool SelectionOverlay::show(
+    Image background, SelectionCallback callback,
+    LongShotControlCallback longshot_control_callback,
+    const SelectionIntent& initial_selection,
+    SelectionClosedCallback closed_callback, bool initial_selection_locked,
+    const SelectionShortcutSettings& selection_shortcuts)
+{
   if (isVisible()) {
     return false;
   }
@@ -1641,12 +1820,14 @@ bool SelectionOverlay::show(Image background,
   data->message_channel = &impl_->messages;
   data->accepting_messages = &impl_->accepting_messages;
   data->preview_token = &impl_->preview_token;
+  data->longshot_session = &impl_->longshot_session;
   data->smart_region_diagnostics.setEnabled(smartRegionDiagnosticsRequested());
   if (!background.classifyMemory(ImageMemoryKind::VisualCache)) background = Image{};
   data->background = std::make_shared<const Image>(std::move(background));  // 空背景降级到纯遮罩。
   data->callback = std::move(callback);
   data->closed_callback = std::move(closed_callback);
   data->longshot_control_callback = std::move(longshot_control_callback);
+  data->selection_shortcuts = selection_shortcuts;
   data->selection_locked = initial_selection_locked;
   data->owner_hwnd = &overlay_hwnd_;
   data->screen = coord::getVirtualScreen();
@@ -1684,30 +1865,43 @@ bool SelectionOverlay::show(Image background,
   // 遮罩不抢前台激活权：WS_EX_NOACTIVATE 保证点击/显示都不会激活遮罩，
   // 原前台窗口保持激活，其从属浮层（owned popup）不会因失活而隐藏。
   // 键盘操作改由截图期间的临时热键提供，窗口销毁时统一注销。
-  (void)RegisterHotKey(hwnd, kEscapeHotkeyId, 0, VK_ESCAPE);
-  (void)RegisterHotKey(hwnd, kCandidateNextHotkeyId, MOD_NOREPEAT, VK_TAB);
-  (void)RegisterHotKey(hwnd, kCandidatePreviousHotkeyId,
-                       MOD_SHIFT | MOD_NOREPEAT, VK_TAB);
-  registerOverlayHotkey(hwnd, SmartRegionDetectElementsModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '1', L"Ctrl+1");
-  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '2', L"Ctrl+2");
-  registerOverlayHotkey(hwnd, SmartRegionDisabledModeHotkeyId,
-                        MOD_CONTROL | MOD_NOREPEAT, '3', L"Ctrl+3");
-  registerOverlayHotkey(hwnd, SmartRegionDetectElementsAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '1',
-                        L"Ctrl+Shift+1");
-  registerOverlayHotkey(hwnd, SmartRegionWindowOnlyAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '2',
-                        L"Ctrl+Shift+2");
-  registerOverlayHotkey(hwnd, SmartRegionDisabledAlternateHotkeyId,
-                        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '3',
-                        L"Ctrl+Shift+3");
-  (void)RegisterHotKey(hwnd, SelectionToolbarCopyHotkeyId,
-                       MOD_CONTROL | MOD_NOREPEAT,
-                       SelectionToolbarCopyShortcutVirtualKey);
-  (void)RegisterHotKey(hwnd, SelectionToolbarLongShotHotkeyId, MOD_NOREPEAT,
-                       SelectionToolbarLongShotShortcutVirtualKey);
+  OverlayWindowData* const overlay_data = impl_->window_data.get();
+  registerTrackedOverlayHotkey(overlay_data, kEscapeHotkeyId, 0, VK_ESCAPE,
+                               L"Escape");
+  registerTrackedOverlayHotkey(overlay_data, kCandidateNextHotkeyId,
+                               MOD_NOREPEAT, VK_TAB, L"Tab");
+  registerTrackedOverlayHotkey(overlay_data, kCandidatePreviousHotkeyId,
+                               MOD_SHIFT | MOD_NOREPEAT, VK_TAB, L"Shift+Tab");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionDetectElementsModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '1', L"Ctrl+1");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionWindowOnlyModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '2', L"Ctrl+2");
+  registerTrackedOverlayHotkey(overlay_data, SmartRegionDisabledModeHotkeyId,
+                               MOD_CONTROL | MOD_NOREPEAT, '3', L"Ctrl+3");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionDetectElementsAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '1', L"Ctrl+Shift+1");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionWindowOnlyAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '2', L"Ctrl+Shift+2");
+  registerTrackedOverlayHotkey(
+      overlay_data, SmartRegionDisabledAlternateHotkeyId,
+      MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, '3', L"Ctrl+Shift+3");
+  if (!selection_shortcuts.m_copy.empty())
+  {
+    registerTrackedOverlayHotkey(
+        overlay_data, SelectionToolbarCopyHotkeyId,
+        selection_shortcuts.m_copy.m_modifiers | MOD_NOREPEAT,
+        selection_shortcuts.m_copy.m_virtual_key, L"selection copy");
+  }
+  if (!selection_shortcuts.m_toggle_longshot.empty())
+  {
+    registerTrackedOverlayHotkey(
+        overlay_data, SelectionToolbarLongShotHotkeyId,
+        selection_shortcuts.m_toggle_longshot.m_modifiers | MOD_NOREPEAT,
+        selection_shortcuts.m_toggle_longshot.m_virtual_key,
+        L"selection long shot");
+  }
 
   // 首帧渲染（UpdateLayeredWindow 需要窗口可见）。
   PostMessageW(hwnd, WM_QINGYING_SELECTION_OVERLAY_READY, 0, 0);
@@ -1715,13 +1909,29 @@ bool SelectionOverlay::show(Image background,
 }
 
 bool SelectionOverlay::postLongShotPreview(const Image& image) {
+  return postLongShotPreview(image, impl_->longshot_session.load());
+}
+
+void SelectionOverlay::setLongShotSession(std::uint64_t session_id) noexcept {
+  std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+  impl_->longshot_session.store(session_id);
+  const auto previous = impl_->preview_token.exchange(0);
+  if (previous) impl_->messages.discard(previous);
+}
+
+bool SelectionOverlay::postLongShotPreview(const Image& image,
+                                           std::uint64_t session_id) {
+  if (session_id != impl_->longshot_session.load()) return false;
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
   try {
     SelectionOverlayLongShotPreviewMessage message;
+    message.session_id = session_id;
     message.image = OverlayRenderer::makeLongShotPreviewImage(image);
+    std::lock_guard<std::mutex> lock(impl_->preview_mutex);
+    if (session_id != impl_->longshot_session.load()) return false;
     const auto token = impl_->messages.push(std::move(message));
     if (!token.has_value()) {
       return false;
@@ -1741,13 +1951,36 @@ bool SelectionOverlay::postLongShotPreview(const Image& image) {
   return true;
 }
 
-bool SelectionOverlay::postLongShotFinished(bool success) {
+bool SelectionOverlay::postLongShotFinished(bool success,
+                                            LongShotResultNotice notice) {
   const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
   if (hwnd == nullptr || !impl_->accepting_messages.load()) {
     return false;
   }
   SelectionOverlayLongShotFinishedMessage message;
   message.success = success;
+  message.notice = notice;
+  const auto token = impl_->messages.push(std::move(message));
+  if (!token.has_value()) {
+    return false;
+  }
+  if (!PostMessageW(hwnd, WM_QINGYING_SELECTION_LONGSHOT_FINISHED, 0,
+                    static_cast<LPARAM>(*token))) {
+    impl_->messages.discard(*token);
+    return false;
+  }
+  return true;
+}
+
+bool SelectionOverlay::postLongShotRecoverable(
+    LongShotRecoveryState recovery) {
+  const HWND hwnd = reinterpret_cast<HWND>(overlay_hwnd_.load());
+  if (hwnd == nullptr || !impl_->accepting_messages.load()) {
+    return false;
+  }
+  SelectionOverlayLongShotFinishedMessage message;
+  message.recoverable = true;
+  message.recovery = recovery;
   const auto token = impl_->messages.push(std::move(message));
   if (!token.has_value()) {
     return false;

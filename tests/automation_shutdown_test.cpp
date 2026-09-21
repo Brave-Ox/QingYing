@@ -6,6 +6,7 @@
 #include "qingying/app/capture_workflow.hpp"
 #include "qingying/app/export_executor.h"
 #include "qingying/app/longshot_controller.hpp"
+#include "qingying/app/longshot_limits_provider.hpp"
 #include "qingying/app/result_action_service.h"
 #include "qingying/capture/capture_engine.hpp"
 #include "qingying/export/export_service.hpp"
@@ -22,7 +23,8 @@ class AutomationShutdownTest : public ::testing::Test {
   CaptureEngine capture;
   LongShotEngine engine{capture};
   SelectionOverlay overlay;
-  LongShotController controller{engine, overlay};
+  LongShotLimitsProvider limits_provider;
+  LongShotController controller{engine, overlay, limits_provider};
   ResultStore store;
   ExportService exporter;
   PinManager pins;
