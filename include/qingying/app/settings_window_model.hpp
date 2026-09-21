@@ -49,6 +49,8 @@ class SettingsWindowModel final
 
   void setAutostartEnabled(bool enabled) noexcept;
   void setAgentEnabled(bool enabled) noexcept;
+  void toggleAutostart() noexcept;
+  void toggleAgent() noexcept;
   void setLongShotMaxFrames(int max_frames) noexcept;
   void setLongShotMaxOutputHeight(int max_output_height) noexcept;
 

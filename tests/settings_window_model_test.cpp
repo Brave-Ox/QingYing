@@ -26,6 +26,22 @@ TEST(SettingsWindowModelTest, StartsOnGeneralPageWithCleanDraft)
 }
 
 TEST(SettingsWindowModelTest,
+     GeneralSettingTogglesChangeOnlyTheirOwnDraftField)
+{
+  SettingsWindowModel model(makeState());
+
+  model.toggleAutostart();
+
+  EXPECT_TRUE(model.draft().m_autostart_enabled);
+  EXPECT_FALSE(model.draft().m_agent_enabled);
+
+  model.toggleAgent();
+
+  EXPECT_TRUE(model.draft().m_autostart_enabled);
+  EXPECT_TRUE(model.draft().m_agent_enabled);
+}
+
+TEST(SettingsWindowModelTest,
      CleanDraftKeepsApplyControlAvailableAndExplainsNoOpApply)
 {
   SettingsWindowModel model(makeState());

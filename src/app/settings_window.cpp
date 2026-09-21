@@ -23,6 +23,17 @@ constexpr int MinimumHeight = 520;
 constexpr int NavigationWidth = 208;
 constexpr int FooterHeight = 76;
 constexpr int ContentPadding = 36;
+constexpr int GeneralCardBottom = 310;
+constexpr int GeneralCardContentInset = 24;
+constexpr int GeneralRowHeight = 54;
+constexpr int GeneralFirstRowTop = 152;
+constexpr int GeneralSecondRowTop = 234;
+constexpr int GeneralRowDividerY = 220;
+constexpr int GeneralCheckboxSize = 20;
+constexpr int GeneralCheckboxRadius = 4;
+constexpr int GeneralCheckboxTextGap = 14;
+constexpr int GeneralCheckmarkStroke = 2;
+constexpr int GeneralCheckmarkPointCount = 3;
 constexpr COLORREF PrimaryColor = RGB(59, 130, 246);
 constexpr COLORREF PrimaryHoverColor = RGB(37, 99, 235);
 constexpr COLORREF NavigationBackgroundColor = RGB(247, 248, 250);
@@ -32,7 +43,8 @@ constexpr COLORREF SelectedNavigationColor = RGB(234, 242, 255);
 constexpr COLORREF BorderColor = RGB(229, 231, 235);
 constexpr COLORREF PrimaryTextColor = RGB(31, 35, 41);
 constexpr COLORREF SecondaryTextColor = RGB(100, 106, 115);
-constexpr COLORREF TertiaryTextColor = RGB(143, 149, 158);
+constexpr COLORREF SettingsRowDividerColor = RGB(236, 239, 244);
+constexpr COLORREF FocusBorderColor = RGB(191, 219, 254);
 constexpr COLORREF ErrorTextColor = RGB(180, 57, 45);
 constexpr COLORREF StatusTextColor = RGB(67, 82, 68);
 
@@ -140,8 +152,8 @@ class BrushHandle final
 class PenHandle final
 {
  public:
-  explicit PenHandle(COLORREF color)
-      : m_pen(CreatePen(PS_SOLID, 1, color))
+  explicit PenHandle(COLORREF color, int width = 1)
+      : m_pen(CreatePen(PS_SOLID, width, color))
   {
   }
 
@@ -338,7 +350,7 @@ struct SettingsWindow::Impl
     body_font.create(10, FW_NORMAL, dpi);
     title_font.create(18, FW_SEMIBOLD, dpi);
     section_font.create(11, FW_SEMIBOLD, dpi);
-    caption_font.create(8, FW_NORMAL, dpi);
+    caption_font.create(9, FW_NORMAL, dpi);
     const auto create = [this](DWORD style, int id, const wchar_t* text)
     {
       HWND control = CreateWindowExW(
@@ -356,8 +368,8 @@ struct SettingsWindow::Impl
                   create(BS_OWNERDRAW | WS_TABSTOP, NavigationHotkeys, L"快捷键"),
                   create(BS_OWNERDRAW | WS_TABSTOP, NavigationLongShot, L"长截图")};
     general_controls = {
-        create(BS_AUTOCHECKBOX | WS_TABSTOP, AutostartCheck, L"开机时启动轻映"),
-        create(BS_AUTOCHECKBOX | WS_TABSTOP, AgentCheck, L"允许本机 Agent 接口")};
+        create(BS_OWNERDRAW | WS_TABSTOP, AutostartCheck, L"开机时启动轻映"),
+        create(BS_OWNERDRAW | WS_TABSTOP, AgentCheck, L"允许本机 Agent 接口")};
     hotkey_controls = {
         create(BS_OWNERDRAW | WS_TABSTOP, CaptureHotkeyButton, L""),
         create(BS_OWNERDRAW | WS_TABSTOP, CopyShortcutButton, L""),
@@ -435,17 +447,22 @@ struct SettingsWindow::Impl
     const int available_width = static_cast<int>(client.right) - content_x - padding;
     const int content_width = (std::max)(scale(200, dpi), available_width);
     const int footer_top = client.bottom - footer_height;
-    const int row_height = scale(30, dpi);
     for (std::size_t index = 0; index < navigation.size(); ++index)
     {
       MoveWindow(navigation[index], scale(18, dpi),
                  scale(104 + static_cast<int>(index) * 48, dpi),
                  nav_width - scale(36, dpi), scale(40, dpi), TRUE);
     }
-    MoveWindow(general_controls[0], content_x + scale(24, dpi), scale(156, dpi),
-               content_width - scale(48, dpi), row_height, TRUE);
-    MoveWindow(general_controls[1], content_x + scale(24, dpi), scale(204, dpi),
-               content_width - scale(48, dpi), row_height, TRUE);
+    MoveWindow(general_controls[0],
+               content_x + scale(GeneralCardContentInset, dpi),
+               scale(GeneralFirstRowTop, dpi),
+               content_width - scale(GeneralCardContentInset * 2, dpi),
+               scale(GeneralRowHeight, dpi), TRUE);
+    MoveWindow(general_controls[1],
+               content_x + scale(GeneralCardContentInset, dpi),
+               scale(GeneralSecondRowTop, dpi),
+               content_width - scale(GeneralCardContentInset * 2, dpi),
+               scale(GeneralRowHeight, dpi), TRUE);
     const int capsule_width = scale(154, dpi);
     const int capsule_x = content_x + content_width - capsule_width - scale(24, dpi);
     for (std::size_t index = 0; index < hotkey_controls.size(); ++index)
@@ -524,6 +541,63 @@ struct SettingsWindow::Impl
              recording ? PrimaryColor : PrimaryTextColor, DT_CENTER);
   }
 
+  void drawGeneralSettingRow(const DRAWITEMSTRUCT& item)
+  {
+    const bool autostart = item.CtlID == AutostartCheck;
+    const bool checked = model != nullptr &&
+        (autostart ? model->draft().m_autostart_enabled
+                   : model->draft().m_agent_enabled);
+    const bool focused = (item.itemState & ODS_FOCUS) != 0;
+    BrushHandle row_background(ContentBackgroundColor);
+    FillRect(item.hDC, &item.rcItem, row_background.get());
+
+    const int checkbox_size = scale(GeneralCheckboxSize, dpi);
+    const int checkbox_top = item.rcItem.top +
+        (item.rcItem.bottom - item.rcItem.top - checkbox_size) / 2;
+    const RECT checkbox_rect{item.rcItem.left, checkbox_top,
+                             item.rcItem.left + checkbox_size,
+                             checkbox_top + checkbox_size};
+    drawRoundedRectangle(item.hDC, checkbox_rect,
+                         scale(GeneralCheckboxRadius, dpi),
+                         checked ? PrimaryColor : ContentBackgroundColor,
+                         checked ? PrimaryColor
+                                 : focused ? FocusBorderColor : BorderColor);
+    if (checked)
+    {
+      POINT checkmark[GeneralCheckmarkPointCount]{};
+      checkmark[0].x = checkbox_rect.left + scale(4, dpi);
+      checkmark[0].y = checkbox_rect.top + scale(10, dpi);
+      checkmark[1].x = checkbox_rect.left + scale(8, dpi);
+      checkmark[1].y = checkbox_rect.top + scale(14, dpi);
+      checkmark[2].x = checkbox_rect.left + scale(16, dpi);
+      checkmark[2].y = checkbox_rect.top + scale(6, dpi);
+      PenHandle checkmark_pen(ContentBackgroundColor,
+                              scale(GeneralCheckmarkStroke, dpi));
+      if (checkmark_pen.get() != nullptr)
+      {
+        const HGDIOBJ previous_pen = SelectObject(item.hDC, checkmark_pen.get());
+        Polyline(item.hDC, checkmark, GeneralCheckmarkPointCount);
+        if (previous_pen != nullptr)
+        {
+          SelectObject(item.hDC, previous_pen);
+        }
+      }
+    }
+
+    const int text_left = checkbox_rect.right + scale(GeneralCheckboxTextGap, dpi);
+    drawText(item.hDC,
+             RECT{text_left, item.rcItem.top + scale(2, dpi), item.rcItem.right,
+                  item.rcItem.top + scale(26, dpi)},
+             controlText(item.hwndItem), section_font.get(), PrimaryTextColor,
+             DT_LEFT);
+    drawText(item.hDC,
+             RECT{text_left, item.rcItem.top + scale(27, dpi), item.rcItem.right,
+                  item.rcItem.bottom},
+             autostart ? L"Windows 启动时自动运行轻映"
+                       : L"轻映 · Windows 原生轻量截图工具",
+             caption_font.get(), SecondaryTextColor, DT_LEFT);
+  }
+
   void drawFooterButton(const DRAWITEMSTRUCT& item, bool primary)
   {
     const bool disabled = (item.itemState & ODS_DISABLED) != 0;
@@ -556,6 +630,11 @@ struct SettingsWindow::Impl
       drawNavigationItem(item);
       return;
     }
+    if (item.CtlID == AutostartCheck || item.CtlID == AgentCheck)
+    {
+      drawGeneralSettingRow(item);
+      return;
+    }
     if (item.CtlID >= CaptureHotkeyButton &&
         item.CtlID <= LongShotShortcutButton)
     {
@@ -583,10 +662,6 @@ struct SettingsWindow::Impl
     }
     updating_controls = true;
     const SettingsDraft& draft = model->draft();
-    CheckDlgButton(window, AutostartCheck,
-                   draft.m_autostart_enabled ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, AgentCheck,
-                   draft.m_agent_enabled ? BST_CHECKED : BST_UNCHECKED);
     SetWindowTextW(hotkey_controls[0], model->recordingShortcut() ==
             SettingsShortcutField::Capture ? L"请按下新快捷键" :
             shortcutText(draft.m_settings.m_capture_hotkey).c_str());
@@ -845,7 +920,7 @@ struct SettingsWindow::Impl
         body_font.create(10, FW_NORMAL, dpi);
         title_font.create(18, FW_SEMIBOLD, dpi);
         section_font.create(11, FW_SEMIBOLD, dpi);
-        caption_font.create(8, FW_NORMAL, dpi);
+        caption_font.create(9, FW_NORMAL, dpi);
         layout();
         refreshControls();
         return 0;
@@ -866,13 +941,13 @@ struct SettingsWindow::Impl
         }
         if (control_id == AutostartCheck && notification == BN_CLICKED)
         {
-          model->setAutostartEnabled(IsDlgButtonChecked(window, AutostartCheck) == BST_CHECKED);
+          model->toggleAutostart();
           refreshControls();
           return 0;
         }
         if (control_id == AgentCheck && notification == BN_CLICKED)
         {
-          model->setAgentEnabled(IsDlgButtonChecked(window, AgentCheck) == BST_CHECKED);
+          model->toggleAgent();
           refreshControls();
           return 0;
         }
@@ -995,17 +1070,25 @@ struct SettingsWindow::Impl
                           scale(94, dpi)},
                  description, body_font.get(), SecondaryTextColor, DT_LEFT);
         const int card_bottom = page == SettingsPage::Hotkeys ? scale(358, dpi)
-                                                               : scale(270, dpi);
+            : page == SettingsPage::General ? scale(GeneralCardBottom, dpi)
+                                             : scale(270, dpi);
         RECT card_rect{content_x, scale(132, dpi), content_x + content_width,
                        card_bottom};
         drawRoundedRectangle(dc, card_rect, scale(10, dpi), ContentBackgroundColor,
                              BorderColor);
         if (page == SettingsPage::General)
         {
-          drawText(dc, RECT{content_x + scale(24, dpi), scale(226, dpi),
-                            content_x + content_width - scale(24, dpi), scale(250, dpi)},
-                   L"轻映 · Windows 原生轻量截图工具", caption_font.get(),
-                   TertiaryTextColor, DT_LEFT);
+          PenHandle separator_pen(SettingsRowDividerColor);
+          const HGDIOBJ previous_separator = SelectObject(dc, separator_pen.get());
+          MoveToEx(dc, content_x + scale(GeneralCardContentInset, dpi),
+                   scale(GeneralRowDividerY, dpi), nullptr);
+          LineTo(dc, content_x + content_width -
+                     scale(GeneralCardContentInset, dpi),
+                 scale(GeneralRowDividerY, dpi));
+          if (previous_separator != nullptr)
+          {
+            SelectObject(dc, previous_separator);
+          }
         }
         if (page == SettingsPage::Hotkeys)
         {

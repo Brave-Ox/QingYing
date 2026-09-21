@@ -245,6 +245,16 @@ void SettingsWindowModel::setAgentEnabled(bool enabled) noexcept
   clearApplyErrors();
 }
 
+void SettingsWindowModel::toggleAutostart() noexcept
+{
+  setAutostartEnabled(!m_draft.m_autostart_enabled);
+}
+
+void SettingsWindowModel::toggleAgent() noexcept
+{
+  setAgentEnabled(!m_draft.m_agent_enabled);
+}
+
 void SettingsWindowModel::setLongShotMaxFrames(int max_frames) noexcept
 {
   m_draft.m_settings.m_longshot_limits.max_frames = max_frames;
