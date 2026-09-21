@@ -1,4 +1,5 @@
 add_library(qingying_smart_region STATIC
+  browser_shell_policy.cpp
   smart_region_detector.cpp
   smart_region_diagnostics.cpp
   smart_region_mode.cpp

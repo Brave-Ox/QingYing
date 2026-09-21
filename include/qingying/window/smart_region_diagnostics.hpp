@@ -144,6 +144,7 @@ struct SmartRegionDiagnosticEvent {
   bool visual_lookup_attempted{false};
   bool visual_cache_hit{false};
   bool visual_cache_contains_candidate{false};
+  bool browser_shell_policy_active{false};
   bool uia_async_result_received{false};
   bool uia_async_result_succeeded{false};
   bool uia_async_msaa_attempted{false};

@@ -7,6 +7,7 @@
 
 #include <Windows.h>
 
+#include "browser_shell_policy.hpp"
 #include "known_content_locator.hpp"
 #include "msaa_region_locator.hpp"
 #include "uia_region_locator.hpp"
@@ -1820,16 +1821,27 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
           SmartRegionDiagnosticSource::KnownContent,
           SmartRegionSemantic::ContentSurface);
     }
-    if (window_snapshot != nullptr)
-    {
-      window_snapshot->is_chromium_browser_chrome =
-          !chromium_browser_chrome.empty();
-    }
     if (diagnostic_enabled) {
       diagnostic_event.known_content_lookup_attempted = true;
       diagnostic_event.known_content_lookup_ms =
           GetTickCount64() - known_content_lookup_begin_ms;
     }
+  }
+
+  if (!injected)
+  {
+    supplied_snapshot.is_chromium_browser_chrome =
+        !chromium_browser_chrome.empty();
+  }
+  if (window_snapshot != nullptr)
+  {
+    window_snapshot->is_chromium_browser_chrome =
+        supplied_snapshot.is_chromium_browser_chrome;
+  }
+  if (diagnostic_enabled)
+  {
+    diagnostic_event.browser_shell_policy_active =
+        shouldUseBrowserShellPolicy(supplied_snapshot);
   }
 
   if (policy != SmartRegionDetectionPolicy::WindowOnly &&

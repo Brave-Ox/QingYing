@@ -14,6 +14,7 @@
 
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/app/app_messages.hpp"
+#include "browser_shell_policy.hpp"
 #include "known_content_locator.hpp"
 #include "msaa_region_locator.hpp"
 #include "uia_region_query_worker.hpp"
@@ -449,6 +450,116 @@ TEST(SmartRegionCandidateTest, RejectsEmptyAndAcceptsPointInside)
   EXPECT_TRUE(candidate.valid());
   EXPECT_TRUE(candidate.contains(10, 20));
   EXPECT_FALSE(candidate.contains(110, 70));
+}
+
+TEST(BrowserShellPolicyTest, ActivatesOnlyForChromiumBrowserChrome)
+{
+  SmartRegionWindowSnapshot chromium_shell;
+  chromium_shell.is_chromium_browser_chrome = true;
+  EXPECT_TRUE(shouldUseBrowserShellPolicy(chromium_shell));
+
+  SmartRegionWindowSnapshot web_content;
+  EXPECT_FALSE(shouldUseBrowserShellPolicy(web_content));
+
+  SmartRegionWindowSnapshot visual_studio_code;
+  EXPECT_FALSE(shouldUseBrowserShellPolicy(visual_studio_code));
+
+  SmartRegionWindowSnapshot pycharm;
+  EXPECT_FALSE(shouldUseBrowserShellPolicy(pycharm));
+
+  SmartRegionWindowSnapshot ordinary_win32_window;
+  EXPECT_FALSE(shouldUseBrowserShellPolicy(ordinary_win32_window));
+}
+
+TEST(BrowserShellPolicyTest, AcceptsCompactUiaButtonOnly)
+{
+  SmartRegionCandidate uia_button{1, 2, {100, 200, 112, 212},
+                                  SmartRegionKind::KnownContent};
+  uia_button.source = SmartRegionDiagnosticSource::Uia;
+  uia_button.semantic = SmartRegionSemantic::ActionableControl;
+  uia_button.uia_metadata.available = true;
+  uia_button.uia_metadata.is_control_element = true;
+  uia_button.uia_metadata.is_enabled = true;
+
+  EXPECT_TRUE(
+      acceptsBrowserShellCandidate(uia_button, BrowserShellRole::Button));
+
+  SmartRegionCandidate visual_glyph = uia_button;
+  visual_glyph.source = SmartRegionDiagnosticSource::Visual;
+  EXPECT_FALSE(
+      acceptsBrowserShellCandidate(visual_glyph, BrowserShellRole::Button));
+
+  SmartRegionCandidate uia_pane = uia_button;
+  uia_pane.semantic = SmartRegionSemantic::ContentSurface;
+  uia_pane.uia_metadata.is_control_element = false;
+  EXPECT_FALSE(acceptsBrowserShellCandidate(uia_pane,
+                                             BrowserShellRole::Pane));
+}
+
+TEST(BrowserShellPolicyTest, LeavesNonChromiumCandidateSelectionUntouched)
+{
+  SmartRegionWindowSnapshot non_chromium_snapshot;
+  SmartRegionCandidate control{1, 2, {100, 100, 140, 140},
+                               SmartRegionKind::KnownContent};
+  control.source = SmartRegionDiagnosticSource::Uia;
+  control.semantic = SmartRegionSemantic::ActionableControl;
+  control.uia_metadata.available = true;
+  control.uia_metadata.is_control_element = true;
+  control.uia_metadata.is_enabled = true;
+
+  SmartRegionCandidate client{1, 1, {0, 0, 800, 600},
+                              SmartRegionKind::ClientArea};
+  client.source = SmartRegionDiagnosticSource::ClientArea;
+  client.semantic = SmartRegionSemantic::Fallback;
+  const SmartRegionCandidate candidates[] = {control, client};
+
+  SmartRegionCandidate selected_before;
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 120, 120, {0, 0, 800, 600},
+      selected_before));
+
+  EXPECT_FALSE(shouldUseBrowserShellPolicy(non_chromium_snapshot));
+  EXPECT_EQ(std::size(candidates), 2U);
+  EXPECT_EQ(candidates[0].source, SmartRegionDiagnosticSource::Uia);
+  EXPECT_EQ(candidates[0].rect.left, 100);
+  EXPECT_EQ(candidates[0].rect.top, 100);
+  EXPECT_EQ(candidates[0].rect.right, 140);
+  EXPECT_EQ(candidates[0].rect.bottom, 140);
+
+  SmartRegionCandidate selected_after;
+  ASSERT_TRUE(SmartRegionCandidateSelector::selectBest(
+      candidates, std::size(candidates), 120, 120, {0, 0, 800, 600},
+      selected_after));
+  EXPECT_EQ(selected_after.source, selected_before.source);
+  EXPECT_EQ(selected_after.rect.left, selected_before.rect.left);
+  EXPECT_EQ(selected_after.rect.top, selected_before.rect.top);
+  EXPECT_EQ(selected_after.rect.right, selected_before.rect.right);
+  EXPECT_EQ(selected_after.rect.bottom, selected_before.rect.bottom);
+}
+
+TEST(SmartRegionDetectorTest, RecordsBrowserShellPolicyActivation)
+{
+  SmartRegionProviders providers;
+  providers.window_snapshot =
+      [](int, int, SmartRegionWindowSnapshot& snapshot, void*) noexcept {
+        snapshot.root_window = 1;
+        snapshot.owner_rect = {0, 0, 800, 600};
+        snapshot.client_rect = {0, 0, 800, 600};
+        snapshot.is_chromium_browser_chrome = true;
+        return true;
+      };
+  SmartRegionDetector detector(providers);
+  SmartRegionDiagnosticTrace trace;
+  SmartRegionCandidate candidate;
+  SmartRegionWindowSnapshot snapshot;
+  trace.setEnabled(true);
+
+  ASSERT_TRUE(detector.detectAt(120, 120, candidate, &trace, nullptr,
+                                SmartRegionDetectionPolicy::Complete, nullptr,
+                                &snapshot));
+  ASSERT_TRUE(trace.hasLatestEvent());
+  EXPECT_TRUE(snapshot.is_chromium_browser_chrome);
+  EXPECT_TRUE(trace.latestEvent().browser_shell_policy_active);
 }
 
 TEST(KnownContentLocatorTest, ChromiumUsesRendererViewportOnly)
