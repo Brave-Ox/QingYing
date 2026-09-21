@@ -42,6 +42,22 @@ ActionResult ExportService::copyToClipboard(const Image& image) try {
   auto clipboard_memory = ImageMemoryBudget::global().reserve(dib_bytes.size(), ImageMemoryKind::WireCopy);
   if (!clipboard_memory) throw std::bad_alloc{};
 
+  // 先完成可能失败的分配和写入；避免因本地内存不足而清空用户原有剪贴板。
+  std::unique_ptr<void, GlobalMemoryDeleter> h_mem(
+      ::GlobalAlloc(GMEM_MOVEABLE, dib_bytes.size()));
+  if (!h_mem) {
+    return makeExportError("ExportService::copyToClipboard: GlobalAlloc 失败");
+  }
+
+  void* const locked = ::GlobalLock(h_mem.get());
+  if (locked == nullptr) {
+    return makeExportError("ExportService::copyToClipboard: GlobalLock 失败");
+  }
+  std::memcpy(locked, dib_bytes.data(), dib_bytes.size());
+  // 单次 GlobalLock 配对单次 GlobalUnlock：此时返回 FALSE 仅为"仍有锁计数"
+  // 的良性情况（GetLastError()==NO_ERROR），无需按错误处理。
+  (void)::GlobalUnlock(h_mem.get());
+
   if (!::OpenClipboard(nullptr)) {
     return makeExportError("ExportService::copyToClipboard: OpenClipboard 失败");
   }
@@ -50,23 +66,6 @@ ActionResult ExportService::copyToClipboard(const Image& image) try {
     ::CloseClipboard();
     return makeExportError("ExportService::copyToClipboard: EmptyClipboard 失败");
   }
-
-  std::unique_ptr<void, GlobalMemoryDeleter> h_mem(
-      ::GlobalAlloc(GMEM_MOVEABLE, dib_bytes.size()));
-  if (!h_mem) {
-    ::CloseClipboard();
-    return makeExportError("ExportService::copyToClipboard: GlobalAlloc 失败");
-  }
-
-  void* const locked = ::GlobalLock(h_mem.get());
-  if (locked == nullptr) {
-    ::CloseClipboard();
-    return makeExportError("ExportService::copyToClipboard: GlobalLock 失败");
-  }
-  std::memcpy(locked, dib_bytes.data(), dib_bytes.size());
-  // 单次 GlobalLock 配对单次 GlobalUnlock：此时返回 FALSE 仅为"仍有锁计数"
-  // 的良性情况（GetLastError()==NO_ERROR），无需按错误处理。
-  (void)::GlobalUnlock(h_mem.get());
 
   if (::SetClipboardData(CF_DIB, h_mem.get()) == nullptr) {
     // 失败：系统未接管句柄，交由 unique_ptr 的删除器 GlobalFree。
