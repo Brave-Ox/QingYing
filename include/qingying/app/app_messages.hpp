@@ -70,6 +70,11 @@ struct SelectionOverlayLongShotFinishedMessage {
 namespace HotkeyIds {
 constexpr int kCapturePrimary = 1;
 constexpr int kCaptureSecondary = 2;
+// Keep all RegisterHotKey identifiers process-wide and centrally allocated.
+// The command binding intentionally retains its existing numeric identifier so
+// external diagnostics and the runtime behavior remain stable.
+constexpr int kCommand = 0xF8C8;
+constexpr int kAvailabilityProbe = 0xF914;
 }  // namespace HotkeyIds
 
 namespace HotkeyDefaults {

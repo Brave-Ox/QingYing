@@ -4,6 +4,7 @@
 
 #include <Windows.h>
 
+#include <array>
 #include <functional>
 
 namespace qingying {
@@ -66,24 +67,36 @@ class HotkeyManager final
       HWND hwnd, const ShortcutBinding& binding);
   ShortcutBinding currentCaptureHotkey() const noexcept;
   bool isCurrentCaptureHotkeyId(int hotkey_id) const noexcept;
+
+  // F8 command entry hotkeys use the same registration, conflict detection,
+  // dispatch identification, and teardown path as capture hotkeys.
+  bool registerCommandHotkey(HWND hwnd, const ShortcutBinding& binding);
+  ShortcutBinding currentCommandHotkey() const noexcept;
+  bool isCurrentCommandHotkeyId(int hotkey_id) const noexcept;
+  bool isCaptureBindingAvailable(HWND hwnd, const ShortcutBinding& binding);
+
   void maintenance(HWND hwnd) noexcept;
   void unregisterAll(HWND hwnd);
 
  private:
   friend class PreparedCaptureHotkey;
 
-  bool captureBindingIsValid(const ShortcutBinding& binding) const noexcept;
+  bool bindingIsValid(const ShortcutBinding& binding) const noexcept;
   int nextCaptureHotkeyId() const noexcept;
   bool retryPendingCleanup(HWND hwnd) noexcept;
+  bool releaseHotkey(HWND hwnd, int hotkey_id) noexcept;
+  void rememberPendingCleanup(int hotkey_id) noexcept;
   void cancelPreparedHotkey(HWND hwnd, int hotkey_id) noexcept;
   HotkeyCommitResult commitPreparedHotkey(HWND hwnd, int hotkey_id,
                                           const ShortcutBinding& binding) noexcept;
 
   HotkeyPlatformOperations m_operations;
   ShortcutBinding m_current_capture_hotkey;
+  ShortcutBinding m_current_command_hotkey;
   int m_current_hotkey_id{0};
   int m_prepared_hotkey_id{0};
-  int m_pending_cleanup_hotkey_id{0};
+  int m_command_hotkey_id{0};
+  std::array<int, 4> m_pending_cleanup_hotkey_ids{};
 };
 
 }  // namespace qingying

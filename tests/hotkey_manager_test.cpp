@@ -1,4 +1,4 @@
-#include "qingying/app/hotkey_manager.hpp"
+﻿#include "qingying/app/hotkey_manager.hpp"
 
 #include "qingying/app/app_messages.hpp"
 
@@ -26,7 +26,8 @@ class FakeHotkeyPlatform final
                       UINT virtual_key)
   {
     if (hwnd != TestWindow || m_registration_failures > 0 ||
-        m_registered_hotkeys.find(hotkey_id) != m_registered_hotkeys.end())
+        m_registered_hotkeys.find(hotkey_id) != m_registered_hotkeys.end() ||
+        hasBindingConflict(modifiers, virtual_key))
     {
       if (m_registration_failures > 0)
       {
@@ -69,6 +70,23 @@ class FakeHotkeyPlatform final
     return m_registered_hotkeys.find(hotkey_id) != m_registered_hotkeys.end();
   }
 
+ private:
+  bool hasBindingConflict(UINT modifiers, UINT virtual_key) const
+  {
+    for (const auto& [hotkey_id, registered] : m_registered_hotkeys)
+    {
+      (void)hotkey_id;
+      if (registered.m_modifiers == modifiers &&
+          registered.m_virtual_key == virtual_key)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ public:
+
   int m_registration_failures{0};
   std::map<int, int> m_unregister_failures;
   std::map<int, int> m_unregister_attempts;
@@ -85,6 +103,11 @@ ShortcutBinding alternateCaptureBinding()
   return ShortcutBinding{MOD_CONTROL | MOD_ALT, static_cast<UINT>('R')};
 }
 
+ShortcutBinding commandBinding()
+{
+  return ShortcutBinding{MOD_CONTROL | MOD_ALT, static_cast<UINT>('K')};
+}
+
 TEST(HotkeyManagerTest, RegistersDefaultBindingRejectsDuplicateAndUnregisters)
 {
   FakeHotkeyPlatform platform;
@@ -98,6 +121,48 @@ TEST(HotkeyManagerTest, RegistersDefaultBindingRejectsDuplicateAndUnregisters)
   manager.unregisterAll(TestWindow);
   EXPECT_TRUE(platform.m_registered_hotkeys.empty());
   EXPECT_FALSE(manager.isCurrentCaptureHotkeyId(HotkeyIds::kCapturePrimary));
+}
+
+TEST(HotkeyManagerTest, RegistersAndRoutesCommandHotkeyThroughTheManager)
+{
+  FakeHotkeyPlatform platform;
+  HotkeyManager manager(platform.operations());
+
+  ASSERT_TRUE(manager.registerCommandHotkey(TestWindow, commandBinding()));
+  EXPECT_EQ(manager.currentCommandHotkey(), commandBinding());
+  EXPECT_TRUE(manager.isCurrentCommandHotkeyId(HotkeyIds::kCommand));
+  EXPECT_FALSE(manager.isCurrentCaptureHotkeyId(HotkeyIds::kCommand));
+
+  manager.unregisterAll(TestWindow);
+  EXPECT_TRUE(platform.m_registered_hotkeys.empty());
+  EXPECT_FALSE(manager.isCurrentCommandHotkeyId(HotkeyIds::kCommand));
+}
+
+TEST(HotkeyManagerTest, AvailabilityProbeRespectsManagedCommandBinding)
+{
+  FakeHotkeyPlatform platform;
+  HotkeyManager manager(platform.operations());
+  ASSERT_TRUE(manager.registerCommandHotkey(TestWindow, commandBinding()));
+
+  EXPECT_FALSE(manager.isCaptureBindingAvailable(TestWindow, commandBinding()));
+  EXPECT_TRUE(
+      manager.isCaptureBindingAvailable(TestWindow, alternateCaptureBinding()));
+  EXPECT_FALSE(platform.hasRegisteredHotkey(HotkeyIds::kAvailabilityProbe));
+}
+
+TEST(HotkeyManagerTest, MaintenanceRetriesFailedCommandHotkeyRelease)
+{
+  FakeHotkeyPlatform platform;
+  HotkeyManager manager(platform.operations());
+  ASSERT_TRUE(manager.registerCommandHotkey(TestWindow, commandBinding()));
+  platform.m_unregister_failures[HotkeyIds::kCommand] = 2;
+
+  manager.unregisterAll(TestWindow);
+  EXPECT_TRUE(platform.hasRegisteredHotkey(HotkeyIds::kCommand));
+  EXPECT_FALSE(manager.isCurrentCommandHotkeyId(HotkeyIds::kCommand));
+
+  manager.maintenance(TestWindow);
+  EXPECT_FALSE(platform.hasRegisteredHotkey(HotkeyIds::kCommand));
 }
 
 TEST(HotkeyManagerTest, PrepareFailureKeepsThePreviousBindingRegistered)

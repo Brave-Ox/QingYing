@@ -50,8 +50,6 @@
 namespace {
 
 constexpr UINT_PTR kAutomationMaintenanceTimer = 0xF907;
-constexpr int kSettingsAvailabilityHotkeyId = 0xF914;
-constexpr int kCommandHotkeyId = 0xF8C8;
 
 qingying::ApplicationEpoch makeApplicationEpoch() {
   GUID guid{};
@@ -217,7 +215,6 @@ struct Application::Impl {
                  [this](ApplicationShutdownDeadline) {
                    if (tray_.hwnd()) {
                      KillTimer(tray_.hwnd(), kAutomationMaintenanceTimer);
-                     (void)UnregisterHotKey(tray_.hwnd(), kCommandHotkeyId);
                    }
                    hotkey_.unregisterAll(tray_.hwnd());
                    settings_window_.close();
@@ -378,24 +375,9 @@ struct Application::Impl {
     return true;
   }
 
-  bool captureHotkeyAvailable(const ShortcutBinding& binding) const
+  bool captureHotkeyAvailable(const ShortcutBinding& binding)
   {
-    if (binding == hotkey_.currentCaptureHotkey())
-    {
-      return true;
-    }
-    const HWND owner = tray_.hwnd();
-    if (owner == nullptr || binding.empty())
-    {
-      return false;
-    }
-    if (RegisterHotKey(owner, kSettingsAvailabilityHotkeyId,
-                        binding.m_modifiers | MOD_NOREPEAT,
-                        binding.m_virtual_key) == FALSE)
-    {
-      return false;
-    }
-    return UnregisterHotKey(owner, kSettingsAvailabilityHotkeyId) != FALSE;
+    return hotkey_.isCaptureBindingAvailable(tray_.hwnd(), binding);
   }
 
   bool selectionShortcutAvailable(
@@ -519,7 +501,8 @@ struct Application::Impl {
         *result = 0;
         return true;
       }
-      if (msg == WM_HOTKEY && static_cast<int>(wparam) == kCommandHotkeyId) {
+      if (msg == WM_HOTKEY &&
+          hotkey_.isCurrentCommandHotkeyId(static_cast<int>(wparam))) {
         showCommandWindow();
         *result = 0;
         return true;
@@ -627,9 +610,9 @@ struct Application::Impl {
       OutputDebugStringW(L"轻映：已保存的截图快捷键当前不可用。\n");
       refreshExternalSettingsState();
     }
-    if (RegisterHotKey(tray_.hwnd(), kCommandHotkeyId,
-                       MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
-                       static_cast<UINT>('K')) == FALSE) {
+    if (!hotkey_.registerCommandHotkey(
+            tray_.hwnd(), ShortcutBinding{MOD_CONTROL | MOD_ALT,
+                                          static_cast<UINT>('K')})) {
       OutputDebugStringW(L"轻映：口令快捷键 Ctrl+Alt+K 当前不可用，可从托盘菜单打开。\n");
     }
 

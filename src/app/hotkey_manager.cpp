@@ -1,4 +1,4 @@
-#include "qingying/app/hotkey_manager.hpp"
+﻿#include "qingying/app/hotkey_manager.hpp"
 
 #include "qingying/app/app_messages.hpp"
 
@@ -122,7 +122,7 @@ bool HotkeyManager::registerCaptureHotkey(HWND hwnd,
                                           const ShortcutBinding& binding)
 {
   if (hwnd == nullptr || m_current_hotkey_id != NoHotkeyId ||
-      m_prepared_hotkey_id != NoHotkeyId || !captureBindingIsValid(binding) ||
+      m_prepared_hotkey_id != NoHotkeyId || !bindingIsValid(binding) ||
       !retryPendingCleanup(hwnd))
   {
     return false;
@@ -145,7 +145,7 @@ PreparedCaptureHotkey HotkeyManager::prepareCaptureHotkey(
     HWND hwnd, const ShortcutBinding& binding)
 {
   if (hwnd == nullptr || m_current_hotkey_id == NoHotkeyId ||
-      m_prepared_hotkey_id != NoHotkeyId || !captureBindingIsValid(binding) ||
+      m_prepared_hotkey_id != NoHotkeyId || !bindingIsValid(binding) ||
       !retryPendingCleanup(hwnd))
   {
     return PreparedCaptureHotkey(this, hwnd, NoHotkeyId, ShortcutBinding{});
@@ -174,6 +174,60 @@ bool HotkeyManager::isCurrentCaptureHotkeyId(int hotkey_id) const noexcept
          hotkey_id == m_current_hotkey_id;
 }
 
+bool HotkeyManager::registerCommandHotkey(HWND hwnd,
+                                          const ShortcutBinding& binding)
+{
+  if (hwnd == nullptr || m_command_hotkey_id != NoHotkeyId ||
+      !bindingIsValid(binding) || !retryPendingCleanup(hwnd))
+  {
+    return false;
+  }
+
+  if (!m_operations.m_register_hotkey(
+          hwnd, HotkeyIds::kCommand, binding.m_modifiers | MOD_NOREPEAT,
+          binding.m_virtual_key))
+  {
+    return false;
+  }
+
+  m_current_command_hotkey = binding;
+  m_command_hotkey_id = HotkeyIds::kCommand;
+  return true;
+}
+
+ShortcutBinding HotkeyManager::currentCommandHotkey() const noexcept
+{
+  return m_current_command_hotkey;
+}
+
+bool HotkeyManager::isCurrentCommandHotkeyId(int hotkey_id) const noexcept
+{
+  return m_command_hotkey_id != NoHotkeyId &&
+         hotkey_id == m_command_hotkey_id;
+}
+
+bool HotkeyManager::isCaptureBindingAvailable(HWND hwnd,
+                                              const ShortcutBinding& binding)
+{
+  if (binding == m_current_capture_hotkey)
+  {
+    return true;
+  }
+  if (hwnd == nullptr || !bindingIsValid(binding) ||
+      !retryPendingCleanup(hwnd))
+  {
+    return false;
+  }
+
+  if (!m_operations.m_register_hotkey(
+          hwnd, HotkeyIds::kAvailabilityProbe,
+          binding.m_modifiers | MOD_NOREPEAT, binding.m_virtual_key))
+  {
+    return false;
+  }
+  return releaseHotkey(hwnd, HotkeyIds::kAvailabilityProbe);
+}
+
 void HotkeyManager::maintenance(HWND hwnd) noexcept
 {
   if (hwnd != nullptr)
@@ -197,14 +251,20 @@ void HotkeyManager::unregisterAll(HWND hwnd)
 
   if (m_current_hotkey_id != NoHotkeyId)
   {
-    static_cast<void>(m_operations.m_unregister_hotkey(hwnd,
-                                                        m_current_hotkey_id));
+    static_cast<void>(releaseHotkey(hwnd, m_current_hotkey_id));
     m_current_hotkey_id = NoHotkeyId;
     m_current_capture_hotkey = ShortcutBinding{};
   }
+  if (m_command_hotkey_id != NoHotkeyId)
+  {
+    static_cast<void>(releaseHotkey(hwnd, m_command_hotkey_id));
+    m_command_hotkey_id = NoHotkeyId;
+    m_current_command_hotkey = ShortcutBinding{};
+  }
+  static_cast<void>(retryPendingCleanup(hwnd));
 }
 
-bool HotkeyManager::captureBindingIsValid(
+bool HotkeyManager::bindingIsValid(
     const ShortcutBinding& binding) const noexcept
 {
   return !binding.empty() && binding.m_modifiers != 0 && binding.valid() &&
@@ -220,16 +280,60 @@ int HotkeyManager::nextCaptureHotkeyId() const noexcept
 
 bool HotkeyManager::retryPendingCleanup(HWND hwnd) noexcept
 {
-  if (m_pending_cleanup_hotkey_id == NoHotkeyId)
+  bool released_all = true;
+  for (int& hotkey_id : m_pending_cleanup_hotkey_ids)
+  {
+    if (hotkey_id == NoHotkeyId)
+    {
+      continue;
+    }
+    if (m_operations.m_unregister_hotkey(hwnd, hotkey_id))
+    {
+      hotkey_id = NoHotkeyId;
+    }
+    else
+    {
+      released_all = false;
+    }
+  }
+  return released_all;
+}
+
+bool HotkeyManager::releaseHotkey(HWND hwnd, int hotkey_id) noexcept
+{
+  if (hotkey_id == NoHotkeyId)
   {
     return true;
   }
-  if (!m_operations.m_unregister_hotkey(hwnd, m_pending_cleanup_hotkey_id))
+  if (m_operations.m_unregister_hotkey(hwnd, hotkey_id))
   {
-    return false;
+    return true;
   }
-  m_pending_cleanup_hotkey_id = NoHotkeyId;
-  return true;
+  rememberPendingCleanup(hotkey_id);
+  return false;
+}
+
+void HotkeyManager::rememberPendingCleanup(int hotkey_id) noexcept
+{
+  if (hotkey_id == NoHotkeyId)
+  {
+    return;
+  }
+  for (const int pending_hotkey_id : m_pending_cleanup_hotkey_ids)
+  {
+    if (pending_hotkey_id == hotkey_id)
+    {
+      return;
+    }
+  }
+  for (int& pending_hotkey_id : m_pending_cleanup_hotkey_ids)
+  {
+    if (pending_hotkey_id == NoHotkeyId)
+    {
+      pending_hotkey_id = hotkey_id;
+      return;
+    }
+  }
 }
 
 void HotkeyManager::cancelPreparedHotkey(HWND hwnd, int hotkey_id) noexcept
@@ -240,10 +344,7 @@ void HotkeyManager::cancelPreparedHotkey(HWND hwnd, int hotkey_id) noexcept
   }
 
   m_prepared_hotkey_id = NoHotkeyId;
-  if (!m_operations.m_unregister_hotkey(hwnd, hotkey_id))
-  {
-    m_pending_cleanup_hotkey_id = hotkey_id;
-  }
+  static_cast<void>(releaseHotkey(hwnd, hotkey_id));
 }
 
 HotkeyCommitResult HotkeyManager::commitPreparedHotkey(
@@ -258,12 +359,11 @@ HotkeyCommitResult HotkeyManager::commitPreparedHotkey(
   m_current_hotkey_id = hotkey_id;
   m_current_capture_hotkey = binding;
   m_prepared_hotkey_id = NoHotkeyId;
-  if (m_operations.m_unregister_hotkey(hwnd, old_hotkey_id))
+  if (releaseHotkey(hwnd, old_hotkey_id))
   {
     return HotkeyCommitResult::Committed;
   }
 
-  m_pending_cleanup_hotkey_id = old_hotkey_id;
   return HotkeyCommitResult::CommittedWithOldBindingPendingRelease;
 }
 
