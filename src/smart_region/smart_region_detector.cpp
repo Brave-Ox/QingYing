@@ -1315,6 +1315,21 @@ const wchar_t* smartRegionAsyncDeferralReasonName(
   return L"not-evaluated";
 }
 
+const wchar_t* browserShellAtlasInvalidReasonName(
+    BrowserShellAtlasInvalidReason reason) noexcept
+{
+  switch (reason)
+  {
+    case BrowserShellAtlasInvalidReason::None:
+      return L"none";
+    case BrowserShellAtlasInvalidReason::Unavailable:
+      return L"unavailable";
+    case BrowserShellAtlasInvalidReason::ContextMismatch:
+      return L"context_mismatch";
+  }
+  return L"unknown";
+}
+
 const wchar_t* smartRegionMsaaTraversalPathName(
     SmartRegionMsaaTraversalPath path) noexcept
 {

@@ -2,6 +2,7 @@
 #include "qingying/window/smart_region_diagnostics.hpp"
 #include "qingying/diagnostics/fault_boundary.h"
 #include "smart_region_visual_cache.hpp"
+#include "browser_shell_types.hpp"
 #include "uia_region_query_worker.hpp"
 #include "qingying/app/app_messages.hpp"
 
@@ -71,6 +72,26 @@ bool rectanglesAreEqual(const WindowRect& left,
 {
   return left.left == right.left && left.top == right.top &&
          left.right == right.right && left.bottom == right.bottom;
+}
+
+bool hasApplicableBrowserShellAtlas(
+    const UiaRegionQueryResult& result,
+    const UiaRegionQueryRequest& request) noexcept
+{
+  const std::shared_ptr<const BrowserShellAtlasSnapshot>& atlas =
+      result.m_browser_shell_atlas;
+  if (atlas == nullptr || atlas->m_entry_count == 0)
+  {
+    return false;
+  }
+
+  const BrowserShellContext& context = atlas->m_context;
+  return context.m_root_window == request.root_window &&
+         context.m_process_id == request.process_id &&
+         rectanglesAreEqual(context.m_window_rect, request.owner_rect) &&
+         context.m_capture_session_generation == request.generation &&
+         context.m_window_generation == result.m_window_generation &&
+         result.m_window_generation == request.generation;
 }
 
 void runProductionQuery(const UiaRegionQueryRequest& request,
@@ -168,7 +189,8 @@ bool isUiaQueryResultApplicable(
   SmartRegionCandidate selected;
   return selectUiaQueryCandidate(result, SmartRegionCandidate{},
                                  current_request.screen_point,
-                                 current_request.owner_rect, selected);
+                                 current_request.owner_rect, selected) ||
+         hasApplicableBrowserShellAtlas(result, current_request);
 }
 
 bool rebindUiaQueryResult(UiaRegionQueryResult& result,
@@ -178,10 +200,20 @@ bool rebindUiaQueryResult(UiaRegionQueryResult& result,
   bound.request_id = request.request_id;
   if (!isUiaQueryResultApplicable(bound, request, now_ms)) return false;
   SmartRegionCandidate local;
-  if (!selectUiaQueryCandidate(bound, {}, request.screen_point, request.owner_rect, local) ||
-      local.semantic == SmartRegionSemantic::Fallback ||
-      local.source == SmartRegionDiagnosticSource::Window ||
-      local.source == SmartRegionDiagnosticSource::ClientArea) return false;
+  if (!selectUiaQueryCandidate(bound, {}, request.screen_point,
+                               request.owner_rect, local))
+  {
+    if (!hasApplicableBrowserShellAtlas(bound, request))
+    {
+      return false;
+    }
+  }
+  else if (local.semantic == SmartRegionSemantic::Fallback ||
+           local.source == SmartRegionDiagnosticSource::Window ||
+           local.source == SmartRegionDiagnosticSource::ClientArea)
+  {
+    return false;
+  }
   bound.screen_point = request.screen_point;
   result = bound;
   return true;
@@ -330,6 +362,8 @@ struct UiaRegionQueryWorker::Impl
       }
       query_result.generation = request.value.generation;
       query_result.process_id = request.value.process_id;
+      query_result.m_window_generation = request.value.generation;
+      query_result.m_pointer_sequence = request.value.request_id;
       if (!use_cached_result) query_result.deadline_ms = request.value.deadline_ms;
       query_result.request_id = request.value.request_id;
       query_result.root_window = request.value.root_window;

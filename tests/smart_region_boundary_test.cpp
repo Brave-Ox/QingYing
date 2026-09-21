@@ -2,6 +2,7 @@
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_query.hpp"
 #include "qingying/diagnostics/fault_boundary.h"
+#include "browser_shell_atlas.hpp"
 #include <atomic>
 #include <stdexcept>
 #include <thread>
@@ -102,6 +103,47 @@ TEST(SmartRegionBoundaryTest, RejectsExpiredAndPreviousGenerationResults) {
   result.generation = 2;
   result.requested_at_ms = 950;
   EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 1001));
+}
+
+TEST(SmartRegionBoundaryTest, AcceptsOnlyCurrentBrowserShellAtlasSnapshot)
+{
+  window_detail::UiaRegionQueryRequest request;
+  request.request_id = 7;
+  request.generation = 2;
+  request.root_window = reinterpret_cast<HWND>(123);
+  request.process_id = 456;
+  request.owner_rect = {0, 0, 800, 600};
+  request.deadline_ms = 1000;
+  request.screen_point = {50, 50};
+
+  BrowserShellContext context;
+  context.m_root_window = request.root_window;
+  context.m_process_id = request.process_id;
+  context.m_window_rect = request.owner_rect;
+  context.m_capture_session_generation = request.generation;
+  context.m_window_generation = request.generation;
+  BrowserShellAtlas atlas;
+  atlas.reset(context);
+  BrowserShellEntryCollection entries;
+  ASSERT_TRUE(entries.append({{40, 40, 80, 80},
+                              BrowserShellRole::ExtensionButton,
+                              BrowserShellSource::UiaSemantic, 99, 0, 7, 1}));
+  ASSERT_TRUE(atlas.merge(entries, 500));
+
+  window_detail::UiaRegionQueryResult result;
+  result.request_id = request.request_id;
+  result.generation = request.generation;
+  result.root_window = request.root_window;
+  result.process_id = request.process_id;
+  result.owner_rect = request.owner_rect;
+  result.deadline_ms = request.deadline_ms;
+  result.requested_at_ms = 500;
+  result.m_window_generation = request.generation;
+  result.m_browser_shell_atlas = atlas.makeSnapshot();
+  EXPECT_TRUE(window_detail::isUiaQueryResultApplicable(result, request, 600));
+
+  ++result.m_window_generation;
+  EXPECT_FALSE(window_detail::isUiaQueryResultApplicable(result, request, 600));
 }
 }  // namespace
 TEST(SmartRegionBoundaryTest, ThrowingProviderIsContainedCooledAndDoesNotStopTheWorker) {

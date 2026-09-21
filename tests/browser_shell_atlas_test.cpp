@@ -315,5 +315,36 @@ TEST(BrowserShellAtlasTest, KeepsNegativeAndPositiveMissCellsSeparate)
   EXPECT_TRUE(atlas.hitTest({0, 0}, hit));
 }
 
+TEST(BrowserShellAtlasTest,
+     SnapshotHitRequiresCurrentContextAndKeepsExtensionBounds)
+{
+  BrowserShellAtlas atlas;
+  const BrowserShellContext context = makeContext();
+  atlas.reset(context);
+
+  BrowserShellEntryCollection entries;
+  ASSERT_TRUE(entries.append(makeEntry(
+      {220, 20, 256, 52}, BrowserShellRole::ExtensionButton,
+      BrowserShellSource::UiaSemantic, 98, 81, 31)));
+  ASSERT_TRUE(atlas.merge(entries, 100));
+  const std::shared_ptr<const BrowserShellAtlasSnapshot> snapshot =
+      atlas.makeSnapshot();
+  ASSERT_NE(snapshot, nullptr);
+
+  BrowserShellEntry hit;
+  EXPECT_TRUE(BrowserShellAtlas::hitTestSnapshot(
+      *snapshot, context, {230, 30}, hit));
+  EXPECT_EQ(hit.m_role, BrowserShellRole::ExtensionButton);
+  EXPECT_EQ(hit.m_hit_rect.left, 220);
+  EXPECT_EQ(hit.m_hit_rect.top, 20);
+  EXPECT_EQ(hit.m_hit_rect.right, 256);
+  EXPECT_EQ(hit.m_hit_rect.bottom, 52);
+
+  BrowserShellContext changed_context = context;
+  ++changed_context.m_window_generation;
+  EXPECT_FALSE(BrowserShellAtlas::hitTestSnapshot(
+      *snapshot, changed_context, {230, 30}, hit));
+}
+
 }  // namespace
 }  // namespace qingying

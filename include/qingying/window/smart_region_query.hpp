@@ -11,6 +11,10 @@
 #include "qingying/action/image.hpp"
 #include "qingying/window/smart_region_diagnostics.hpp"
 
+namespace qingying {
+struct BrowserShellAtlasSnapshot;
+}
+
 namespace qingying::window_detail {
 
 struct UiaRegionQueryRequest
@@ -52,6 +56,12 @@ struct UiaRegionQueryResult
   bool timed_out{false};
   bool is_chromium_browser_chrome{false};
   std::uint8_t minimum_visual_confidence{70};
+  // Immutable background-to-UI handoff.  The public contract keeps the
+  // Atlas type incomplete so consumers do not depend on smart-region internals.
+  std::shared_ptr<const BrowserShellAtlasSnapshot> m_browser_shell_atlas;
+  std::uint64_t m_window_generation{0};
+  std::uint64_t m_layout_generation{0};
+  std::uint64_t m_pointer_sequence{0};
 };
 
 enum class RegionQueryLane { Combined, Discovery, Accessibility };

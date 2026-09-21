@@ -15,6 +15,10 @@ class BrowserShellAtlas
   static constexpr std::size_t MaximumEntries =
       BrowserShellAtlasSnapshot::MaximumEntries;
 
+  static bool hitTestSnapshot(const BrowserShellAtlasSnapshot& snapshot,
+                              const BrowserShellContext& context,
+                              POINT screen_point,
+                              BrowserShellEntry& out) noexcept;
   bool hitTest(POINT screen_point, BrowserShellEntry& out) const noexcept;
   bool merge(const BrowserShellEntryCollection& entries,
              std::uint64_t now_ms) noexcept;

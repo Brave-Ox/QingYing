@@ -83,6 +83,12 @@ enum class SmartRegionAsyncDeferralReason : std::uint8_t {
   FastMotion,
 };
 
+enum class BrowserShellAtlasInvalidReason : std::uint8_t {
+  None,
+  Unavailable,
+  ContextMismatch,
+};
+
 // 单个候选的诊断快照；固定容量，避免在鼠标移动路径上额外分配内存。
 struct SmartRegionCandidateDiagnostic {
   SmartRegionCandidate candidate;
@@ -130,6 +136,8 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t uia_async_elapsed_ms{0};
   std::uint64_t uia_async_age_ms{0};
   std::uint64_t uia_async_poll_delay_ms{0};
+  std::uint64_t browser_shell_atlas_hit_test_ms{0};
+  std::uint64_t browser_shell_first_frame_ms{0};
   std::size_t uia_async_candidate_count{0};
   std::uint8_t visual_edge_mask{0};
   std::uint8_t visual_candidate_confidence{0};
@@ -145,6 +153,10 @@ struct SmartRegionDiagnosticEvent {
   bool visual_cache_hit{false};
   bool visual_cache_contains_candidate{false};
   bool browser_shell_policy_active{false};
+  bool browser_shell_atlas_hit{false};
+  bool browser_shell_atlas_miss{false};
+  BrowserShellAtlasInvalidReason browser_shell_atlas_invalid_reason{
+      BrowserShellAtlasInvalidReason::None};
   bool uia_async_result_received{false};
   bool uia_async_result_succeeded{false};
   bool uia_async_msaa_attempted{false};
@@ -177,6 +189,10 @@ class SmartRegionDiagnosticTrace {
   bool recordStabilizationDelay(std::uint64_t delay_ms) noexcept;
   bool recordHoverMotion(std::int64_t delta_x, std::int64_t delta_y,
                          std::uint64_t elapsed_ms, bool fast) noexcept;
+  bool recordBrowserShellAtlas(bool hit, bool miss,
+                               BrowserShellAtlasInvalidReason invalid_reason,
+                               std::uint64_t hit_test_ms,
+                               std::uint64_t first_frame_ms) noexcept;
   bool recordAsyncUiaResult(
       std::uint64_t request_id, std::uint64_t elapsed_ms,
       std::uint64_t age_ms, std::uint64_t poll_delay_ms, bool succeeded,
@@ -210,5 +226,7 @@ const wchar_t* smartRegionCandidateRejectionName(
     SmartRegionCandidateRejection rejection) noexcept;
 const wchar_t* smartRegionAsyncDeferralReasonName(
     SmartRegionAsyncDeferralReason reason) noexcept;
+const wchar_t* browserShellAtlasInvalidReasonName(
+    BrowserShellAtlasInvalidReason reason) noexcept;
 
 }  // namespace qingying

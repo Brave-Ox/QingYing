@@ -205,6 +205,37 @@ bool BrowserShellAtlas::hitTest(POINT screen_point,
   return found;
 }
 
+bool BrowserShellAtlas::hitTestSnapshot(
+    const BrowserShellAtlasSnapshot& snapshot,
+    const BrowserShellContext& context,
+    POINT screen_point,
+    BrowserShellEntry& out) noexcept
+{
+  out = BrowserShellEntry{};
+  if (!hasSameContext(snapshot.m_context, context))
+  {
+    return false;
+  }
+
+  bool found = false;
+  const std::size_t entry_count =
+      (std::min)(snapshot.m_entry_count, snapshot.m_entries.size());
+  for (std::size_t index = 0; index < entry_count; ++index)
+  {
+    const BrowserShellEntry& entry = snapshot.m_entries.at(index);
+    if (!contains(entry.m_hit_rect, screen_point))
+    {
+      continue;
+    }
+    if (!found || isPreferred(entry, out))
+    {
+      out = entry;
+      found = true;
+    }
+  }
+  return found;
+}
+
 bool BrowserShellAtlas::merge(const BrowserShellEntryCollection& entries,
                                std::uint64_t now_ms) noexcept
 {

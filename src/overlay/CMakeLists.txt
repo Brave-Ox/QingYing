@@ -11,6 +11,7 @@ add_library(qingying_overlay STATIC
 
 target_include_directories(qingying_overlay
   PUBLIC ${PROJECT_SOURCE_DIR}/include
+  PRIVATE ${PROJECT_SOURCE_DIR}/src/smart_region
 )
 
 target_link_libraries(qingying_overlay

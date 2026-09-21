@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,8 @@
 #include "qingying/window/smart_region_detector.hpp"
 #include "qingying/window/smart_region_mode.hpp"
 #include "qingying/window/smart_region_query.hpp"
+
+#include "browser_shell_atlas.hpp"
 
 namespace qingying {
 
@@ -81,6 +84,7 @@ struct OverlayWindowData {
   window_detail::UiaRegionQueryWorker* discovery_worker{nullptr};
   SmartRegionCandidate hover_candidate;
   SmartRegionCandidate fast_hover_candidate;
+  std::shared_ptr<const BrowserShellAtlasSnapshot> m_browser_shell_atlas;
   SmartRegionCandidateCollection hover_candidates;
   SmartRegionModeSettings smart_region_mode_settings;
   SmartRegionMode smart_region_mode{SmartRegionMode::DetectElements};
@@ -404,6 +408,9 @@ void clearHover(OverlayWindowData* data) noexcept
   data->async_presentation_gate.reset();
   data->hover_candidate = SmartRegionCandidate{};
   data->fast_hover_candidate = SmartRegionCandidate{};
+  std::atomic_store_explicit(&data->m_browser_shell_atlas,
+                             std::shared_ptr<const BrowserShellAtlasSnapshot>{},
+                             std::memory_order_release);
   data->current_uia_request = window_detail::UiaRegionQueryRequest{};
   data->deferred_uia_result = window_detail::UiaRegionQueryResult{};
   data->pending_hover_queued_at_ms = 0;
@@ -413,6 +420,54 @@ void clearHover(OverlayWindowData* data) noexcept
   data->has_hover = false;
   data->has_pending_hover_update = false;
   data->has_deferred_uia_result = false;
+}
+
+bool isBrowserShellInteractiveRole(BrowserShellRole role) noexcept
+{
+  return role != BrowserShellRole::Unknown && role != BrowserShellRole::Pane;
+}
+
+SmartRegionCandidate makeBrowserShellAtlasCandidate(
+    const BrowserShellEntry& entry, HWND root) noexcept
+{
+  SmartRegionCandidate candidate;
+  candidate.owner_window = reinterpret_cast<std::uintptr_t>(root);
+  candidate.target_window = reinterpret_cast<std::uintptr_t>(root);
+  candidate.rect = entry.m_hit_rect;
+  candidate.kind = SmartRegionKind::KnownContent;
+  candidate.source = entry.m_source == BrowserShellSource::Visual
+      ? SmartRegionDiagnosticSource::Visual
+      : SmartRegionDiagnosticSource::Uia;
+  candidate.semantic = isBrowserShellInteractiveRole(entry.m_role)
+      ? SmartRegionSemantic::ActionableControl
+      : SmartRegionSemantic::ContentSurface;
+  candidate.visual_confidence = entry.m_confidence;
+  candidate.uia_metadata.available =
+      candidate.source == SmartRegionDiagnosticSource::Uia;
+  candidate.uia_metadata.is_control_element =
+      candidate.semantic == SmartRegionSemantic::ActionableControl;
+  candidate.uia_metadata.is_content_element =
+      candidate.semantic == SmartRegionSemantic::ContentSurface;
+  candidate.uia_metadata.is_enabled = candidate.uia_metadata.available;
+  candidate.uia_metadata.has_name = candidate.uia_metadata.available;
+  candidate.uia_metadata.quality = candidate.uia_metadata.available
+      ? SmartRegionUiaQuality::NamedActionable
+      : SmartRegionUiaQuality::None;
+  return candidate;
+}
+
+BrowserShellContext makeBrowserShellAtlasContext(
+    const BrowserShellAtlasSnapshot& snapshot, HWND root, DWORD process_id,
+    const WindowRect& bounds, std::uint64_t generation) noexcept
+{
+  BrowserShellContext context = snapshot.m_context;
+  context.m_root_window = root;
+  context.m_process_id = process_id;
+  context.m_window_rect = bounds;
+  context.m_dpi = root == nullptr ? 96 : GetDpiForWindow(root);
+  context.m_capture_session_generation = generation;
+  context.m_window_generation = generation;
+  return context;
 }
 
 void destroyToolbar(OverlayWindowData* data) {
@@ -844,6 +899,10 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
     data->has_deferred_uia_result = false;
     data->use_browser_chrome_visual_fallback = false;
     data->minimum_visual_confidence = 70;
+    std::atomic_store_explicit(
+        &data->m_browser_shell_atlas,
+        std::shared_ptr<const BrowserShellAtlasSnapshot>{},
+        std::memory_order_release);
   }
   data->fast_hover_candidate = candidate;
   // Previously discovered geometry is cheap to test against the new pointer.
@@ -856,8 +915,45 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
        cached_count < SmartRegionMaxCandidates; ++i)
     cached[cached_count++] = fallbacks.candidateAt(i);
   SmartRegionCandidate selected = candidate;
-  SmartRegionCandidateSelector::selectBest(cached, cached_count, screen_x, screen_y,
-      bounds, selected, data->minimum_visual_confidence);
+  const std::uint64_t atlas_hit_test_begin_ms = GetTickCount64();
+  const std::shared_ptr<const BrowserShellAtlasSnapshot> atlas =
+      std::atomic_load_explicit(&data->m_browser_shell_atlas,
+                                std::memory_order_acquire);
+  BrowserShellAtlasInvalidReason atlas_invalid_reason =
+      BrowserShellAtlasInvalidReason::Unavailable;
+  bool atlas_hit = false;
+  if (data->use_browser_chrome_visual_fallback && atlas != nullptr)
+  {
+    BrowserShellEntry atlas_entry;
+    const BrowserShellContext atlas_context = makeBrowserShellAtlasContext(
+        *atlas, root, pid, bounds, data->region_generation);
+    if (BrowserShellAtlas::hitTestSnapshot(
+            *atlas, atlas_context, {screen_x, screen_y}, atlas_entry))
+    {
+      selected = makeBrowserShellAtlasCandidate(atlas_entry, root);
+      atlas_hit = true;
+      if (cached_count < SmartRegionMaxCandidates)
+      {
+        cached[cached_count++] = selected;
+      }
+      atlas_invalid_reason = BrowserShellAtlasInvalidReason::None;
+    }
+    else
+    {
+      atlas_invalid_reason = BrowserShellAtlasInvalidReason::ContextMismatch;
+    }
+  }
+  if (!atlas_hit)
+  {
+    SmartRegionCandidateSelector::selectBest(
+        cached, cached_count, screen_x, screen_y, bounds, selected,
+        data->minimum_visual_confidence);
+  }
+  const std::uint64_t atlas_hit_test_ms =
+      GetTickCount64() - atlas_hit_test_begin_ms;
+  static_cast<void>(data->smart_region_diagnostics.recordBrowserShellAtlas(
+      atlas_hit, atlas != nullptr && !atlas_hit, atlas_invalid_reason,
+      atlas_hit_test_ms, GetTickCount64() - motion_now_ms));
   data->hover_candidates.replace(cached, cached_count, screen_x, screen_y,
       bounds, selected, data->minimum_visual_confidence);
   applyHoverCandidate(data, selected, data->hover_screen_point);
@@ -1012,6 +1108,11 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
       if (applies_to_current_request && is_discovery) {
         data->use_browser_chrome_visual_fallback = result.is_chromium_browser_chrome;
         data->minimum_visual_confidence = result.minimum_visual_confidence;
+        if (result.m_browser_shell_atlas != nullptr)
+        {
+          std::atomic_store_explicit(&data->m_browser_shell_atlas,
+              result.m_browser_shell_atlas, std::memory_order_release);
+        }
       }
       const bool should_defer_async_result = !is_discovery &&
           data->async_presentation_gate.shouldDeferAsyncResult(
