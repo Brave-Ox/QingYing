@@ -16,7 +16,7 @@ inline constexpr int AnnotationEditorDividerGap = 10;
 inline constexpr int AnnotationEditorDividerCount = 2;
 inline constexpr int AnnotationEditorMoveButtonCount = 1;  // 左侧拖动把手
 inline constexpr int AnnotationEditorToolButtonCount =
-    6;  // 几何/箭头/画笔/马赛克/文字/撤销
+    7;  // 几何/箭头/画笔/马赛克/文字/撤销/重做
 inline constexpr int AnnotationEditorActionButtonCount = 2;  // 完成/取消
 inline constexpr int AnnotationEditorChromeImageGap = 8;
 inline constexpr int AnnotationEditorChromeStackGap = 6;

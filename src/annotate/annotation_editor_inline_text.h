@@ -41,6 +41,7 @@ AnnotationEditorTextChrome makeTextChrome(
     const Annotation& annotation, bool use_drag_position);
 std::size_t hitTestTextAnnotation(AnnotationEditorHost* data, int x, int y);
 bool isCtrlZKey(WPARAM key);
+bool isRedoKey(WPARAM key);
 LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
                                         LPARAM lparam);
 void invalidateInlineEditRegion(const AnnotationEditorHost* data);

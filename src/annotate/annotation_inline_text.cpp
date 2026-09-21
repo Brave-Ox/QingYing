@@ -494,7 +494,16 @@ void tryPromoteInlineEditToDrag(AnnotationEditorHost* data, int client_x,
 }
 
 bool isCtrlZKey(WPARAM key) {
-  return key == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+  return key == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+         (GetKeyState(VK_SHIFT) & 0x8000) == 0;
+}
+
+bool isRedoKey(WPARAM key) {
+  if ((GetKeyState(VK_CONTROL) & 0x8000) == 0) {
+    return false;
+  }
+  return key == 'Y' ||
+         (key == 'Z' && (GetKeyState(VK_SHIFT) & 0x8000) != 0);
 }
 
 float textRotationPointerDegrees(const PointF& center, int x, int y)
@@ -575,6 +584,16 @@ LRESULT CALLBACK inlineEditSubclassProc(HWND hwnd, UINT msg, WPARAM wparam,
       if (wparam == VK_ESCAPE)
       {
         (void)handleEditorKeyDown(data->window().m_overlay, data, wparam);
+        return 0;
+      }
+      if (isRedoKey(wparam))
+      {
+        cancelInlineText(data);
+        clearTextSelection(data);
+        if (data->core().m_session.engine().redo())
+        {
+          invalidateImageArea(data);
+        }
         return 0;
       }
       if (isCtrlZKey(wparam))

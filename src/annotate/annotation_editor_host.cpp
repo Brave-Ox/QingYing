@@ -170,6 +170,19 @@ bool handleEditorKeyDown(HWND hwnd, AnnotationEditorHost* data, WPARAM key)
       return true;
     }
   }
+  if (isRedoKey(key))
+  {
+    if (data->inlineText().m_inline_edit != nullptr)
+    {
+      cancelInlineText(data);
+    }
+    clearTextSelection(data);
+    if (data->core().m_session.engine().redo())
+    {
+      invalidateImageArea(data);
+    }
+    return true;
+  }
   if (isCtrlZKey(key))
   {
     if (data->inlineText().m_inline_edit != nullptr)
