@@ -1,5 +1,6 @@
 ﻿#include "qingying/window/smart_region_diagnostics.hpp"
 #include "smart_region_visual_cache.hpp"
+#include "qingying/window/smart_region_window_snapshot_cache.hpp"
 #include <cstdint>
 #include <chrono>
 #include <condition_variable>
@@ -2858,6 +2859,38 @@ TEST(SmartRegionHoverStabilizerTest, LeavingPendingLocalHitDiscardsItBeforeClick
   EXPECT_FALSE(stabilizer.update(fallback, 136, {85, 85}));
   EXPECT_FALSE(stabilizer.hasPendingCandidate());
   EXPECT_EQ(stabilizer.selectionCandidate().target_window, 11U);
+}
+
+TEST(SmartRegionWindowSnapshotCacheTest,
+     ReusesOnlyFreshSnapshotsThatContainThePointer) {
+  std::uint64_t now_ms = 100;
+  SmartRegionWindowSnapshotCache cache(
+      [](void* context) noexcept {
+        return *static_cast<std::uint64_t*>(context);
+      },
+      &now_ms);
+  SmartRegionWindowSnapshot snapshot;
+  snapshot.root_window = 123;
+  snapshot.owner_rect = {100, 80, 700, 500};
+  snapshot.client_rect = {110, 120, 690, 490};
+  cache.store(snapshot);
+
+  now_ms += 16;
+  SmartRegionWindowSnapshot cached;
+  std::uint64_t age_ms = 0;
+  ASSERT_TRUE(cache.lookup(180, 160, cached, &age_ms));
+  EXPECT_EQ(cached.root_window, snapshot.root_window);
+  EXPECT_EQ(age_ms, 16U);
+  EXPECT_FALSE(cache.lookup(701, 160, cached));
+
+  now_ms += SmartRegionWindowSnapshotCache::lifetimeMs();
+  EXPECT_FALSE(cache.lookup(180, 160, cached));
+  const auto stats = cache.stats();
+  EXPECT_EQ(stats.hits, 1U);
+  EXPECT_EQ(stats.stores, 1U);
+  EXPECT_GE(stats.misses, 2U);
+  EXPECT_GE(stats.invalidations, 1U);
+  EXPECT_EQ(cache.storageBytes(), sizeof(cache));
 }
 
 }  // namespace

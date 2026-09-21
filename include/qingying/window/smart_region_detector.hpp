@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "qingying/window/smart_region_types.hpp"
+#include "qingying/window/smart_region_window_snapshot_cache.hpp"
 
 namespace qingying {
 
@@ -36,6 +37,8 @@ class SmartRegionDetector {
 
  private:
   SmartRegionProviders m_providers;
+  // detectAt() 在覆盖层 UI 线程上高频调用；仅 UiSnapshot 策略复用该缓存。
+  mutable SmartRegionWindowSnapshotCache m_window_snapshot_cache;
 };
 
 }  // namespace qingying

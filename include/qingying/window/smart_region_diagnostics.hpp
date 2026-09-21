@@ -117,6 +117,7 @@ struct SmartRegionDiagnosticEvent {
   std::uint64_t msaa_lookup_ms{0};
   std::uint64_t known_content_lookup_ms{0};
   std::uint64_t visual_lookup_ms{0};
+  std::uint64_t window_snapshot_cache_age_ms{0};
   std::uint64_t selection_ms{0};
   std::uint64_t overlay_render_ms{0};
   std::uint64_t overlay_render_count{0};
@@ -133,6 +134,8 @@ struct SmartRegionDiagnosticEvent {
   std::uint8_t visual_edge_mask{0};
   std::uint8_t visual_candidate_confidence{0};
   bool window_detection_attempted{false};
+  bool window_snapshot_cache_lookup_attempted{false};
+  bool window_snapshot_cache_hit{false};
   bool uia_lookup_attempted{false};
   bool uia_has_valid_local_candidate{false};
   bool msaa_lookup_attempted{false};

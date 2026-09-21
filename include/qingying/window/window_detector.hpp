@@ -25,6 +25,9 @@ class WindowDetector {
                   WindowRect& out_rect) const noexcept;
   // 判断窗口是否可吸附（供测试与复用）。
   static bool isSnappable(HWND hwnd);
+  // 仅比较当前可见边界；用于短时窗口快照缓存的失效校验。
+  static bool matchesVisibleBounds(HWND hwnd,
+                                   const WindowRect& expected) noexcept;
 
   // 返回 false 表示没有可吸附窗口（如悬停在桌面或 QingYing 自身窗口上）。
   bool detectAt(int screen_x, int screen_y, HWND& out_window,

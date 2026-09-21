@@ -36,6 +36,19 @@ bool WindowDetector::isSnappable(HWND hwnd) {
       window_detail::intersectsVirtualDesktop(rect);
 }
 
+bool WindowDetector::matchesVisibleBounds(
+    HWND hwnd, const WindowRect& expected) noexcept
+{
+  if (hwnd == nullptr || expected.empty() || IsWindow(hwnd) == FALSE)
+  {
+    return false;
+  }
+  RECT actual{};
+  return window_detail::readVisibleBounds(hwnd, actual) &&
+         actual.left == expected.left && actual.top == expected.top &&
+         actual.right == expected.right && actual.bottom == expected.bottom;
+}
+
 bool WindowDetector::detectAt(int screen_x, int screen_y, HWND& out_window,
                               WindowRect& out_rect) const {
   const POINT pt{screen_x, screen_y};

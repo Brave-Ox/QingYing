@@ -153,7 +153,8 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           message, std::size(message),
           L"[QingYing SmartRegion] source=%s rect=(%d,%d,%d,%d) root=%p "
           L"cursor=(%d,%d) pid=%lu process=%s class=%s total=%llu ms "
-          L"window=%llu uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
+          L"window=%llu windowCache=(attempted:%d hit:%d age:%llu) "
+          L"uia=%llu uiaLocal=%d msaaAttempted=%d msaa=%llu "
           L"msaaFound=%d known=%llu visual=%llu visualCache=%s "
            L"visualConfidence=%u "
            L"select=%llu render=%llu renderCount=%llu inputDelay=%llu "
@@ -169,6 +170,10 @@ void emitSmartRegionDiagnostic(const SmartRegionDiagnosticTrace& diagnostics)
           event.window_class[0] != L'\0' ? event.window_class : L"<unknown>",
           static_cast<unsigned long long>(event.elapsed_ms),
           static_cast<unsigned long long>(event.window_detection_ms),
+          event.window_snapshot_cache_lookup_attempted ? 1 : 0,
+          event.window_snapshot_cache_hit ? 1 : 0,
+          static_cast<unsigned long long>(
+              event.window_snapshot_cache_age_ms),
           static_cast<unsigned long long>(event.uia_lookup_ms),
           event.uia_has_valid_local_candidate ? 1 : 0,
           event.msaa_lookup_attempted ? 1 : 0,

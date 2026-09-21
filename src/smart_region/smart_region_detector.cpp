@@ -119,6 +119,14 @@ bool rectanglesEqual(const WindowRect& left,
          left.right == right.right && left.bottom == right.bottom;
 }
 
+bool windowSnapshotStillCurrent(
+    const SmartRegionWindowSnapshot& snapshot) noexcept
+{
+  const HWND root_window = reinterpret_cast<HWND>(snapshot.root_window);
+  return WindowDetector::matchesVisibleBounds(root_window,
+                                              snapshot.owner_rect);
+}
+
 struct CandidateScoreBreakdown
 {
   int source{0};
@@ -991,6 +999,82 @@ bool SmartRegionVisualResultCache::lookup(
   return false;
 }
 
+std::uint64_t SmartRegionWindowSnapshotCache::nowMs() const noexcept
+{
+  return m_clock != nullptr ? m_clock(m_clock_context) : GetTickCount64();
+}
+
+bool SmartRegionWindowSnapshotCache::lookup(
+    int screen_x, int screen_y, SmartRegionWindowSnapshot& out,
+    std::uint64_t* age_ms) noexcept
+{
+  out = SmartRegionWindowSnapshot{};
+  if (age_ms != nullptr)
+  {
+    *age_ms = 0;
+  }
+  if (!m_valid)
+  {
+    ++m_stats.misses;
+    return false;
+  }
+
+  const std::uint64_t now_ms = nowMs();
+  if (now_ms < m_cached_at_ms || now_ms - m_cached_at_ms >= lifetimeMs())
+  {
+    clear();
+    ++m_stats.misses;
+    return false;
+  }
+  if (screen_x < m_snapshot.owner_rect.left ||
+      screen_x >= m_snapshot.owner_rect.right ||
+      screen_y < m_snapshot.owner_rect.top ||
+      screen_y >= m_snapshot.owner_rect.bottom)
+  {
+    ++m_stats.misses;
+    return false;
+  }
+
+  out = m_snapshot;
+  if (age_ms != nullptr)
+  {
+    *age_ms = now_ms - m_cached_at_ms;
+  }
+  ++m_stats.hits;
+  return true;
+}
+
+void SmartRegionWindowSnapshotCache::store(
+    const SmartRegionWindowSnapshot& snapshot) noexcept
+{
+  if (!snapshot.valid())
+  {
+    clear();
+    return;
+  }
+  m_snapshot = snapshot;
+  m_cached_at_ms = nowMs();
+  m_valid = true;
+  ++m_stats.stores;
+}
+
+void SmartRegionWindowSnapshotCache::clear() noexcept
+{
+  if (m_valid)
+  {
+    ++m_stats.invalidations;
+  }
+  m_snapshot = SmartRegionWindowSnapshot{};
+  m_cached_at_ms = 0;
+  m_valid = false;
+}
+
+SmartRegionWindowSnapshotCacheStats
+SmartRegionWindowSnapshotCache::stats() const noexcept
+{
+  return m_stats;
+}
+
 void SmartRegionVisualResultCache::store(
     std::uintptr_t root_window, std::uintptr_t background_identity,
     const WindowRect& owner_rect, int screen_x, int screen_y,
@@ -1714,13 +1798,42 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   WindowDetector window_detector;
   HWND root_window = nullptr;
   WindowRect window_rect;
+  bool window_snapshot_cache_hit = false;
+  std::uint64_t window_snapshot_cache_age_ms = 0;
   const std::uint64_t window_detection_begin_ms =
       diagnostic_enabled ? GetTickCount64() : 0;
-  const bool found_window = injected
-      ? m_providers.window_snapshot(screen_x, screen_y, supplied_snapshot, m_providers.context) && supplied_snapshot.valid()
-      : (policy == SmartRegionDetectionPolicy::UiSnapshot
-            ? window_detector.snapshotAt(screen_x, screen_y, root_window, window_rect)
-            : window_detector.detectAt(screen_x, screen_y, root_window, window_rect));
+  bool found_window = false;
+  if (injected)
+  {
+    found_window = m_providers.window_snapshot(
+        screen_x, screen_y, supplied_snapshot, m_providers.context) &&
+        supplied_snapshot.valid();
+  }
+  else if (policy == SmartRegionDetectionPolicy::UiSnapshot &&
+           m_window_snapshot_cache.lookup(
+               screen_x, screen_y, supplied_snapshot,
+               &window_snapshot_cache_age_ms))
+  {
+    if (windowSnapshotStillCurrent(supplied_snapshot))
+    {
+      root_window = reinterpret_cast<HWND>(supplied_snapshot.root_window);
+      window_rect = supplied_snapshot.owner_rect;
+      found_window = true;
+      window_snapshot_cache_hit = true;
+    }
+    else
+    {
+      m_window_snapshot_cache.clear();
+    }
+  }
+  if (!found_window && !injected)
+  {
+    found_window = policy == SmartRegionDetectionPolicy::UiSnapshot
+                       ? window_detector.snapshotAt(
+                             screen_x, screen_y, root_window, window_rect)
+                       : window_detector.detectAt(
+                             screen_x, screen_y, root_window, window_rect);
+  }
   if (injected) {
     root_window = reinterpret_cast<HWND>(supplied_snapshot.root_window);
     window_rect = supplied_snapshot.owner_rect;
@@ -1728,6 +1841,11 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   if (!found_window) {
     if (diagnostic_enabled) {
       diagnostic_event.window_detection_attempted = true;
+      diagnostic_event.window_snapshot_cache_lookup_attempted =
+          !injected && policy == SmartRegionDetectionPolicy::UiSnapshot;
+      diagnostic_event.window_snapshot_cache_hit = window_snapshot_cache_hit;
+      diagnostic_event.window_snapshot_cache_age_ms =
+          window_snapshot_cache_age_ms;
       diagnostic_event.window_detection_ms =
           GetTickCount64() - window_detection_begin_ms;
     }
@@ -1736,6 +1854,11 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
   }
   if (diagnostic_enabled) {
     diagnostic_event.window_detection_attempted = true;
+    diagnostic_event.window_snapshot_cache_lookup_attempted =
+        !injected && policy == SmartRegionDetectionPolicy::UiSnapshot;
+    diagnostic_event.window_snapshot_cache_hit = window_snapshot_cache_hit;
+    diagnostic_event.window_snapshot_cache_age_ms =
+        window_snapshot_cache_age_ms;
     diagnostic_event.window_detection_ms =
         GetTickCount64() - window_detection_begin_ms;
     if (!injected && policy != SmartRegionDetectionPolicy::UiSnapshot)
@@ -1760,6 +1883,11 @@ bool SmartRegionDetector::detectAt(int screen_x, int screen_y,
     supplied_snapshot.root_window = reinterpret_cast<std::uintptr_t>(root_window);
     supplied_snapshot.owner_rect = window_rect;
     supplied_snapshot.client_rect = client_rect;
+  }
+  if (!injected && policy == SmartRegionDetectionPolicy::UiSnapshot &&
+      supplied_snapshot.valid())
+  {
+    m_window_snapshot_cache.store(supplied_snapshot);
   }
   std::size_t uia_candidate_count = 0;
   if (policy == SmartRegionDetectionPolicy::Complete && m_providers.accessibility_query)
