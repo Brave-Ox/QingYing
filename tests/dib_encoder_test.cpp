@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -74,6 +75,44 @@ TEST(DibEncoderTest, PixelDataIsBottomUp) {
   EXPECT_EQ(px[1], kMakePixel(0x00, 0x00, 0x00, 0xFF));  // 原底行：黑
   EXPECT_EQ(px[2], kMakePixel(0xFF, 0x00, 0x00, 0xFF));  // 原顶行：红
   EXPECT_EQ(px[3], kMakePixel(0x00, 0xFF, 0x00, 0xFF));  // 原顶行：绿
+}
+
+TEST(DibEncoderTest, V5HeaderKeepsBgraMasksAndAlpha) {
+  Image image;
+  image.width = 1;
+  image.height = 2;
+  image.pixels = {
+      kMakePixel(0x11, 0x22, 0x33, 0x44),
+      kMakePixel(0x55, 0x66, 0x77, 0x88),
+  };
+
+  const auto bytes = encodeDibV5(image);
+  ASSERT_GE(bytes.size(), sizeof(BITMAPV5HEADER) + 8u);
+  const auto* header =
+      reinterpret_cast<const BITMAPV5HEADER*>(bytes.data());
+  EXPECT_EQ(header->bV5Size, sizeof(BITMAPV5HEADER));
+  EXPECT_EQ(header->bV5Width, 1);
+  EXPECT_EQ(header->bV5Height, 2);
+  EXPECT_EQ(header->bV5Compression, static_cast<DWORD>(BI_BITFIELDS));
+  EXPECT_EQ(header->bV5RedMask, 0x00FF0000u);
+  EXPECT_EQ(header->bV5GreenMask, 0x0000FF00u);
+  EXPECT_EQ(header->bV5BlueMask, 0x000000FFu);
+  EXPECT_EQ(header->bV5AlphaMask, 0xFF000000u);
+
+  const auto* pixels = reinterpret_cast<const std::uint32_t*>(
+      bytes.data() + sizeof(BITMAPV5HEADER));
+  EXPECT_EQ(pixels[0], kMakePixel(0x55, 0x66, 0x77, 0x88));
+  EXPECT_EQ(pixels[1], kMakePixel(0x11, 0x22, 0x33, 0x44));
+}
+
+TEST(DibEncoderTest, RejectsImageWhoseDibByteCountWouldOverflow) {
+  Image image;
+  image.width = (std::numeric_limits<int>::max)();
+  image.height = (std::numeric_limits<int>::max)();
+  image.pixels = {0xFF000000u};
+
+  EXPECT_TRUE(encodeDib(image).empty());
+  EXPECT_TRUE(encodeDibV5(image).empty());
 }
 
 }  // namespace dib

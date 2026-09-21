@@ -23,6 +23,20 @@ struct GlobalMemoryDeleter {
   }
 };
 
+using ClipboardMemory = std::unique_ptr<void, GlobalMemoryDeleter>;
+
+ClipboardMemory copyIntoGlobalMemory(const dib::DibBytes& bytes) {
+  ClipboardMemory memory(::GlobalAlloc(GMEM_MOVEABLE, bytes.size()));
+  if (!memory) return {};
+  void* const locked = ::GlobalLock(memory.get());
+  if (locked == nullptr) return {};
+  std::memcpy(locked, bytes.data(), bytes.size());
+  // Single GlobalLock pairs with a single GlobalUnlock. A FALSE return is
+  // benign when the lock count reaches zero, so no GetLastError handling here.
+  (void)::GlobalUnlock(memory.get());
+  return memory;
+}
+
 ActionResult makeExportError(const char* message) {
   ActionResult r;
   r.ok = false;
@@ -35,28 +49,24 @@ ActionResult makeExportError(const char* message) {
 
 ActionResult ExportService::copyToClipboard(const Image& image) try {
   const auto dib_bytes = dib::encodeDib(image);
-  if (dib_bytes.empty()) {
+  const auto dib_v5_bytes = dib::encodeDibV5(image);
+  if (dib_bytes.empty() || dib_v5_bytes.empty()) {
     return makeExportError("ExportService::copyToClipboard: 空图，无内容可复制");
   }
 
-  auto clipboard_memory = ImageMemoryBudget::global().reserve(dib_bytes.size(), ImageMemoryKind::WireCopy);
+  const auto total_bytes = static_cast<std::uint64_t>(dib_bytes.size()) +
+                           static_cast<std::uint64_t>(dib_v5_bytes.size());
+  auto clipboard_memory = ImageMemoryBudget::global().reserve(
+      total_bytes, ImageMemoryKind::WireCopy);
   if (!clipboard_memory) throw std::bad_alloc{};
 
-  // 先完成可能失败的分配和写入；避免因本地内存不足而清空用户原有剪贴板。
-  std::unique_ptr<void, GlobalMemoryDeleter> h_mem(
-      ::GlobalAlloc(GMEM_MOVEABLE, dib_bytes.size()));
-  if (!h_mem) {
+  // Both formats are allocated and populated before opening the clipboard, so
+  // local allocation failures leave the user's existing clipboard untouched.
+  ClipboardMemory legacy = copyIntoGlobalMemory(dib_bytes);
+  ClipboardMemory modern = copyIntoGlobalMemory(dib_v5_bytes);
+  if (!legacy || !modern) {
     return makeExportError("ExportService::copyToClipboard: GlobalAlloc 失败");
   }
-
-  void* const locked = ::GlobalLock(h_mem.get());
-  if (locked == nullptr) {
-    return makeExportError("ExportService::copyToClipboard: GlobalLock 失败");
-  }
-  std::memcpy(locked, dib_bytes.data(), dib_bytes.size());
-  // 单次 GlobalLock 配对单次 GlobalUnlock：此时返回 FALSE 仅为"仍有锁计数"
-  // 的良性情况（GetLastError()==NO_ERROR），无需按错误处理。
-  (void)::GlobalUnlock(h_mem.get());
 
   if (!::OpenClipboard(nullptr)) {
     return makeExportError("ExportService::copyToClipboard: OpenClipboard 失败");
@@ -67,20 +77,25 @@ ActionResult ExportService::copyToClipboard(const Image& image) try {
     return makeExportError("ExportService::copyToClipboard: EmptyClipboard 失败");
   }
 
-  if (::SetClipboardData(CF_DIB, h_mem.get()) == nullptr) {
+  if (::SetClipboardData(CF_DIB, legacy.get()) == nullptr) {
     // 失败：系统未接管句柄，交由 unique_ptr 的删除器 GlobalFree。
     ::CloseClipboard();
     return makeExportError("ExportService::copyToClipboard: SetClipboardData 失败");
   }
 
-  // 成功：系统接管 h_mem 所有权，release 防止二次 GlobalFree。
-  h_mem.release();
+  // CF_DIB keeps Paint and legacy Office compatibility. CF_DIBV5 declares
+  // channel masks and alpha for Chromium and modern Office/WPS consumers. A
+  // V5 publication failure does not invalidate the already-copied CF_DIB.
+  legacy.release();
+  if (::SetClipboardData(CF_DIBV5, modern.get()) != nullptr) {
+    modern.release();
+  }
   ::CloseClipboard();
 
   ActionResult r;
   r.ok = true;
   r.error_code = ErrorCode::kOk;
-  r.message = "图像已复制到剪贴板";
+  r.message = "图像已复制到剪贴板（CF_DIB / CF_DIBV5）";
   return r;
 } catch (const std::bad_alloc&) {
   ActionResult result;
