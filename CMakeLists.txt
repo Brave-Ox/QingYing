@@ -20,5 +20,13 @@ if(QINGYING_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
   enable_testing()
   include(CTest)
+  find_program(QINGYING_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
+  if(QINGYING_POWERSHELL_EXECUTABLE)
+    add_test(NAME qingying_text_format
+      COMMAND ${QINGYING_POWERSHELL_EXECUTABLE} -NoProfile -ExecutionPolicy Bypass
+        -File ${CMAKE_SOURCE_DIR}/tools/verify_text_format.ps1
+        -Root ${CMAKE_SOURCE_DIR})
+    set_tests_properties(qingying_text_format PROPERTIES LABELS "quality;format")
+  endif()
   add_subdirectory(tests)
 endif()

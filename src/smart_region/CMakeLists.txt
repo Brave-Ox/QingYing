@@ -1,5 +1,6 @@
 add_library(qingying_smart_region STATIC
   smart_region_detector.cpp
+  smart_region_diagnostics.cpp
   smart_region_mode.cpp
   known_content_locator.cpp
   msaa_region_locator.cpp

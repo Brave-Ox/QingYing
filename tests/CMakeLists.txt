@@ -218,7 +218,8 @@ endif()
 gtest_discover_tests(qingying_automation_core_tests
   TEST_PREFIX "AutomationCore."
   WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_automation_core_tests>
-  DISCOVERY_MODE PRE_TEST)
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES LABELS automation)
 get_target_property(QINGYING_DESKTOP_SOURCES qingying SOURCES)
 list(TRANSFORM QINGYING_DESKTOP_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/src/app/" REGEX "^[^/].*\\.cpp$")
 add_executable(qingying_process_fixture WIN32 ${QINGYING_DESKTOP_SOURCES})
@@ -232,6 +233,7 @@ gtest_discover_tests(qingying_tests
   WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_tests>
   DISCOVERY_MODE PRE_TEST
   DISCOVERY_TIMEOUT 60
+  PROPERTIES LABELS desktop
 )
 
 # 使用 vcpkg 共享库时，确保 gtest 的 DLL 与测试程序放在一起
