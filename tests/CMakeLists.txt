@@ -8,7 +8,6 @@ add_executable(qingying_tests
   settings_window_model_test.cpp
   image_memory_budget_test.cpp
   fault_boundary_test.cpp
-  command_parser_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
   ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp
   ${PROJECT_SOURCE_DIR}/src/app/hotkey_manager.cpp
@@ -202,6 +201,35 @@ if(MSVC)
 endif()
 
 include(GoogleTest)
+add_executable(qingying_command_tests
+  command_parser_test.cpp
+  command_parser_golden_test.cpp
+  command_parser_diagnostics_test.cpp
+  command_parser_fuzz_test.cpp
+  command_text_test.cpp
+  command_dimension_parser_test.cpp
+)
+target_include_directories(qingying_command_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/src/command
+)
+target_link_libraries(qingying_command_tests PRIVATE
+  qingying_command
+  GTest::gtest
+  GTest::gtest_main
+)
+if(WIN32)
+  add_custom_command(TARGET qingying_command_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest> $<TARGET_FILE_DIR:qingying_command_tests>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:GTest::gtest_main> $<TARGET_FILE_DIR:qingying_command_tests>)
+endif()
+gtest_discover_tests(qingying_command_tests
+  WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_command_tests>
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES LABELS command)
+
 add_executable(qingying_automation_core_tests
   automation_session_state_test.cpp
   automation_core_test.cpp
