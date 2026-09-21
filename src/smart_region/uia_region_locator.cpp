@@ -136,6 +136,47 @@ bool hasActionableControlPattern(
   return (properties.supported_pattern_flags & kActionablePatternMask) != 0;
 }
 
+bool rectanglesIntersect(const WindowRect& left,
+                         const WindowRect& right) noexcept
+{
+  return left.left < right.right && right.left < left.right &&
+         left.top < right.bottom && right.top < left.bottom;
+}
+
+BrowserShellRole browserShellRoleFor(
+    const UiaRegionProperties& properties) noexcept
+{
+  switch (properties.control_type)
+  {
+    case UiaControlType::Button:
+      return BrowserShellRole::Button;
+    case UiaControlType::TabItem:
+      return BrowserShellRole::Tab;
+    case UiaControlType::MenuItem:
+      return (properties.supported_pattern_flags &
+              static_cast<std::uint8_t>(UiaPatternFlag::ExpandCollapse)) != 0
+          ? BrowserShellRole::BookmarkFolder
+          : BrowserShellRole::MenuButton;
+    case UiaControlType::Hyperlink:
+      return BrowserShellRole::Bookmark;
+    case UiaControlType::Edit:
+      return BrowserShellRole::AddressBar;
+    default:
+      break;
+  }
+  return BrowserShellRole::Unknown;
+}
+
+std::uint64_t browserShellIdentityFor(
+    const UiaRegionProperties& properties, BrowserShellRole role) noexcept
+{
+  const std::uint64_t control_type = properties.control_type_id;
+  const std::uint64_t role_value = static_cast<std::uint8_t>(role);
+  const std::uint64_t left = static_cast<std::uint32_t>(properties.rect.left);
+  const std::uint64_t top = static_cast<std::uint32_t>(properties.rect.top);
+  return (control_type << 32) ^ (role_value << 24) ^ (left << 12) ^ top;
+}
+
 SmartRegionSemantic semanticFor(
     const UiaRegionProperties& properties) noexcept
 {
@@ -655,6 +696,32 @@ bool UiaRegionLocatorSession::locate(
   return out_count != 0;
 }
 
+bool UiaRegionLocatorSession::locateBrowserShellEntries(
+    HWND root_window, POINT screen_point,
+    BrowserShellEntryCollection& out_entries) noexcept
+{
+  out_entries = BrowserShellEntryCollection{};
+  const std::uint64_t begin_ms = GetTickCount64();
+  if (root_window == nullptr || !IsWindow(root_window) ||
+      !IsWindowVisible(root_window) || !m_impl->initialize())
+  {
+    return false;
+  }
+
+  UiaRegionProperties path[kMaximumUiaPathDepth];
+  std::size_t path_count = 0;
+  if (!m_impl->collectDesktopPath(root_window, screen_point, begin_ms, path,
+                                  kMaximumUiaPathDepth, path_count) ||
+      !uiaPathBelongsToRoot(path, path_count, root_window) ||
+      path_count == 0)
+  {
+    return false;
+  }
+
+  return collectBrowserShellEntries(root_window, screen_point, path[0].rect,
+                                    path, path_count, out_entries);
+}
+
 bool makeUiaCandidate(HWND root_window, POINT screen_point,
                       const UiaRegionProperties& properties,
                       SmartRegionCandidate& out) noexcept
@@ -717,6 +784,48 @@ std::size_t collectUiaCandidates(
     }
   }
   return candidate_count;
+}
+
+bool collectBrowserShellEntries(
+    HWND root_window, POINT screen_point, const WindowRect& target_row,
+    const UiaRegionProperties* properties, std::size_t property_count,
+    BrowserShellEntryCollection& out_entries) noexcept
+{
+  static_cast<void>(screen_point);
+  out_entries = BrowserShellEntryCollection{};
+  if (root_window == nullptr || target_row.empty() || properties == nullptr ||
+      property_count == 0)
+  {
+    return false;
+  }
+
+  const std::size_t bounded_count =
+      (std::min)(property_count, BrowserShellEntryCollection::MaximumEntries);
+  for (std::size_t index = 0; index < bounded_count; ++index)
+  {
+    const UiaRegionProperties& property = properties[index];
+    const BrowserShellRole role = browserShellRoleFor(property);
+    if (role == BrowserShellRole::Unknown || property.rect.empty() ||
+        !rectanglesIntersect(property.rect, target_row))
+    {
+      continue;
+    }
+
+    BrowserShellEntry entry;
+    entry.m_hit_rect = property.rect;
+    entry.m_role = role;
+    entry.m_source = BrowserShellSource::UiaSemantic;
+    entry.m_confidence = property.has_name || hasActionableControlPattern(property)
+        ? 100
+        : 80;
+    entry.m_identity_hash = browserShellIdentityFor(property, role);
+    entry.m_row_id = static_cast<std::uint32_t>(index);
+    if (!out_entries.append(entry))
+    {
+      break;
+    }
+  }
+  return !out_entries.empty();
 }
 
 bool locateUiaCandidates(HWND root_window, POINT screen_point,

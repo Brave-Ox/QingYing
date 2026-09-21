@@ -8,6 +8,8 @@
 
 #include "qingying/window/smart_region_types.hpp"
 
+#include "browser_shell_types.hpp"
+
 namespace qingying::window_detail {
 
 // UIA 控件类型的内部、平台无关映射，便于不依赖 UIA 服务的单元测试。
@@ -80,6 +82,11 @@ std::size_t collectUiaCandidates(
     const UiaRegionProperties* properties, std::size_t property_count,
     SmartRegionCandidate* out_candidates, std::size_t capacity) noexcept;
 
+bool collectBrowserShellEntries(
+    HWND root_window, POINT screen_point, const WindowRect& target_row,
+    const UiaRegionProperties* properties, std::size_t property_count,
+    BrowserShellEntryCollection& out_entries) noexcept;
+
 // 一个实例只能由创建它的 COM 线程使用。会话复用 Automation、TreeWalker
 // 和 CacheRequest，避免连续鼠标移动期间重复创建跨进程 UIA 对象。
 class UiaRegionLocatorSession
@@ -94,6 +101,9 @@ class UiaRegionLocatorSession
   bool locate(HWND root_window, POINT screen_point,
               SmartRegionCandidate* out_candidates, std::size_t capacity,
               std::size_t& out_count) noexcept;
+  bool locateBrowserShellEntries(
+      HWND root_window, POINT screen_point,
+      BrowserShellEntryCollection& out_entries) noexcept;
 
  private:
   struct Impl;

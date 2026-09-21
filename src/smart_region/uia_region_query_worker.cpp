@@ -2,6 +2,7 @@
 #include "qingying/window/smart_region_diagnostics.hpp"
 #include "qingying/diagnostics/fault_boundary.h"
 #include "smart_region_visual_cache.hpp"
+#include "browser_shell_atlas.hpp"
 #include "browser_shell_types.hpp"
 #include "uia_region_query_worker.hpp"
 #include "qingying/app/app_messages.hpp"
@@ -106,6 +107,16 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
   result.screen_point = request.screen_point;
   result.owner_rect = request.owner_rect;
 
+  BrowserShellAtlas browser_shell_atlas;
+  BrowserShellContext browser_shell_context;
+  browser_shell_context.m_root_window = request.root_window;
+  browser_shell_context.m_process_id = request.process_id;
+  browser_shell_context.m_window_rect = request.owner_rect;
+  browser_shell_context.m_dpi = GetDpiForWindow(request.root_window);
+  browser_shell_context.m_capture_session_generation = request.generation;
+  browser_shell_context.m_window_generation = request.generation;
+  browser_shell_atlas.reset(browser_shell_context);
+
   if (lane != RegionQueryLane::Accessibility) {
     SmartRegionDetector detector;
     SmartRegionCandidate fallback;
@@ -135,6 +146,23 @@ void runProductionQuery(const UiaRegionQueryRequest& request,
       request.root_window, request.screen_point, result.candidates,
       SmartRegionMaxUiaCandidates, uia_candidate_count));
   result.candidate_count = uia_candidate_count;
+
+  if (lane != RegionQueryLane::Discovery &&
+      (!request.deadline_ms || GetTickCount64() < request.deadline_ms))
+  {
+    BrowserShellEntryCollection browser_shell_entries;
+    if (session.locateBrowserShellEntries(request.root_window,
+                                          request.screen_point,
+                                          browser_shell_entries) &&
+        browser_shell_atlas.merge(browser_shell_entries, GetTickCount64()))
+    {
+      result.m_browser_shell_atlas = browser_shell_atlas.makeSnapshot();
+      result.m_layout_generation =
+          result.m_browser_shell_atlas->m_layout_generation;
+      result.m_window_generation = request.generation;
+      result.m_pointer_sequence = request.request_id;
+    }
+  }
 
   const bool has_local_uia =
       SmartRegionCandidateSelector::hasValidLocalCandidate(

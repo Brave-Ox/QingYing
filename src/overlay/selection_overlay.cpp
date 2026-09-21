@@ -1105,14 +1105,14 @@ void processUiaQueryResult(HWND hwnd, OverlayWindowData* data)
       bool result_applied = false;
       bool result_deferred = false;
       const bool is_discovery = lane == data->discovery_worker;
+      if (applies_to_current_request && result.m_browser_shell_atlas != nullptr)
+      {
+        std::atomic_store_explicit(&data->m_browser_shell_atlas,
+            result.m_browser_shell_atlas, std::memory_order_release);
+      }
       if (applies_to_current_request && is_discovery) {
         data->use_browser_chrome_visual_fallback = result.is_chromium_browser_chrome;
         data->minimum_visual_confidence = result.minimum_visual_confidence;
-        if (result.m_browser_shell_atlas != nullptr)
-        {
-          std::atomic_store_explicit(&data->m_browser_shell_atlas,
-              result.m_browser_shell_atlas, std::memory_order_release);
-        }
       }
       const bool should_defer_async_result = !is_discovery &&
           data->async_presentation_gate.shouldDeferAsyncResult(

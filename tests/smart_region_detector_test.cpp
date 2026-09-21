@@ -2155,6 +2155,38 @@ TEST(BrowserChromeRegionTest, RejectsOversizedTopShellFallback)
   EXPECT_TRUE(chrome_rect.empty());
 }
 
+TEST(UiaBrowserShellEntryTest,
+     MapsLocalSemanticControlsAndRejectsEntriesOutsideTheTargetRow)
+{
+  const HWND root = reinterpret_cast<HWND>(123);
+  const POINT point{220, 20};
+  const WindowRect target_row{100, 0, 500, 44};
+  const window_detail::UiaRegionProperties properties[] = {
+      {{200, 8, 240, 36}, window_detail::UiaControlType::Button, true, true,
+       true, false, false, nullptr, UIA_ButtonControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Invoke)},
+      {{100, 4, 280, 40}, window_detail::UiaControlType::TabItem, true, true,
+       true, false, true, nullptr, UIA_TabItemControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::SelectionItem)},
+      {{300, 8, 340, 36}, window_detail::UiaControlType::MenuItem, true, true,
+       true, false, true, nullptr, UIA_MenuItemControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::ExpandCollapse)},
+      {{300, 60, 340, 88}, window_detail::UiaControlType::Hyperlink, true,
+       true, true, false, true, nullptr, UIA_HyperlinkControlTypeId, 0},
+      {{340, 8, 340, 36}, window_detail::UiaControlType::Edit, true, true,
+       true, true, true, nullptr, UIA_EditControlTypeId,
+       static_cast<std::uint8_t>(window_detail::UiaPatternFlag::Value)},
+  };
+
+  BrowserShellEntryCollection entries;
+  ASSERT_TRUE(window_detail::collectBrowserShellEntries(
+      root, point, target_row, properties, std::size(properties), entries));
+  ASSERT_EQ(entries.count(), 3U);
+  EXPECT_EQ(entries.entryAt(0).m_role, BrowserShellRole::Button);
+  EXPECT_EQ(entries.entryAt(1).m_role, BrowserShellRole::Tab);
+  EXPECT_EQ(entries.entryAt(2).m_role, BrowserShellRole::BookmarkFolder);
+}
+
 TEST(UiaRegionLocatorTest, MapsActionableListItemToUiaCandidate)
 {
   const window_detail::UiaRegionProperties properties{
