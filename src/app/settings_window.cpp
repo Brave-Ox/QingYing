@@ -34,6 +34,17 @@ constexpr int GeneralCheckboxRadius = 4;
 constexpr int GeneralCheckboxTextGap = 14;
 constexpr int GeneralCheckmarkStroke = 2;
 constexpr int GeneralCheckmarkPointCount = 3;
+constexpr int HotkeyRowTop = 142;
+constexpr int HotkeyRowHeight = 72;
+constexpr int HotkeyRowDividerOffset = 62;
+constexpr int LongShotFirstRowTop = 146;
+constexpr int LongShotSecondRowTop = 202;
+constexpr int LongShotRowDividerY = 196;
+constexpr int StepperValueWidth = 76;
+constexpr int StepperButtonSize = 30;
+constexpr int StepperGap = 6;
+constexpr int HotkeyInputRadius = 6;
+constexpr int StepperButtonRadius = 6;
 constexpr COLORREF PrimaryColor = RGB(59, 130, 246);
 constexpr COLORREF PrimaryHoverColor = RGB(37, 99, 235);
 constexpr COLORREF NavigationBackgroundColor = RGB(247, 248, 250);
@@ -41,8 +52,12 @@ constexpr COLORREF ContentBackgroundColor = RGB(255, 255, 255);
 constexpr COLORREF PageBackgroundColor = RGB(251, 252, 254);
 constexpr COLORREF SelectedNavigationColor = RGB(234, 242, 255);
 constexpr COLORREF BorderColor = RGB(229, 231, 235);
+constexpr COLORREF ContentCardBorderColor = RGB(229, 233, 239);
+constexpr COLORREF ControlBorderColor = RGB(221, 227, 234);
+constexpr COLORREF ControlHoverColor = RGB(243, 247, 255);
 constexpr COLORREF PrimaryTextColor = RGB(31, 35, 41);
 constexpr COLORREF SecondaryTextColor = RGB(100, 106, 115);
+constexpr COLORREF HelperTextColor = RGB(122, 130, 141);
 constexpr COLORREF SettingsRowDividerColor = RGB(236, 239, 244);
 constexpr COLORREF FocusBorderColor = RGB(191, 219, 254);
 constexpr COLORREF ErrorTextColor = RGB(180, 57, 45);
@@ -463,26 +478,37 @@ struct SettingsWindow::Impl
                scale(GeneralSecondRowTop, dpi),
                content_width - scale(GeneralCardContentInset * 2, dpi),
                scale(GeneralRowHeight, dpi), TRUE);
-    const int capsule_width = scale(154, dpi);
+    const int capsule_width = scale(150, dpi);
     const int capsule_x = content_x + content_width - capsule_width - scale(24, dpi);
     for (std::size_t index = 0; index < hotkey_controls.size(); ++index)
     {
       MoveWindow(hotkey_controls[index], capsule_x,
-                 scale(150 + static_cast<int>(index) * 72, dpi),
-                 capsule_width, scale(40, dpi), TRUE);
+                 scale(150 + static_cast<int>(index) * HotkeyRowHeight, dpi),
+                 capsule_width, scale(36, dpi), TRUE);
     }
-    MoveWindow(longshot_controls[0], content_x + scale(190, dpi), scale(150, dpi),
-               scale(120, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[1], content_x + scale(316, dpi), scale(150, dpi),
-               scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[2], content_x + scale(348, dpi), scale(150, dpi),
-               scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[3], content_x + scale(190, dpi), scale(206, dpi),
-               scale(120, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[4], content_x + scale(316, dpi), scale(206, dpi),
-               scale(28, dpi), scale(28, dpi), TRUE);
-    MoveWindow(longshot_controls[5], content_x + scale(348, dpi), scale(206, dpi),
-               scale(28, dpi), scale(28, dpi), TRUE);
+    const int stepper_width = StepperValueWidth + StepperGap +
+        StepperButtonSize + StepperGap + StepperButtonSize;
+    const int stepper_x = content_x + content_width - scale(24, dpi) -
+        scale(stepper_width, dpi);
+    const int stepper_value_width = scale(StepperValueWidth, dpi);
+    const int stepper_button_size = scale(StepperButtonSize, dpi);
+    const int stepper_gap = scale(StepperGap, dpi);
+    const int stepper_first_y = scale(150, dpi);
+    const int stepper_second_y = scale(206, dpi);
+    MoveWindow(longshot_controls[0], stepper_x, stepper_first_y,
+               stepper_value_width, scale(30, dpi), TRUE);
+    MoveWindow(longshot_controls[1], stepper_x + stepper_value_width + stepper_gap,
+               stepper_first_y, stepper_button_size, stepper_button_size, TRUE);
+    MoveWindow(longshot_controls[2], stepper_x + stepper_value_width + stepper_gap +
+                   stepper_button_size + stepper_gap,
+               stepper_first_y, stepper_button_size, stepper_button_size, TRUE);
+    MoveWindow(longshot_controls[3], stepper_x, stepper_second_y,
+               stepper_value_width, scale(30, dpi), TRUE);
+    MoveWindow(longshot_controls[4], stepper_x + stepper_value_width + stepper_gap,
+               stepper_second_y, stepper_button_size, stepper_button_size, TRUE);
+    MoveWindow(longshot_controls[5], stepper_x + stepper_value_width + stepper_gap +
+                   stepper_button_size + stepper_gap,
+               stepper_second_y, stepper_button_size, stepper_button_size, TRUE);
     MoveWindow(banner, content_x, scale(100, dpi), content_width, scale(24, dpi), TRUE);
     MoveWindow(field_error, content_x, scale(100, dpi), content_width,
                scale(28, dpi), TRUE);
@@ -524,6 +550,7 @@ struct SettingsWindow::Impl
   void drawHotkeyInput(const DRAWITEMSTRUCT& item)
   {
     const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool hovered = (item.itemState & ODS_HOTLIGHT) != 0;
     const SettingsShortcutField field = item.CtlID == CaptureHotkeyButton
         ? SettingsShortcutField::Capture
         : item.CtlID == CopyShortcutButton ? SettingsShortcutField::Copy
@@ -531,9 +558,9 @@ struct SettingsWindow::Impl
     const bool recording = model != nullptr &&
         model->recordingShortcut() == field;
     const COLORREF fill_color = recording ? RGB(245, 249, 255)
-        : pressed ? RGB(243, 246, 251) : RGB(249, 250, 252);
-    const COLORREF border_color = recording ? PrimaryColor : BorderColor;
-    drawRoundedRectangle(item.hDC, item.rcItem, scale(8, dpi), fill_color,
+        : pressed || hovered ? ControlHoverColor : ContentBackgroundColor;
+    const COLORREF border_color = recording ? PrimaryColor : ControlBorderColor;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(HotkeyInputRadius, dpi), fill_color,
                          border_color);
     RECT text_rect{item.rcItem.left + scale(10, dpi), item.rcItem.top,
                    item.rcItem.right - scale(10, dpi), item.rcItem.bottom};
@@ -623,6 +650,18 @@ struct SettingsWindow::Impl
              SecondaryTextColor, DT_CENTER);
   }
 
+  void drawStepperButton(const DRAWITEMSTRUCT& item)
+  {
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool hovered = (item.itemState & ODS_HOTLIGHT) != 0;
+    const COLORREF fill_color = pressed || hovered ? ControlHoverColor
+                                                   : ContentBackgroundColor;
+    drawRoundedRectangle(item.hDC, item.rcItem, scale(StepperButtonRadius, dpi),
+                         fill_color, ControlBorderColor);
+    drawText(item.hDC, item.rcItem, controlText(item.hwndItem), body_font.get(),
+             PrimaryTextColor, DT_CENTER);
+  }
+
   void drawOwnerDrawItem(const DRAWITEMSTRUCT& item)
   {
     if (item.CtlID >= NavigationGeneral && item.CtlID <= NavigationLongShot)
@@ -649,6 +688,11 @@ struct SettingsWindow::Impl
     if (item.CtlID == CancelButton || item.CtlID == RestoreDefaultsButton)
     {
       drawFooterButton(item, false);
+      return;
+    }
+    if (item.CtlID >= MaxFramesDecrease && item.CtlID <= MaxHeightIncrease)
+    {
+      drawStepperButton(item);
       return;
     }
     drawSmallButton(item);
@@ -1028,6 +1072,14 @@ struct SettingsWindow::Impl
         }
         return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
       }
+      case WM_CTLCOLOREDIT:
+      {
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        SetBkMode(dc, OPAQUE);
+        SetBkColor(dc, ContentBackgroundColor);
+        SetTextColor(dc, PrimaryTextColor);
+        return reinterpret_cast<LRESULT>(GetStockObject(WHITE_BRUSH));
+      }
       case WM_PAINT:
       {
         PAINTSTRUCT paint{};
@@ -1075,7 +1127,7 @@ struct SettingsWindow::Impl
         RECT card_rect{content_x, scale(132, dpi), content_x + content_width,
                        card_bottom};
         drawRoundedRectangle(dc, card_rect, scale(10, dpi), ContentBackgroundColor,
-                             BorderColor);
+                             ContentCardBorderColor);
         if (page == SettingsPage::General)
         {
           PenHandle separator_pen(SettingsRowDividerColor);
@@ -1098,22 +1150,23 @@ struct SettingsWindow::Impl
               L"开启选区并进行截图", L"将当前截图复制到剪贴板", L"开始或结束长截图"};
           for (int index = 0; index < 3; ++index)
           {
-            const int row_top = scale(142 + index * 72, dpi);
+            const int row_top = scale(HotkeyRowTop + index * HotkeyRowHeight, dpi);
             drawText(dc, RECT{content_x + scale(24, dpi), row_top,
                               content_x + scale(190, dpi), row_top + scale(26, dpi)},
-                     labels[static_cast<std::size_t>(index)], section_font.get(),
+                     labels[static_cast<std::size_t>(index)], body_font.get(),
                      PrimaryTextColor, DT_LEFT);
             drawText(dc, RECT{content_x + scale(24, dpi), row_top + scale(26, dpi),
                               content_x + scale(210, dpi), row_top + scale(48, dpi)},
                      details[static_cast<std::size_t>(index)], caption_font.get(),
-                     SecondaryTextColor, DT_LEFT);
+                     HelperTextColor, DT_LEFT);
             if (index < 2)
             {
-              PenHandle separator_pen(BorderColor);
+              PenHandle separator_pen(SettingsRowDividerColor);
               const HGDIOBJ previous_separator = SelectObject(dc, separator_pen.get());
-              MoveToEx(dc, content_x + scale(24, dpi), row_top + scale(62, dpi), nullptr);
+              MoveToEx(dc, content_x + scale(24, dpi),
+                       row_top + scale(HotkeyRowDividerOffset, dpi), nullptr);
               LineTo(dc, content_x + content_width - scale(24, dpi),
-                     row_top + scale(62, dpi));
+                     row_top + scale(HotkeyRowDividerOffset, dpi));
               SelectObject(dc, previous_separator);
             }
           }
@@ -1122,10 +1175,28 @@ struct SettingsWindow::Impl
         {
           drawText(dc, RECT{content_x + scale(24, dpi), scale(150, dpi),
                             content_x + scale(180, dpi), scale(178, dpi)},
-                   L"最大帧数", section_font.get(), PrimaryTextColor, DT_LEFT);
+                   L"最大帧数", body_font.get(), PrimaryTextColor, DT_LEFT);
           drawText(dc, RECT{content_x + scale(24, dpi), scale(206, dpi),
                             content_x + scale(180, dpi), scale(234, dpi)},
-                   L"最大输出高度", section_font.get(), PrimaryTextColor, DT_LEFT);
+                   L"最大输出高度", body_font.get(), PrimaryTextColor, DT_LEFT);
+          drawText(dc, RECT{content_x + scale(24, dpi),
+                            scale(LongShotFirstRowTop + 24, dpi),
+                            content_x + scale(340, dpi),
+                            scale(LongShotFirstRowTop + 46, dpi)},
+                   L"单次长截图允许的最大帧数", caption_font.get(),
+                   HelperTextColor, DT_LEFT);
+          drawText(dc, RECT{content_x + scale(24, dpi),
+                            scale(LongShotSecondRowTop + 24, dpi),
+                            content_x + scale(360, dpi),
+                            scale(LongShotSecondRowTop + 46, dpi)},
+                   L"长截图生成的最大高度（像素）", caption_font.get(),
+                   HelperTextColor, DT_LEFT);
+          PenHandle separator_pen(SettingsRowDividerColor);
+          const HGDIOBJ previous_separator = SelectObject(dc, separator_pen.get());
+          MoveToEx(dc, content_x + scale(24, dpi), scale(LongShotRowDividerY, dpi), nullptr);
+          LineTo(dc, content_x + content_width - scale(24, dpi),
+                 scale(LongShotRowDividerY, dpi));
+          SelectObject(dc, previous_separator);
         }
         EndPaint(window, &paint);
         return 0;
