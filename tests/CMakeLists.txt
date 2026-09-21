@@ -3,6 +3,7 @@
 add_executable(qingying_tests
   image_memory_budget_test.cpp
   fault_boundary_test.cpp
+  command_parser_test.cpp
   ${PROJECT_SOURCE_DIR}/src/app/tray_controller.cpp
   ${PROJECT_SOURCE_DIR}/src/app/autostart_settings.cpp
   mcp_process_integration_test.cpp
@@ -161,6 +162,7 @@ target_include_directories(qingying_tests
 target_link_libraries(qingying_tests
   PRIVATE
     qingying_action
+    qingying_command
     qingying_action_compatibility
     qingying_automation_contract
     qingying_automation
