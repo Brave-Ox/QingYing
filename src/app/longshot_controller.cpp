@@ -20,6 +20,12 @@
 
 namespace qingying {
 
+namespace {
+
+constexpr auto kRestartJoinBudget = std::chrono::milliseconds(250);
+
+}  // namespace
+
 struct LongShotController::Impl {
   Impl(LongShotEngine& engine_in, SelectionOverlay& overlay_in,
        LongShotLimitsProvider& limits_provider_in)
@@ -33,7 +39,11 @@ struct LongShotController::Impl {
 
   bool start(const LongShotRequest& request) {
     cancel();
-    join();
+    if (!joinUntil(std::chrono::steady_clock::now() + kRestartJoinBudget)) {
+      restart_join_timed_out.store(true);
+      return false;
+    }
+    restart_join_timed_out.store(false);
     messages.drain();
     if (shutting_down.load() || !request.valid() || owner_window == nullptr) {
       return false;
@@ -231,7 +241,8 @@ struct LongShotController::Impl {
     return "thread=longshot_worker request_id=" +
            std::to_string(active_request_id.load()) + " plugin_id=" +
            engine.activeProfileName() + " queue_length=0 last_progress=frame_" +
-           std::to_string(progress_frames.load());
+           std::to_string(progress_frames.load()) + " restart_join=" +
+           (restart_join_timed_out.load() ? "timed_out" : "ready");
   }
 
   void drainMessages() noexcept {
@@ -289,6 +300,7 @@ struct LongShotController::Impl {
   std::atomic<std::uint64_t> next_request_id{1};
   std::atomic<std::uint64_t> active_request_id{0};
   std::atomic<std::size_t> progress_frames{0};
+  std::atomic<bool> restart_join_timed_out{false};
 };
 
 LongShotController::LongShotController(LongShotEngine& engine,

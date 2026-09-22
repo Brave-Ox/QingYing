@@ -328,6 +328,31 @@ TEST(AnnotationOverlayTest, MainToolbarExposesRedoNextToUndo)
   EXPECT_EQ(undo_rect.right + AnnotationEditorButtonGap, redo_rect.left);
 }
 
+TEST(AnnotationOverlayTest, ToolbarRedoRestoresAnAnnotationRemovedByToolbarUndo)
+{
+  AnnotationEditorHost host;
+  ASSERT_TRUE(host.core().m_session.begin(makeStripedCanvas()));
+
+  Annotation annotation;
+  annotation.type = AnnotationType::Rectangle;
+  annotation.bounds = RectF{20.0f, 30.0f, 80.0f, 40.0f};
+  ASSERT_TRUE(host.core().m_session.engine().add(annotation));
+
+  handleToolCommand(&host, kButtonUndoId);
+  EXPECT_TRUE(host.core().m_session.engine().document().empty());
+  ASSERT_TRUE(host.core().m_session.engine().canRedo());
+
+  handleToolCommand(&host, kButtonRedoId);
+  const AnnotationDocument& document = host.core().m_session.engine().document();
+  ASSERT_EQ(document.count(), 1u);
+  const RectF& restored_bounds = document.items().front().bounds;
+  EXPECT_FLOAT_EQ(restored_bounds.x, annotation.bounds.x);
+  EXPECT_FLOAT_EQ(restored_bounds.y, annotation.bounds.y);
+  EXPECT_FLOAT_EQ(restored_bounds.width, annotation.bounds.width);
+  EXPECT_FLOAT_EQ(restored_bounds.height, annotation.bounds.height);
+  EXPECT_FALSE(host.core().m_session.engine().canRedo());
+}
+
 TEST(AnnotationOverlayTest, ConfirmButtonHasNoPersistentHighlight)
 {
   AnnotationEditorHost host;

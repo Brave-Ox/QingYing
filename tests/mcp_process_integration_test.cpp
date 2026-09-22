@@ -1,6 +1,7 @@
 ﻿#include "qingying/app/automation_settings.h"
 #include "qingying/app/mcp_stdio_runner.h"
 #include "qingying/app/tray_context_menu.hpp"
+#include "desktop_test_environment.hpp"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <Windows.h>
@@ -272,6 +273,9 @@ TEST_F(McpProcessIntegrationTest, RepeatedSettingsCommandActivatesOneSettingsWin
 }
 
 TEST_F(McpProcessIntegrationTest, CropSaveReleaseRunsThroughTheRealLocalPipe) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   ASSERT_TRUE(settings.setEnabled(true));
   Child gui; ASSERT_TRUE(gui.start(args()));
   ASSERT_TRUE(until([&] { return gui.hwnd() != nullptr; }));
@@ -308,6 +312,9 @@ TEST_F(McpProcessIntegrationTest, CropSaveReleaseRunsThroughTheRealLocalPipe) {
   ASSERT_TRUE(gui.message(WM_CLOSE)); ASSERT_TRUE(gui.exited());
 }
 TEST_F(McpProcessIntegrationTest, CaptureWindowRunsThroughTheRealLocalPipe) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   const std::wstring title = L"QingYing F9-17 Target " +
       std::to_wstring(GetTickCount64());
   VisibleTestWindow target(title);
