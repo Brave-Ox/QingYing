@@ -30,6 +30,31 @@ TEST(CommandParserDiagnosticsTest, FailedParseDoesNotMutateOutputPlan) {
   EXPECT_FALSE(diagnostic.succeeded);
 }
 
+TEST(CommandParserDiagnosticsTest, FailureStagesAndInputMetadataStayCompatible) {
+  qingying::CommandParser parser;
+  qingying::CommandPlan plan;
+  qingying::CommandParseDiagnostic diagnostic;
+
+  EXPECT_FALSE(parser.tryParsePlan(L"  \t\r\n  ", &plan, &diagnostic));
+  EXPECT_EQ(diagnostic.stage, qingying::CommandParseStage::Normalize);
+  EXPECT_EQ(diagnostic.input_length, 7u);
+  EXPECT_TRUE(diagnostic.normalized_input.empty());
+  EXPECT_TRUE(diagnostic.matched_rule.empty());
+  EXPECT_FALSE(diagnostic.succeeded);
+
+  EXPECT_FALSE(parser.tryParsePlan(L"未知命令", &plan, &diagnostic));
+  EXPECT_EQ(diagnostic.stage, qingying::CommandParseStage::MatchRule);
+  EXPECT_EQ(diagnostic.normalized_input, L"未知命令");
+  EXPECT_TRUE(diagnostic.matched_rule.empty());
+  EXPECT_FALSE(diagnostic.succeeded);
+
+  EXPECT_FALSE(parser.tryParsePlan(L"复制", nullptr, &diagnostic));
+  EXPECT_EQ(diagnostic.stage, qingying::CommandParseStage::Normalize);
+  EXPECT_EQ(diagnostic.input_length, 2u);
+  EXPECT_EQ(diagnostic.message, L"output is null");
+  EXPECT_FALSE(diagnostic.succeeded);
+}
+
 TEST(CommandPlanValidatorTest, RejectsUnexpectedFollowUpWithoutChangingParserRules) {
   qingying::CommandPlan invalid;
   invalid.actions.push_back(

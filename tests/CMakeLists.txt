@@ -206,6 +206,8 @@ add_executable(qingying_command_tests
   command_parser_golden_test.cpp
   command_parser_diagnostics_test.cpp
   command_parser_fuzz_test.cpp
+  command_parser_performance_test.cpp
+  command_parser_p0_regression_test.cpp
   command_text_test.cpp
   command_dimension_parser_test.cpp
 )
