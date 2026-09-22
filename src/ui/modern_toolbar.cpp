@@ -1235,6 +1235,14 @@ bool presentLayeredArgbWindow(HWND hwnd, HDC src_dc, int width, int height)
 bool drawToolbarBarOnArgbBits(void* bits, int width, int height,
                               const RECT& rect)
 {
+  return drawToolbarBarOnArgbBits(bits, width, height, rect,
+                                  DefaultModernToolbarMetrics);
+}
+
+bool drawToolbarBarOnArgbBits(
+    void* bits, int width, int height, const RECT& rect,
+    const ModernToolbarMetrics& metrics)
+{
   if (bits == nullptr || width <= 0 || height <= 0 || !ensureGdiplus())
   {
     return false;
@@ -1244,7 +1252,6 @@ bool drawToolbarBarOnArgbBits(void* bits, int width, int height,
                          static_cast<BYTE*>(bits));
   Gdiplus::Graphics graphics(&bitmap);
   const ModernToolbarColors colors = DefaultModernToolbarColors;
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
   RECT shadow = rect;
   OffsetRect(&shadow, 0, 1);
   fillRoundRectGraphics(graphics, shadow, colors.bar_shadow, colors.bar_shadow,
@@ -1282,13 +1289,18 @@ void applyToolbarColorKey(HWND hwnd)
 
 void drawToolbarBar(HDC hdc, const RECT& rect)
 {
+  drawToolbarBar(hdc, rect, DefaultModernToolbarMetrics);
+}
+
+void drawToolbarBar(HDC hdc, const RECT& rect,
+                    const ModernToolbarMetrics& metrics)
+{
   if (hdc == nullptr)
   {
     return;
   }
 
   const ModernToolbarColors colors = DefaultModernToolbarColors;
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
   RECT shadow = rect;
   OffsetRect(&shadow, 0, 1);
   fillRoundRect(hdc, shadow, colors.bar_shadow, colors.bar_shadow,
@@ -1510,13 +1522,22 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
 void drawToolbarItem(HDC hdc, const RECT& cell,
                      const ToolbarItemModel& model)
 {
+  drawToolbarItem(hdc, cell, model, DefaultModernToolbarMetrics);
+}
+
+void drawToolbarItem(HDC hdc, const RECT& cell,
+                     const ToolbarItemModel& model,
+                     const ModernToolbarMetrics& metrics)
+{
   if (hdc == nullptr)
   {
     return;
   }
 
   const ModernToolbarColors colors = DefaultModernToolbarColors;
-  const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  const COLORREF button_fill =
+      model.enabled ? colors.button_fill : colors.disabled_fill;
+  fillRoundRect(hdc, cell, button_fill, button_fill, metrics.hover_radius);
   const bool highlight =
       model.enabled && (model.hovered || model.selected || model.accent);
   if (highlight)
@@ -1574,6 +1595,23 @@ void drawToolbarDivider(HDC hdc, int x, int top, int bottom)
   }
   MoveToEx(hdc, x, top, nullptr);
   lineTo(hdc, x, bottom);
+}
+
+void drawToolbarHorizontalDivider(HDC hdc, int left, int right, int y)
+{
+  if (hdc == nullptr || right <= left)
+  {
+    return;
+  }
+
+  const ModernToolbarColors colors = DefaultModernToolbarColors;
+  const PenGuard pen(hdc, 1, colors.divider);
+  if (!pen.ok())
+  {
+    return;
+  }
+  MoveToEx(hdc, left, y, nullptr);
+  lineTo(hdc, right, y);
 }
 
 HWND createToolbarTooltip(HWND owner)

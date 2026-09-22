@@ -159,6 +159,9 @@ namespace {
 constexpr int kToolbarDividerPadExtraPx = 6;
 constexpr int kStatusRowHeight = 30;
 constexpr int kStatusToolbarMinimumWidth = 360;
+constexpr int kSelectionToolbarDividerCount = 2;
+constexpr ModernToolbarMetrics kSelectionToolbarMetrics{
+    32, 10, 6, 28, 12, 24, 1, 52, 400};
 const wchar_t kToolbarClassName[] = L"QingYingSelectionToolbarV4";
 
 ToolbarIconKind toModernToolbarIcon(SelectionToolbarIcon icon) noexcept;
@@ -240,12 +243,13 @@ struct SelectionToolbar::Impl {
              SelectionToolbarItemCount>
       tooltip_text{};
   int hover{-1};
-  int divider_x{0};
   OverlayPhase phase{OverlayPhase::Sniffing};
   LongShotRecoveryState recovery;
   LongShotResultNotice notice{LongShotResultNotice::None};
   SelectionToolbarPlacement placement;
   CommandCallback callback;
+  std::array<int, kSelectionToolbarDividerCount> divider_x{};
+  int divider_count{0};
 
   int statusHeight() const noexcept {
     return selectionToolbarStatus(phase, recovery, notice) ==
@@ -255,12 +259,16 @@ struct SelectionToolbar::Impl {
   }
 
   void geometry(int& x, int& y, int& width, int& height) const noexcept {
-    const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
-    width = modernToolbarWidth(static_cast<int>(SelectionToolbarItemCount),
-                               metrics.divider_gap - metrics.gap, metrics);
-    if (statusHeight() > 0) {
-      width = (std::max)(width, kStatusToolbarMinimumWidth);
-    }
+    const ModernToolbarMetrics metrics = kSelectionToolbarMetrics;
+    const int group_gaps = static_cast<int>(SelectionToolbarItemCount) -
+                           1 - kSelectionToolbarDividerCount;
+    const int content_width = metrics.bar_padding * 2 +
+                              static_cast<int>(SelectionToolbarItemCount) *
+                                  metrics.item_size +
+                              group_gaps * metrics.gap +
+                              kSelectionToolbarDividerCount *
+                                  metrics.divider_gap;
+    width = (std::max)(kStatusToolbarMinimumWidth, content_width);
     height = modernToolbarHeight(metrics) + statusHeight();
     const int selection_right =
         placement.selection_x + placement.selection_width;
@@ -307,27 +315,44 @@ struct SelectionToolbar::Impl {
     }
     const HRGN region = CreateRoundRectRgn(
         0, 0, width + 1, height + 1,
-        DefaultModernToolbarMetrics.corner_radius * 2,
-        DefaultModernToolbarMetrics.corner_radius * 2);
+        kSelectionToolbarMetrics.corner_radius * 2,
+        kSelectionToolbarMetrics.corner_radius * 2);
     if (region != nullptr && SetWindowRgn(hwnd, region, TRUE) == 0) {
       DeleteObject(region);
     }
   }
 
-  void layout(int height) {
-    const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
+  void layout(int width, int height) {
+    const ModernToolbarMetrics metrics = kSelectionToolbarMetrics;
     const int y = statusHeight() +
                   (height - statusHeight() - metrics.item_size) / 2;
-    int x = metrics.bar_padding;
+    const int group_gaps = static_cast<int>(SelectionToolbarItemCount) -
+                           1 - kSelectionToolbarDividerCount;
+    const int content_width = metrics.bar_padding * 2 +
+                              static_cast<int>(SelectionToolbarItemCount) *
+                                  metrics.item_size +
+                              group_gaps * metrics.gap +
+                              kSelectionToolbarDividerCount *
+                                  metrics.divider_gap;
+    int x = (width - content_width) / 2 + metrics.bar_padding;
+    divider_count = 0;
     const SelectionToolbarItems model_items =
         buildSelectionToolbarItems(phase, recovery, notice);
     for (std::size_t i = 0; i < items.size(); ++i) {
       items[i].model = model_items[i];
       items[i].rect = {x, y, x + metrics.item_size, y + metrics.item_size};
-      x += metrics.item_size + metrics.gap;
-      if (i == 1) {
-        divider_x = x - metrics.gap + metrics.divider_gap / 2;
-        x += metrics.divider_gap - metrics.gap;
+      x += metrics.item_size;
+      if (i + 1 < items.size()) {
+        if ((i == 1 || i == 4) &&
+            divider_count < kSelectionToolbarDividerCount) {
+          divider_x[static_cast<std::size_t>(divider_count)] =
+              x + metrics.divider_gap / 2;
+          ++divider_count;
+          x += metrics.divider_gap;
+        }
+        else {
+          x += metrics.gap;
+        }
       }
     }
   }
@@ -379,7 +404,7 @@ struct SelectionToolbar::Impl {
       SetWindowPos(hwnd, nullptr, x, y, width, height,
                    SWP_NOACTIVATE | SWP_NOZORDER);
       applyWindowRegion(width, height);
-      layout(height);
+      layout(width, height);
       bindTooltips();
       InvalidateRect(hwnd, nullptr, FALSE);
     }
@@ -409,24 +434,31 @@ struct SelectionToolbar::Impl {
     const HGDIOBJ old_bitmap = SelectObject(mem_dc, dib);
     std::memset(bits, 0, static_cast<std::size_t>(width) *
                              static_cast<std::size_t>(height) * 4u);
-    if (!drawToolbarBarOnArgbBits(bits, width, height, client)) {
+    const ModernToolbarMetrics metrics = kSelectionToolbarMetrics;
+    if (!drawToolbarBarOnArgbBits(bits, width, height, client, metrics)) {
       // GDI+ 不可用时仍保留色键绘制作为离屏降级；提交窗口前再把色键
       // 转为透明 alpha，避免窗口 DC 暴露“先清空、后重画”的中间帧。
       fillToolbarColorKey(mem_dc, client);
-      drawToolbarBar(mem_dc, client);
+      drawToolbarBar(mem_dc, client, metrics);
       applyColorKeyAlpha(bits, width, height, kToolbarColorKey);
     }
 
-    const ModernToolbarMetrics metrics = DefaultModernToolbarMetrics;
     const int divider_pad = metrics.bar_padding + kToolbarDividerPadExtraPx;
-    drawToolbarDivider(mem_dc, divider_x,
-                       client.top + statusHeight() + divider_pad,
-                       client.bottom - divider_pad);
+    for (int i = 0; i < divider_count; ++i) {
+      drawToolbarDivider(mem_dc, divider_x[static_cast<std::size_t>(i)],
+                         client.top + statusHeight() + divider_pad,
+                         client.bottom - divider_pad);
+    }
+    if (statusHeight() > 0) {
+      drawToolbarHorizontalDivider(
+          mem_dc, metrics.bar_padding, client.right - metrics.bar_padding,
+          client.top + statusHeight());
+    }
     const SelectionToolbarStatus status =
         selectionToolbarStatus(phase, recovery, notice);
     if (status != SelectionToolbarStatus::None) {
-      RECT status_rect{DefaultModernToolbarMetrics.bar_padding, 4,
-                       client.right - DefaultModernToolbarMetrics.bar_padding,
+      RECT status_rect{metrics.bar_padding, 4,
+                       client.right - metrics.bar_padding,
                        statusHeight()};
       const HGDIOBJ old_font =
           SelectObject(mem_dc, GetStockObject(DEFAULT_GUI_FONT));
@@ -444,7 +476,7 @@ struct SelectionToolbar::Impl {
           items[i].model.enabled,
           false,
           false};
-      drawToolbarItem(mem_dc, items[i].rect, toolbar_item);
+      drawToolbarItem(mem_dc, items[i].rect, toolbar_item, metrics);
     }
 
     // hover 帧在内存中完整生成后一次性交给 DWM；不会再把透明清屏帧展示
@@ -494,7 +526,7 @@ struct SelectionToolbar::Impl {
       case WM_CREATE: {
         RECT client{};
         GetClientRect(window, &client);
-        self->layout(client.bottom - client.top);
+        self->layout(client.right - client.left, client.bottom - client.top);
         self->applyWindowRegion(client.right, client.bottom);
         self->tooltip = createToolbarTooltip(window);
         self->refresh(self->phase);

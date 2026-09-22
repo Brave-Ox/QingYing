@@ -23,7 +23,7 @@ struct ModernToolbarColors
   COLORREF bar_fill{RGB(255, 255, 255)};
   COLORREF bar_border{RGB(226, 229, 234)};
   COLORREF bar_shadow{RGB(214, 218, 224)};
-  COLORREF button_fill{RGB(255, 255, 255)};
+  COLORREF button_fill{RGB(248, 250, 252)};
   COLORREF hover_fill{RGB(245, 247, 249)};
   COLORREF selected_fill{RGB(236, 239, 243)};
   COLORREF disabled_fill{RGB(244, 245, 247)};
@@ -53,11 +53,16 @@ void promoteRgbToOpaqueAlpha(void* bits, int width, int height);
 bool presentLayeredArgbWindow(HWND hwnd, HDC src_dc, int width, int height);
 bool drawToolbarBarOnArgbBits(void* bits, int width, int height,
                               const RECT& rect);
+bool drawToolbarBarOnArgbBits(void* bits, int width, int height,
+                              const RECT& rect,
+                              const ModernToolbarMetrics& metrics);
 
 void fillToolbarColorKey(HDC hdc, const RECT& rect);
 void applyToolbarColorKey(HWND hwnd);
 
 void drawToolbarBar(HDC hdc, const RECT& rect);
+void drawToolbarBar(HDC hdc, const RECT& rect,
+                    const ModernToolbarMetrics& metrics);
 
 void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
                      COLORREF color);
@@ -69,7 +74,12 @@ void drawToolbarItem(HDC hdc, const RECT& cell, ToolbarIconKind kind,
 // GDI 绘制后端的 Model 入口；上面的布尔参数保留旧调用兼容性。
 void drawToolbarItem(HDC hdc, const RECT& cell, const ToolbarItemModel& model);
 
+void drawToolbarItem(HDC hdc, const RECT& cell, const ToolbarItemModel& model,
+                     const ModernToolbarMetrics& metrics);
+
 void drawToolbarDivider(HDC hdc, int x, int top, int bottom);
+
+void drawToolbarHorizontalDivider(HDC hdc, int left, int right, int y);
 
 HWND createToolbarTooltip(HWND owner);
 void bindToolbarTooltip(HWND tooltip, HWND owner, UINT id, const RECT& rect,

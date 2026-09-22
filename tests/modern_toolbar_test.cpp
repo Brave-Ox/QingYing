@@ -57,6 +57,10 @@ TEST(ModernToolbarTest, IconsSitOnWhiteBarWithoutDarkButtons)
   EXPECT_GE(bar_sum - icon_sum, 500);
   EXPECT_GT(selected_sum, 650);
   EXPECT_GT(hover_sum, 680);
+  EXPECT_NE(colors.button_fill, colors.bar_fill);
+  EXPECT_GT(GetRValue(colors.button_fill), 240);
+  EXPECT_GT(GetGValue(colors.button_fill), 240);
+  EXPECT_GT(GetBValue(colors.button_fill), 240);
 }
 
 TEST(ModernToolbarTest, IconLabelsAreChineseTooltips)
