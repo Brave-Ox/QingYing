@@ -10,6 +10,7 @@
 #include "resource.h"
 
 #include <Shellapi.h>
+#include <dwmapi.h>
 
 #include <cwchar>
 
@@ -23,6 +24,8 @@ constexpr int kCheckRightOffsetPx = 7;
 constexpr int kCheckUpOffsetPx = 6;
 constexpr int kCheckPointCount = 3;
 constexpr int kFallbackGlyphCount = 4;
+constexpr UINT_PTR kDeferredTrayCaptureTimerId = 0x5143;
+constexpr UINT kDeferredTrayCaptureDelayMs = 100;
 
 static_assert(TrayMenuAutostartCommandId == IDM_TRAY_AUTOSTART);
 static_assert(TrayMenuExitCommandId == IDM_TRAY_EXIT);
@@ -428,10 +431,36 @@ void TrayController::showContextMenu() {
 
   // Required so menu dismisses correctly when clicking elsewhere.
   SetForegroundWindow(hwnd_);
-  TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x,
-                 pt.y, 0, hwnd_, nullptr);
+  // Ask TrackPopupMenu for the selected command directly. WM_COMMAND is
+  // delivered only after TrackPopupMenu returns, which is too late to use it
+  // as proof that the popup has been removed from the captured desktop frame.
+  const UINT selected_command = static_cast<UINT>(TrackPopupMenu(
+      menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RETURNCMD |
+                TPM_NONOTIFY,
+      pt.x, pt.y, 0, hwnd_, nullptr));
   PostMessageW(hwnd_, WM_NULL, 0, 0);
   DestroyMenu(menu);
+  dispatchContextMenuCommand(selected_command);
+}
+
+void TrayController::dispatchContextMenuCommand(UINT id)
+{
+  if (id == TrayMenuCaptureCommandId)
+  {
+    scheduleCaptureAfterMenuClose();
+    return;
+  }
+  onCommand(id);
+}
+
+void TrayController::scheduleCaptureAfterMenuClose()
+{
+  if (SetTimer(hwnd_, kDeferredTrayCaptureTimerId,
+               kDeferredTrayCaptureDelayMs, nullptr) == 0 &&
+      begin_capture_callback_)
+  {
+    begin_capture_callback_();
+  }
 }
 
 LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -480,6 +509,22 @@ LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       drawTrayMenuItem(hwnd_, reinterpret_cast<const DRAWITEMSTRUCT*>(lparam));
       return TRUE;
 
+    case WM_TIMER:
+      if (wparam == kDeferredTrayCaptureTimerId)
+      {
+        KillTimer(hwnd_, kDeferredTrayCaptureTimerId);
+        // The popup menu can remain in the desktop compositor's previous
+        // frame after TrackPopupMenu returns. Wait for the hidden state to be
+        // committed before the selection overlay captures its background.
+        static_cast<void>(DwmFlush());
+        if (begin_capture_callback_)
+        {
+          begin_capture_callback_();
+        }
+        return 0;
+      }
+      break;
+
     case WM_COMMAND:
       onCommand(LOWORD(wparam));
       return 0;
@@ -498,7 +543,9 @@ LRESULT TrayController::handleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
 void TrayController::onCommand(UINT id) {
   switch (id) {
     case TrayMenuCaptureCommandId:
-      if (begin_capture_callback_) begin_capture_callback_();
+      // Popup capture is dispatched synchronously by showContextMenu() after
+      // the popup is destroyed. Ignore stray WM_COMMAND notifications so they
+      // cannot bypass the post-dismissal capture gate.
       break;
     case TrayMenuCommandCommandId:
       if (command_callback_) command_callback_();

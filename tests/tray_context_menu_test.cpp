@@ -37,7 +37,7 @@ TEST(TrayContextMenuTest, CaptureAndSettingsAppearBeforeSystemSwitches)
             L"开始截图\tCtrl + Shift + Q");
 }
 
-TEST(TrayControllerTest, DispatchesCaptureCommandAndSettingsCommandsToCallbacks)
+TEST(TrayControllerTest, IgnoresCaptureWindowCommandAndDispatchesOtherCommands)
 {
   TrayController tray;
   ASSERT_TRUE(tray.create(GetModuleHandleW(nullptr)));
@@ -52,7 +52,10 @@ TEST(TrayControllerTest, DispatchesCaptureCommandAndSettingsCommandsToCallbacks)
   SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuCommandCommandId, 0);
   SendMessageW(tray.hwnd(), WM_COMMAND, TrayMenuSettingsCommandId, 0);
 
-  EXPECT_EQ(capture_requests, 1);
+  // The tray popup uses TPM_RETURNCMD | TPM_NONOTIFY. A WM_COMMAND capture
+  // notification must therefore never start a capture, otherwise it can race
+  // the popup's visual dismissal and leak menu pixels into the overlay frame.
+  EXPECT_EQ(capture_requests, 0);
   EXPECT_EQ(command_requests, 1);
   EXPECT_EQ(settings_requests, 1);
   tray.destroy();

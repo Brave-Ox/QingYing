@@ -41,6 +41,8 @@ class TrayController {
   LRESULT handleMessage(UINT msg, WPARAM wparam, LPARAM lparam);
 
   void showContextMenu();
+  void dispatchContextMenuCommand(UINT id);
+  void scheduleCaptureAfterMenuClose();
   void onCommand(UINT id);
   bool addTrayIcon();
   void removeTrayIcon();

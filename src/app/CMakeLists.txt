@@ -101,7 +101,7 @@ target_link_libraries(qingying
 
 if(WIN32)
   target_link_libraries(qingying
-    PRIVATE shell32 ole32 uuid advapi32 comdlg32 gdi32
+    PRIVATE shell32 ole32 uuid advapi32 comdlg32 gdi32 dwmapi
   )
 
   qingying_deploy_longshot_runtime(qingying)
