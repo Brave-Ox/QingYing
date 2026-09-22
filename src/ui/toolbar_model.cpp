@@ -104,6 +104,52 @@ const wchar_t* toolbarColorPresetLabel(int index)
   }
 }
 
+const wchar_t* toolbarLineStyleLabel(int index)
+{
+  switch (index)
+  {
+    case 0:
+      return L"\x5B9E\x7EBF";
+    case 1:
+      return L"\x865A\x7EBF";
+    case 2:
+      return L"\x70B9\x7EBF";
+    case 3:
+      return L"\x70B9\x5212\x7EBF";
+    case 4:
+      return L"\x53CC\x70B9\x5212\x7EBF";
+    default:
+      return L"";
+  }
+}
+
+const wchar_t* toolbarArrowStyleLabel(int index)
+{
+  switch (index)
+  {
+    case 0:
+      return L"\x672B\x7AEF\x7A7A\x5FC3\x7BAD\x5934";
+    case 1:
+      return L"\x8D77\x59CB\x7A7A\x5FC3\x7BAD\x5934";
+    case 2:
+      return L"\x53CC\x7AEF\x7A7A\x5FC3\x7BAD\x5934";
+    case 3:
+      return L"\x672B\x7AEF\x5B9E\x5FC3\x7BAD\x5934";
+    case 4:
+      return L"\x8D77\x59CB\x5B9E\x5FC3\x7BAD\x5934";
+    case 5:
+      return L"\x53CC\x7AEF\x5B9E\x5FC3\x7BAD\x5934";
+    case 6:
+      return L"\x672B\x7AEF\x7AD6\x7EBF";
+    case 7:
+      return L"\x8D77\x59CB\x7AD6\x7EBF";
+    case 8:
+      return L"\x53CC\x7AEF\x7AD6\x7EBF";
+    default:
+      return L"";
+  }
+}
+
 int modernToolbarHeight(const ModernToolbarMetrics& metrics)
 {
   return metrics.item_size + metrics.bar_padding * 2;

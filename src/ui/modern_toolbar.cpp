@@ -101,6 +101,7 @@ constexpr bool kUseSvgPenIcon = true;
 constexpr bool kUseSvgGeometryIcon = true;
 constexpr bool kUseSvgEditIcon = true;
 constexpr bool kUseSvgUndoIcon = true;
+constexpr bool kUseSvgRedoIcon = true;
 constexpr bool kUseSvgTextIcon = true;
 constexpr bool kUseSvgMosaicIcon = true;
 constexpr bool kUseSvgStrokeWidthIcon = true;
@@ -284,6 +285,23 @@ constexpr float kUndoSvgMinX = 64.000f;
 constexpr float kUndoSvgMinY = 128.000f;
 constexpr float kUndoSvgMaxX = 955.296f;
 constexpr float kUndoSvgMaxY = 896.000f;
+
+// 由 qrc/重做.svg 路径展平得到，使用与其它 SVG 图标相同的缩放基准。
+const Gdiplus::PointF kRedoSvgPoints[] = {
+    {829.0f, 220.0f}, {418.0f, 220.0f}, {204.0f, 393.0f},
+    {30.0f, 607.0f}, {204.0f, 994.0f}, {418.0f, 994.0f},
+    {936.0f, 994.0f}, {1001.0f, 929.0f}, {936.0f, 865.0f},
+    {418.0f, 865.0f}, {159.0f, 607.0f}, {418.0f, 349.0f},
+    {833.0f, 349.0f}, {758.0f, 424.0f}, {758.0f, 515.0f},
+    {821.0f, 533.0f}, {884.0f, 515.0f}, {1067.0f, 333.0f},
+    {1067.0f, 242.0f}, {850.0f, 59.0f}, {759.0f, 59.0f},
+    {759.0f, 150.0f}, {829.0f, 220.0f},
+};
+constexpr int kRedoSvgFigureCounts[] = {23};
+constexpr float kRedoSvgMinX = 30.0f;
+constexpr float kRedoSvgMinY = 59.0f;
+constexpr float kRedoSvgMaxX = 1067.0f;
+constexpr float kRedoSvgMaxY = 994.0f;
 
 // 由 qrc/文字.svg 路径展平得到。kUseSvgTextIcon 设为 false 即可退回旧文字图标。
 const Gdiplus::PointF kTextSvgPoints[] = {
@@ -789,6 +807,22 @@ SvgGlyph makeUndoSvgGlyph()
   return glyph;
 }
 
+SvgGlyph makeRedoSvgGlyph()
+{
+  SvgGlyph glyph{};
+  glyph.points = kRedoSvgPoints;
+  glyph.point_count = static_cast<int>(sizeof(kRedoSvgPoints) /
+                                       sizeof(kRedoSvgPoints[0]));
+  glyph.figure_counts = kRedoSvgFigureCounts;
+  glyph.figure_count = static_cast<int>(sizeof(kRedoSvgFigureCounts) /
+                                        sizeof(kRedoSvgFigureCounts[0]));
+  glyph.min_x = kRedoSvgMinX;
+  glyph.min_y = kRedoSvgMinY;
+  glyph.max_x = kRedoSvgMaxX;
+  glyph.max_y = kRedoSvgMaxY;
+  return glyph;
+}
+
 SvgGlyph makeTextSvgGlyph()
 {
   SvgGlyph glyph{};
@@ -956,6 +990,12 @@ bool drawSvgUndoIcon(Gdiplus::Graphics& graphics, const Gdiplus::SolidBrush& bru
                         kUndoSvgArrowBegin, kUndoSvgArrowEnd) &&
          fillSvgFigures(graphics, brush, glyph, origin_x, origin_y, scale,
                         kUndoSvgBodyBegin, glyph.figure_count);
+}
+
+bool drawSvgRedoIcon(Gdiplus::Graphics& graphics, const Gdiplus::SolidBrush& brush,
+                     float cx, float cy, float s)
+{
+  return drawSvgFilledGlyph(graphics, brush, makeRedoSvgGlyph(), cx, cy, s);
 }
 
 bool drawSvgTextIcon(Gdiplus::Graphics& graphics, const Gdiplus::SolidBrush& brush,
@@ -1460,7 +1500,11 @@ void drawToolbarIcon(HDC hdc, const RECT& cell, ToolbarIconKind kind,
       }
       break;
     case ToolbarIconKind::Redo:
-      drawLegacyRedoIcon(graphics, pen, cx, cy, s);
+      if (!kUseSvgRedoIcon ||
+          !drawSvgRedoIcon(graphics, brush, cx, cy, s))
+      {
+        drawLegacyRedoIcon(graphics, pen, cx, cy, s);
+      }
       break;
     case ToolbarIconKind::Confirm:
       graphics.DrawLine(&pen, cx - s + 2.0f, cy + 0.5f, cx - 0.5f,

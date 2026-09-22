@@ -103,6 +103,29 @@ TEST(ModernToolbarTest, StrokePresetLabelsAreChinese)
   EXPECT_STREQ(toolbarStrokePresetLabel(3), L"");
 }
 
+TEST(ModernToolbarTest, AnnotationStyleLabelsAreChinese)
+{
+  EXPECT_STREQ(toolbarLineStyleLabel(0), L"\x5B9E\x7EBF");
+  EXPECT_STREQ(toolbarLineStyleLabel(1), L"\x865A\x7EBF");
+  EXPECT_STREQ(toolbarLineStyleLabel(2), L"\x70B9\x7EBF");
+  EXPECT_STREQ(toolbarLineStyleLabel(3), L"\x70B9\x5212\x7EBF");
+  EXPECT_STREQ(toolbarLineStyleLabel(4), L"\x53CC\x70B9\x5212\x7EBF");
+  EXPECT_STREQ(toolbarLineStyleLabel(-1), L"");
+  EXPECT_STREQ(toolbarLineStyleLabel(5), L"");
+
+  EXPECT_STREQ(toolbarArrowStyleLabel(0), L"\x672B\x7AEF\x7A7A\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(1), L"\x8D77\x59CB\x7A7A\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(2), L"\x53CC\x7AEF\x7A7A\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(3), L"\x672B\x7AEF\x5B9E\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(4), L"\x8D77\x59CB\x5B9E\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(5), L"\x53CC\x7AEF\x5B9E\x5FC3\x7BAD\x5934");
+  EXPECT_STREQ(toolbarArrowStyleLabel(6), L"\x672B\x7AEF\x7AD6\x7EBF");
+  EXPECT_STREQ(toolbarArrowStyleLabel(7), L"\x8D77\x59CB\x7AD6\x7EBF");
+  EXPECT_STREQ(toolbarArrowStyleLabel(8), L"\x53CC\x7AEF\x7AD6\x7EBF");
+  EXPECT_STREQ(toolbarArrowStyleLabel(-1), L"");
+  EXPECT_STREQ(toolbarArrowStyleLabel(9), L"");
+}
+
 TEST(ModernToolbarTest, ColorPresetLabelsAreChinese)
 {
   EXPECT_STREQ(toolbarColorPresetLabel(0), L"\x7EA2");

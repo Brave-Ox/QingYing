@@ -133,6 +133,43 @@ void bindPropertyBarTooltips(AnnotationEditorHost* data)
   }
 
   bindSizeComboTooltip(data);
+
+  const bool arrow_menu =
+      data->chrome().m_style_menu == AnnotationEditorStyleMenu::Arrow;
+  const bool line_menu =
+      data->chrome().m_style_menu == AnnotationEditorStyleMenu::Line;
+  const int style_count = arrow_menu
+                              ? AnnotationArrowStyleCount
+                              : (line_menu ? AnnotationLineStyleCount : 0);
+  const AnnotationEditorRect style_menu{
+      data->chrome().m_style_menu_rect.left,
+      data->chrome().m_style_menu_rect.top,
+      data->chrome().m_style_menu_rect.right,
+      data->chrome().m_style_menu_rect.bottom};
+  const int max_style_count =
+      (std::max)(AnnotationLineStyleCount, AnnotationArrowStyleCount);
+  for (int i = 0; i < max_style_count; ++i)
+  {
+    RECT item{};
+    const wchar_t* label = L"";
+    UINT id = kTipLineStyleItemBaseId + static_cast<UINT>(i);
+    if (arrow_menu)
+    {
+      id = kTipArrowStyleItemBaseId + static_cast<UINT>(i);
+      label = toolbarArrowStyleLabel(i);
+    }
+    else if (line_menu)
+    {
+      label = toolbarLineStyleLabel(i);
+    }
+    if (i < style_count)
+    {
+      item = toWinRect(annotationEditorStyleMenuItemRect(style_menu, i));
+    }
+    bindToolbarTooltip(tooltip, overlay, id, item, label,
+                       data->chrome().m_tooltip_text[kStyleMenuTooltipSlot + i],
+                       kToolbarTooltipMaxChars);
+  }
 }
 
 void syncSizeFromCombo(AnnotationEditorHost* data)
@@ -1055,6 +1092,7 @@ void closeStyleMenu(AnnotationEditorHost* data)
   }
   data->chrome().m_style_menu = AnnotationEditorStyleMenu::None;
   data->chrome().m_style_menu_rect = {};
+  bindPropertyBarTooltips(data);
   invalidateToolbar(data);
 }
 

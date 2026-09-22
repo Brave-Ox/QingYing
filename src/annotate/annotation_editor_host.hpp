@@ -60,6 +60,9 @@ inline constexpr UINT kTipLineStyleId = 210;
 inline constexpr UINT kTipStrokeId = 220;
 inline constexpr UINT kTipCurrentColorId = 229;
 inline constexpr UINT kTipColorBaseId = 230;
+inline constexpr UINT kTipLineStyleItemBaseId = 240;
+inline constexpr UINT kTipArrowStyleItemBaseId =
+    kTipLineStyleItemBaseId + AnnotationLineStyleCount;
 inline constexpr int kComboFontPx = 13;
 
 inline constexpr int kInlineTextMaxChars = 256;
@@ -80,8 +83,13 @@ inline constexpr int kArrowStyleTooltipSlot = kLineStyleTooltipSlot + 1;
 inline constexpr int kStrokeTooltipSlot = kArrowStyleTooltipSlot + 1;
 inline constexpr int kCurrentColorTooltipSlot = kStrokeTooltipSlot + 1;
 inline constexpr int kColorTooltipSlot = kCurrentColorTooltipSlot + 1;
-inline constexpr int kTooltipSlotCount =
+inline constexpr int kStyleMenuTooltipSlot =
     kColorTooltipSlot + AnnotationStylePresetColorCount;
+inline constexpr int kTooltipSlotCount =
+    kStyleMenuTooltipSlot +
+    (AnnotationLineStyleCount > AnnotationArrowStyleCount
+         ? AnnotationLineStyleCount
+         : AnnotationArrowStyleCount);
 inline constexpr COLORREF kStrokeSliderTrackColor = RGB(226, 229, 234);
 inline constexpr COLORREF kStrokeSliderFillColor = RGB(64, 140, 255);
 inline constexpr COLORREF kStrokeSliderThumbFill = RGB(255, 255, 255);

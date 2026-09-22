@@ -66,6 +66,8 @@ struct ToolbarItemModel
 const wchar_t* toolbarIconLabel(ToolbarIconKind kind);
 const wchar_t* toolbarStrokePresetLabel(int index);
 const wchar_t* toolbarColorPresetLabel(int index);
+const wchar_t* toolbarLineStyleLabel(int index);
+const wchar_t* toolbarArrowStyleLabel(int index);
 
 int modernToolbarHeight(const ModernToolbarMetrics& metrics);
 int modernToolbarWidth(int item_count, int extra_width,
