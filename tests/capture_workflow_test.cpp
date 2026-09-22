@@ -110,6 +110,19 @@ TEST(CaptureWorkflowLongShotDecisionTest, CancellationAlwaysDiscards) {
   EXPECT_EQ(decision.disposition, LongShotWorkflowDisposition::Discard);
 }
 
+TEST(CaptureWorkflowLongShotDecisionTest,
+     UserStopKeepsVerifiedCompositeForExplicitEditingOrResultActions) {
+  const LongShotOutcome outcome =
+      longShotOutcome(LongShotStopReason::UserStopped, 2);
+
+  const LongShotWorkflowDecision decision = decideLongShotWorkflow(outcome);
+
+  EXPECT_EQ(decision.disposition,
+            LongShotWorkflowDisposition::AwaitConfirmation);
+  EXPECT_EQ(decision.recovery.result, LongShotRecoveryResult::PartialResult);
+  EXPECT_EQ(decision.recovery.cause, LongShotRecoveryCause::UserStopped);
+}
+
 TEST(CaptureWorkflowLongShotDecisionTest, UnsupportedKeepsSelectionWithoutResult) {
   LongShotOutcome outcome;
   outcome.stop_reason = LongShotStopReason::RequestRejected;
