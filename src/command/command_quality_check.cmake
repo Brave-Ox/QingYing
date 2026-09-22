@@ -28,6 +28,8 @@ set(command_files
   "${QINGYING_SOURCE_DIR}/tests/command_parser_performance_test.cpp"
   "${QINGYING_SOURCE_DIR}/tests/command_parser_p0_regression_test.cpp"
   "${QINGYING_SOURCE_DIR}/tests/command_parser_test.cpp"
+  "${QINGYING_SOURCE_DIR}/tests/command_plan_explainer_test.cpp"
+  "${QINGYING_SOURCE_DIR}/tests/command_rules_test.cpp"
   "${QINGYING_SOURCE_DIR}/tests/command_text_test.cpp"
 )
 
