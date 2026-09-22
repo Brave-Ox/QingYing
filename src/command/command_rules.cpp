@@ -3,6 +3,8 @@
 #include "command_dimension_parser.hpp"
 #include "command_text.hpp"
 
+#include <array>
+#include <string_view>
 #include <utility>
 
 namespace qingying::command_detail {
@@ -23,14 +25,80 @@ bool parseSave(const std::wstring& utterance, ActionRequest* out) {
   return true;
 }
 
-bool parseWindowCapture(std::wstring utterance, ActionRequest* out) {
-  for (const std::wstring_view suffix : {L"并复制", L"并保存", L"并钉图"}) {
-    if (endsWith(utterance, suffix)) {
-      utterance.resize(utterance.size() - suffix.size());
-      utterance = trim(std::move(utterance));
-      break;
+enum class WindowFollowUp {
+  None,
+  Copy,
+  Save,
+  Pin,
+};
+
+struct WindowCaptureParseResult {
+  std::wstring query;
+  WindowFollowUp follow_up{WindowFollowUp::None};
+};
+
+struct ExactRule {
+  std::wstring_view utterance;
+  RuleMatch match;
+};
+
+constexpr std::array<ExactRule, 6> kExactRules = {{
+    {L"复制", RuleMatch::Copy},
+    {L"复制当前截图", RuleMatch::Copy},
+    {L"钉图", RuleMatch::Pin},
+    {L"钉住当前截图", RuleMatch::Pin},
+    {L"状态", RuleMatch::Status},
+    {L"查看状态", RuleMatch::Status},
+}};
+
+bool parseExactRule(const std::wstring& command, RuleParseResult* out) {
+  for (const ExactRule& rule : kExactRules) {
+    if (command != rule.utterance) continue;
+
+    RuleParseResult result;
+    result.match = rule.match;
+    switch (rule.match) {
+      case RuleMatch::Copy:
+        result.primary = makeActionRequest(CopyRequest{ResultSelection::current()});
+        break;
+      case RuleMatch::Pin:
+        result.primary = makeActionRequest(PinRequest{ResultSelection::current()});
+        break;
+      case RuleMatch::Status:
+        result.primary = makeActionRequest(StatusRequest{});
+        break;
+      case RuleMatch::None:
+      case RuleMatch::Save:
+      case RuleMatch::CropCenter:
+      case RuleMatch::CaptureWindow:
+        return false;
     }
+    *out = std::move(result);
+    return true;
   }
+  return false;
+}
+
+WindowFollowUp trimWindowFollowUp(std::wstring* utterance) {
+  if (utterance == nullptr) return WindowFollowUp::None;
+  constexpr std::array<std::pair<std::wstring_view, WindowFollowUp>, 3>
+      kFollowUps = {{
+          {L"并复制", WindowFollowUp::Copy},
+          {L"并保存", WindowFollowUp::Save},
+          {L"并钉图", WindowFollowUp::Pin},
+      }};
+  for (const auto& candidate : kFollowUps) {
+    if (!endsWith(*utterance, candidate.first)) continue;
+    utterance->resize(utterance->size() - candidate.first.size());
+    *utterance = trim(std::move(*utterance));
+    return candidate.second;
+  }
+  return WindowFollowUp::None;
+}
+
+bool parseWindowCapture(std::wstring utterance, WindowCaptureParseResult* out) {
+  if (out == nullptr) return false;
+  const WindowFollowUp follow_up = trimWindowFollowUp(&utterance);
   std::wstring query;
   for (const std::wstring_view prefix : {L"截取窗口", L"截图窗口", L"截屏窗口"}) {
     if (startsWith(utterance, prefix)) {
@@ -48,8 +116,24 @@ bool parseWindowCapture(std::wstring utterance, ActionRequest* out) {
   }
   query = stripQuotes(trim(std::move(query)));
   if (query.empty()) return false;
-  *out = makeActionRequest(CaptureWindowRequest{std::move(query)});
+  *out = {std::move(query), follow_up};
   return true;
+}
+
+bool makeWindowFollowUp(WindowFollowUp follow_up, ActionRequest* out) {
+  if (out == nullptr) return false;
+  switch (follow_up) {
+    case WindowFollowUp::Copy:
+      *out = makeActionRequest(CopyRequest{ResultSelection::current()});
+      return true;
+    case WindowFollowUp::Pin:
+      *out = makeActionRequest(PinRequest{ResultSelection::current()});
+      return true;
+    case WindowFollowUp::None:
+    case WindowFollowUp::Save:
+      return false;
+  }
+  return false;
 }
 
 }  // namespace
@@ -57,15 +141,9 @@ bool parseWindowCapture(std::wstring utterance, ActionRequest* out) {
 bool parseRule(const std::wstring& command, RuleParseResult* out) {
   if (out == nullptr) return false;
   RuleParseResult result;
-  if (command == L"复制" || command == L"复制当前截图") {
-    result.primary = makeActionRequest(CopyRequest{ResultSelection::current()});
-    result.match = RuleMatch::Copy;
-  } else if (command == L"钉图" || command == L"钉住当前截图") {
-    result.primary = makeActionRequest(PinRequest{ResultSelection::current()});
-    result.match = RuleMatch::Pin;
-  } else if (command == L"状态" || command == L"查看状态") {
-    result.primary = makeActionRequest(StatusRequest{});
-    result.match = RuleMatch::Status;
+  if (parseExactRule(command, &result)) {
+    // The fixed aliases share one table so supported command text cannot
+    // drift from the rule name used by diagnostics.
   } else if (parseSave(command, &result.primary)) {
     result.match = RuleMatch::Save;
   } else {
@@ -74,17 +152,14 @@ bool parseRule(const std::wstring& command, RuleParseResult* out) {
       result.primary = makeActionRequest(
           CropCenterRequest{dimensions.width, dimensions.height});
       result.match = RuleMatch::CropCenter;
-    } else if (parseWindowCapture(command, &result.primary)) {
-      result.match = RuleMatch::CaptureWindow;
-      if (endsWith(command, L"并复制")) {
-        result.follow_up = makeActionRequest(CopyRequest{ResultSelection::current()});
-        result.has_follow_up = true;
-      } else if (endsWith(command, L"并钉图")) {
-        result.follow_up = makeActionRequest(PinRequest{ResultSelection::current()});
-        result.has_follow_up = true;
-      }
     } else {
-      return false;
+      WindowCaptureParseResult window_capture;
+      if (!parseWindowCapture(command, &window_capture)) return false;
+      result.match = RuleMatch::CaptureWindow;
+      result.primary = makeActionRequest(
+          CaptureWindowRequest{std::move(window_capture.query)});
+      result.has_follow_up =
+          makeWindowFollowUp(window_capture.follow_up, &result.follow_up);
     }
   }
   *out = std::move(result);
