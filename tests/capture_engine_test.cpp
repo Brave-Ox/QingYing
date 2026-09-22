@@ -1,5 +1,7 @@
 ﻿#include "qingying/capture/capture_engine.hpp"
 
+#include "desktop_test_environment.hpp"
+
 #include <Windows.h>  // GetSystemMetrics / SM_CXSCREEN — PIMPL 头文件不带 Windows 依赖
 
 #include <gtest/gtest.h>
@@ -10,6 +12,9 @@
 namespace qingying {
 
 TEST(CaptureEngineTest, CaptureFullScreenProducesNonEmptyImage) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   CaptureEngine engine;
   Image out;
 
@@ -30,6 +35,9 @@ TEST(CaptureEngineTest, CaptureFullScreenProducesNonEmptyImage) {
 }
 
 TEST(CaptureEngineTest, CaptureRegionHasExpectedDimensions) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   CaptureEngine engine;
   Image out;
 
@@ -43,6 +51,9 @@ TEST(CaptureEngineTest, CaptureRegionHasExpectedDimensions) {
 }
 
 TEST(CaptureEngineTest, CaptureRegionPixelsAreBgra) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   CaptureEngine engine;
   Image out;
 

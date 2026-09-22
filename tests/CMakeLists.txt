@@ -337,3 +337,24 @@ qingying_check_contract_header(automation/automation_types.hpp LegacyActionReque
 qingying_check_contract_header(window/window_query_types.hpp WindowCandidate)
 qingying_check_contract_header(automation/status_request.hpp StatusInfo)
 qingying_check_contract_header(automation/automation_client.h LegacyActionRequest)
+
+# Build every CTest executable before invoking CTest. This prevents
+# gtest_discover_tests from registering *_NOT_BUILT placeholders when a user
+# builds only the application target and then runs the full test suite.
+add_custom_target(qingying_all_tests
+  DEPENDS
+    qingying_tests
+    qingying_command_tests
+    qingying_automation_core_tests
+    qingying_smart_region_tests
+    qingying_contract_header_checks
+  COMMENT "Build every QingYing test target"
+)
+
+add_custom_target(qingying_verify
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -C $<CONFIG>
+  DEPENDS qingying_all_tests
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Build and run the complete QingYing test suite"
+  USES_TERMINAL
+)

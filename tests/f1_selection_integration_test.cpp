@@ -3,6 +3,8 @@
 #include "qingying/overlay/selection_controller.hpp"
 #include "qingying/overlay/selection_handles.hpp"
 
+#include "desktop_test_environment.hpp"
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -13,6 +15,9 @@ namespace qingying {
 // → 物理像素出参 → 真实 CaptureEngine 区域截图。
 // 不依赖具体屏幕内容，只验证坐标与尺寸契约。
 TEST(F1SelectionIntegrationTest, SelectionToPhysicalPixelsToCapture) {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   const coord::VirtualScreenRect screen = coord::getVirtualScreen();
   ASSERT_GT(screen.width, 0);
   ASSERT_GT(screen.height, 0);

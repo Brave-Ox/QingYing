@@ -1,8 +1,9 @@
-#include <Windows.h>
+﻿#include <Windows.h>
 
 #include <gtest/gtest.h>
 
 #include "annotate/annotation_editor_color_picker.h"
+#include "desktop_test_environment.hpp"
 
 namespace qingying {
 namespace {
@@ -39,6 +40,9 @@ class TestWindow
 
 TEST(ColorPickerSurfaceTest, CoversVirtualDesktopOutsideColorPicker)
 {
+  const auto desktop = test::probeDesktopCapture();
+  if (!desktop.available) GTEST_SKIP() << desktop.diagnostic;
+
   TestWindow overlay;
   ASSERT_NE(overlay.get(), nullptr);
   TestWindow picker(overlay.get());
