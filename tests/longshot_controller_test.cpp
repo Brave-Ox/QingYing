@@ -12,6 +12,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace qingying {
@@ -340,6 +341,43 @@ TEST(LongShotControllerTest, CancelAfterWorkerFinishedSuppressesQueuedImage) {
   EXPECT_EQ(outcome.stop_reason, LongShotStopReason::Cancelled);
   EXPECT_EQ(outcome.diagnostic.error_code, ErrorCode::kCancelled);
   EXPECT_TRUE(outcome.image.empty());
+}
+
+TEST(LongShotControllerTest, RestartRejectsBlockedWorkerWithinBoundedWait) {
+  CompletionFixture fixture;
+  const auto capture = fixture.capture;
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool entered = false;
+  bool release = false;
+  fixture.capture = [&](const ScreenPhysicalRect& rect, Image& out) {
+    std::unique_lock<std::mutex> lock(mutex);
+    entered = true;
+    condition.notify_all();
+    condition.wait(lock, [&] { return release; });
+    return capture(rect, out);
+  };
+
+  ASSERT_TRUE(fixture.start());
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2),
+                                   [&] { return entered; }));
+  }
+
+  const auto started_at = std::chrono::steady_clock::now();
+  EXPECT_FALSE(fixture.controller.start({1, 0, 0, 32, 40}));
+  EXPECT_LT(std::chrono::steady_clock::now() - started_at,
+            std::chrono::milliseconds(600));
+  EXPECT_NE(fixture.controller.diagnosticSnapshot().find("restart_join=timed_out"),
+            std::string::npos);
+
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    release = true;
+  }
+  condition.notify_all();
+  fixture.controller.join();
 }
 
 TEST(LongShotControllerTest, StopPreservesFrameAndShutdownHonorsDeadline) {

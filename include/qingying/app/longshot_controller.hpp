@@ -30,8 +30,10 @@ class LongShotController {
   // from Application and is never destroyed by the controller.
   void setOwnerWindow(HWND owner_window) noexcept;
 
-  // Starts one interactive capture. A second start first requests and joins
-  // any previous worker, so at most one session can be active.
+  // Starts one interactive capture. A second start first requests cancellation
+  // of any previous worker and waits for a bounded hand-off. If an in-process
+  // provider does not stop in time, the new session is rejected instead of
+  // blocking the UI thread indefinitely.
   bool start(const LongShotRequest& request);
 
   // Called by SelectionOverlay's UI callback; updates control state and wakes
