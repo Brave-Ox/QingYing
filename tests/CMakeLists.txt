@@ -208,7 +208,9 @@ add_executable(qingying_command_tests
   command_parser_fuzz_test.cpp
   command_parser_performance_test.cpp
   command_parser_p0_regression_test.cpp
+  command_parser_contract_test.cpp
   command_plan_explainer_test.cpp
+  command_plan_validator_contract_test.cpp
   command_rules_test.cpp
   command_text_test.cpp
   command_dimension_parser_test.cpp
@@ -233,6 +235,14 @@ gtest_discover_tests(qingying_command_tests
   WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_command_tests>
   DISCOVERY_MODE PRE_TEST
   PROPERTIES LABELS command)
+
+add_custom_target(qingying_command_verify
+  COMMAND $<TARGET_FILE:qingying_command_tests> --gtest_color=no
+  DEPENDS qingying_command_quality qingying_command_tests
+  WORKING_DIRECTORY $<TARGET_FILE_DIR:qingying_command_tests>
+  COMMENT "Run command module quality gate and contract tests"
+  USES_TERMINAL
+)
 
 add_executable(qingying_automation_core_tests
   automation_session_state_test.cpp
