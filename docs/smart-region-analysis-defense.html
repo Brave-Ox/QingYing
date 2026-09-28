@@ -1,0 +1,1874 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QingYing 智能吸附实现分析</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f5f7fa;
+      color: #1f2937;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        "Microsoft YaHei",
+        Arial,
+        sans-serif;
+      line-height: 1.75;
+    }
+
+    .container {
+      width: min(1100px, calc(100% - 40px));
+      margin: 40px auto;
+      padding: 48px 56px;
+      background: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.06);
+    }
+
+    h1 {
+      margin-top: 0;
+      margin-bottom: 16px;
+      color: #111827;
+      font-size: 30px;
+      line-height: 1.35;
+    }
+
+    h2 {
+      margin-top: 46px;
+      margin-bottom: 18px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e5e7eb;
+      color: #111827;
+      font-size: 23px;
+    }
+
+    h3 {
+      margin-top: 30px;
+      margin-bottom: 12px;
+      color: #1f2937;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 12px 0;
+    }
+
+    ul,
+    ol {
+      padding-left: 26px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: #f1f5f9;
+      color: #c2410c;
+      font-family:
+        "Cascadia Code",
+        "JetBrains Mono",
+        Consolas,
+        monospace;
+      font-size: 0.93em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 18px 0;
+      padding: 18px 22px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+      color: #334155;
+      font-family:
+        "Cascadia Code",
+        "JetBrains Mono",
+        Consolas,
+        monospace;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .summary {
+      margin: 22px 0 28px;
+      padding: 18px 22px;
+      border-left: 4px solid #2563eb;
+      border-radius: 8px;
+      background: #eff6ff;
+    }
+
+    .note {
+      margin: 18px 0;
+      padding: 16px 20px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }
+
+    .important {
+      margin: 18px 0;
+      padding: 16px 20px;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      background: #fffbeb;
+    }
+
+    .path {
+      color: #475569;
+      word-break: break-all;
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 2px 5px 2px 0;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #4338ca;
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      margin: 18px 0;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #111827;
+      font-weight: 600;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      position: relative;
+    }
+
+    .page-layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 28px;
+      width: min(1440px, calc(100% - 32px));
+      margin: 28px auto;
+      align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 24px;
+      max-height: calc(100vh - 48px);
+      overflow-y: auto;
+      padding: 20px 16px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(8px);
+    }
+
+    .sidebar-title {
+      margin: 0 0 12px;
+      padding: 0 8px 10px;
+      border-bottom: 1px solid #e5e7eb;
+      color: #111827;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .sidebar-nav,
+    .sidebar-subnav {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .sidebar-nav > li {
+      margin: 3px 0;
+    }
+
+    .sidebar-subnav {
+      margin: 4px 0 8px 12px;
+      padding-left: 10px;
+      border-left: 1px solid #e2e8f0;
+    }
+
+    .sidebar a {
+      display: block;
+      padding: 7px 8px;
+      border-radius: 7px;
+      color: #475569;
+      text-decoration: none;
+      font-size: 14px;
+      line-height: 1.45;
+      transition:
+        background-color 0.16s ease,
+        color 0.16s ease;
+    }
+
+    .sidebar-subnav a {
+      padding: 5px 8px;
+      font-size: 13px;
+    }
+
+    .sidebar a:hover {
+      background: #eff6ff;
+      color: #2563eb;
+    }
+
+    .sidebar a.active {
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+
+    .container {
+      width: 100%;
+      margin: 0;
+    }
+
+    h2[id],
+    h3[id] {
+      scroll-margin-top: 24px;
+    }
+
+    @media (max-width: 1100px) {
+      .page-layout {
+        display: block;
+        width: min(1100px, calc(100% - 24px));
+        margin: 18px auto;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        max-height: none;
+        margin-bottom: 16px;
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+
+      .sidebar-title {
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+      }
+
+      .sidebar-nav {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .sidebar-nav > li {
+        flex: 0 0 auto;
+        margin: 0;
+      }
+
+      .sidebar-subnav {
+        display: none;
+      }
+
+      .sidebar a {
+        white-space: nowrap;
+      }
+    }
+
+
+
+
+    .defense {
+      margin: 18px 0;
+      padding: 17px 20px;
+      border-left: 4px solid #059669;
+      border-radius: 8px;
+      background: #ecfdf5;
+    }
+    .defense strong { color: #065f46; }
+    .key-point {
+      margin: 16px 0;
+      padding: 15px 18px;
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background: #f8fbff;
+    }
+    .key-point-title {
+      margin-bottom: 8px;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+    .evidence-list { margin-top: 10px; }
+    .defense-table td:first-child {
+      width: 23%;
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid #e5e7eb;
+      color: #64748b;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="page-layout">
+    <aside class="sidebar" aria-label="页面目录">
+      <div class="sidebar-title">目录</div>
+      <ul class="sidebar-nav">
+        <li><a href="#section-1">1. 核心入口和候选模型</a></li>
+        <li>
+          <a href="#section-core-challenges">2. 两个核心技术难点</a>
+          <ul class="sidebar-subnav">
+            <li><a href="#section-challenge-1">2.1 识别是否正确</a></li>
+            <li><a href="#section-challenge-1-solution">解决方案</a></li>
+            <li><a href="#section-challenge-1-evidence">答辩证据</a></li>
+            <li><a href="#section-challenge-2">2.2 体验是否稳定</a></li>
+            <li><a href="#section-challenge-2-protection">防旧结果回跳</a></li>
+            <li><a href="#section-challenge-2-stability">防高亮闪烁</a></li>
+            <li><a href="#section-challenge-2-evidence">答辩证据</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#section-3">3. 各层候选分别负责什么</a>
+          <ul class="sidebar-subnav">
+            <li><a href="#section-3-1">3.1 快速窗口定位</a></li>
+            <li><a href="#section-3-2">3.2 已知内容区域</a></li>
+            <li><a href="#section-3-3">3.3 UIA</a></li>
+            <li><a href="#section-3-4">3.4 MSAA</a></li>
+            <li><a href="#section-3-5">3.5 视觉候选</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#section-4">4. 候选过滤、评分和选择</a>
+          <ul class="sidebar-subnav">
+            <li><a href="#section-4-1">4.1 合法性过滤</a></li>
+            <li><a href="#section-4-2">4.2 尺寸限制</a></li>
+            <li><a href="#section-4-3">4.3 泛化容器</a></li>
+            <li><a href="#section-4-4">4.4 可操作控件优先</a></li>
+            <li><a href="#section-4-5">4.5 UIA/MSAA 候选保护</a></li>
+            <li><a href="#section-4-6">4.6 Client/Window 兜底</a></li>
+            <li><a href="#section-4-7">4.7 候选去重</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#section-5">5. 悬停响应、缓存和稳定性</a>
+          <ul class="sidebar-subnav">
+            <li><a href="#section-5-1">5.1 快速路径</a></li>
+            <li><a href="#section-5-2">5.2 鼠标事件合并</a></li>
+            <li><a href="#section-5-3">5.3 三类后台查询</a></li>
+            <li><a href="#section-5-4">5.4 缓存与浏览器 Atlas</a></li>
+            <li><a href="#section-5-5">5.5 候选稳定机制</a></li>
+            <li><a href="#section-5-6">5.6 手动拖拽优先</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#section-6">6. 浏览器和 VS Code/Cursor</a>
+          <ul class="sidebar-subnav">
+            <li><a href="#section-6-1">6.1 Chrome / Edge / Brave</a></li>
+            <li><a href="#section-6-2">6.2 VS Code / Cursor</a></li>
+          </ul>
+        </li>
+        <li><a href="#section-defense-summary">结项答辩建议讲法</a></li>
+        <li><a href="#summary">整体工作机制总结</a></li>
+      </ul>
+    </aside>
+
+    <main class="container">
+    <h1>QingYing 智能吸附实现分析</h1>
+
+    <div class="summary">
+      <strong>整体结论：</strong>
+      项目中的“智能吸附”不是只靠一种算法猜矩形，而是先确定鼠标下的目标窗口，
+      再由已知区域、截图视觉、UIA 和 MSAA 提供多个候选，最后统一过滤和选择。
+      为了不卡住截图界面，当前代码把较慢的发现和无障碍查询放在后台执行，
+      UI 线程先显示窗口或客户区兜底，再用更准确的后台结果替换。
+    </div>
+
+    <div class="note">
+      <strong>先用一句大白话理解：</strong>
+      它像“先给出一个不会错得离谱的大框，再后台寻找更贴合的小框”。
+      大框保证马上可用，小框负责提升准确度，过期的小框不会再拿来覆盖当前结果。
+    </div>
+
+<pre>鼠标移动
+  ↓
+UI 线程：定位窗口 + 复用已有候选 + Client / Window 兜底
+  ↓                         ↓
+马上显示初步高亮         提交后台任务
+                            ├─ 发现通道：KnownContent + Visual
+                            ├─ 无障碍通道：UIA，不足时再尝试 MSAA
+                            └─ 浏览器细化通道：停留后再做更深查询
+                                      ↓
+                         有效性校验 + 合并 + 评分 + 去重
+                                      ↓
+                              稳定更新高亮框</pre>
+
+    <div class="important">
+      <strong>当前能力边界：</strong><br />
+      代码已经实现多来源识别、后台查询、缓存、过期结果拦截和候选稳定展示；
+      但它不是 AI 目标检测，也没有 OCR，不能保证任意应用、任意自绘控件都能精确吸附。
+      当结构信息不足或检测超时时，系统会回退到内容区、客户区或整个窗口。
+      文中涉及延迟的数字是代码参数，不等同于已经测得的性能结论。
+    </div>
+
+
+    <!-- ==================== 1 ==================== -->
+
+    <h2 id="section-1">1. 核心入口和候选模型</h2>
+
+    <p>
+      智能吸附的核心入口位于
+      <code>SmartRegionDetector::detectAt</code>：
+    </p>
+
+    <p class="path">src/smart_region/smart_region_detector.cpp</p>
+
+    <p>
+      候选结构是 <code>SmartRegionCandidate</code>，定义在：
+    </p>
+
+    <p class="path">include/qingying/window/smart_region_types.hpp</p>
+
+    <p>
+      每一个 <code>SmartRegionCandidate</code> 本质上表示一个
+      “当前鼠标位置可能应该吸附到的区域”，其中包含：
+    </p>
+
+    <ul>
+      <li>候选区域的屏幕坐标矩形；</li>
+      <li>所属窗口 <code>owner_window</code>；</li>
+      <li>真正需要吸附的目标窗口 <code>target_window</code>；</li>
+      <li>候选来源；</li>
+      <li>候选语义；</li>
+      <li>视觉检测置信度；</li>
+      <li>UIA / MSAA 无障碍元数据；</li>
+      <li>无障碍树中的层级深度等诊断信息。</li>
+    </ul>
+
+    <p>候选来源主要包括：</p>
+
+    <p>
+      <span class="tag">UIA</span>
+      <span class="tag">MSAA</span>
+      <span class="tag">KnownContent</span>
+      <span class="tag">Visual</span>
+      <span class="tag">Client</span>
+      <span class="tag">Window</span>
+    </p>
+
+    <p>语义则进一步区分为：</p>
+
+    <ul>
+      <li><code>ActionableControl</code>：可操作控件；</li>
+      <li><code>ContentSurface</code>：内容区域；</li>
+      <li><code>Fallback</code>：Client / Window 等兜底区域。</li>
+    </ul>
+
+    <div class="note">
+      <strong>可操作控件</strong>并不只是指“理论上鼠标能够点击”的区域，
+      而是指 UIA / MSAA 的无障碍语义明确表明它具有交互能力。
+      例如 Button、TabItem、MenuItem、CheckBox、Edit、ComboBox 等。
+    </div>
+
+    <p>
+      内容区域则更偏向信息展示，例如 Document、Image、List、Table、
+      文档正文和列表表面等。
+    </p>
+
+    <p>
+      因此可以简单理解为：
+    </p>
+
+    <pre>ActionableControl
+    → 用户明确可以执行某种操作
+
+ContentSurface
+    → 主要承载、显示内容
+
+Fallback
+    → 当前缺乏更精确候选时的兜底区域</pre>
+
+    <p>
+      需要注意，<code>ContentSurface</code> 并不意味着该区域绝对不能点击。
+      真实 UI 中图片、文本等同样可能绑定点击事件。
+      这里强调的是“无障碍语义是否明确认为它是交互控件”，
+      而不是单纯判断鼠标事件能否触发。
+    </p>
+
+    <h3 id="section-1-capacity">候选容量控制</h3>
+
+    <p>
+      当前候选总容量固定为 9 个，同时预留 4 个回退槽。
+      无障碍候选最多占 5 个槽，其中 UIA 最多 4 个，最后 1 个可供 MSAA 兜底。
+      剩余容量用于保留已知区域、视觉、Client 和 Window 等候选。
+    </p>
+
+    <ul>
+      <li>总容量：9 个；</li>
+      <li>无障碍候选上限：5 个；</li>
+      <li>UIA 上限：4 个；</li>
+      <li>Client、Window 等回退链不会被 UIA 父级候选全部挤掉。</li>
+    </ul>
+
+    <p>
+      这种设计可以避免 UIA 父级路径较深时产生过多无障碍候选，
+      导致 Client 和 Window 等兜底候选完全没有保存空间。
+    </p>
+
+
+
+    <!-- ==================== 核心难点 ==================== -->
+
+    <h2 id="section-core-challenges">2. 结项答辩重点：两个核心技术难点</h2>
+
+    <div class="summary">
+      如果结题时只讲最重要的两项，建议围绕两个问题展开：
+      <strong>第一，识别是否正确；第二，交互是否稳定。</strong>
+      前者解决“鼠标下到底应该吸附哪个区域”，后者解决“即使识别正确，也不能因为慢查询而卡顿、回跳或闪烁”。
+    </div>
+
+    <h3 id="section-challenge-1">2.1 难点一：不同应用没有统一元素接口，如何找到正确的局部区域</h3>
+
+    <p>
+      智能吸附最大的困难，不是“找一个矩形”，而是
+      <strong>不同应用暴露给 Windows 的界面结构完全不同</strong>。
+      同样是一个按钮，在不同程序中可能表现为 UIA 控件、MSAA 角色、
+      Electron 自绘区域，甚至只能从截图边界中推断。
+    </p>
+
+    <div class="key-point">
+      <div class="key-point-title">为什么不能只用一种方法？</div>
+      <ul>
+        <li>只依赖 UIA：浏览器部分控件、自绘控件、Electron 场景可能拿不到理想结果；</li>
+        <li>只依赖视觉：容易把文字笔画、图片纹理、装饰边框误识别成控件；</li>
+        <li>只吸附窗口：虽然稳定，但粒度太粗，失去“智能吸附”的意义。</li>
+      </ul>
+    </div>
+
+    <p>因此项目采用的是<strong>多来源候选融合</strong>，不是单一路径：</p>
+
+    <pre>结构化路线：UIA → 局部结果不足时尝试 MSAA
+场景化路线：KnownContent → 已知应用的内容区域
+图像路线：Visual → 从冻结截图寻找边缘与分隔结构
+安全路线：Client / Window → 前面都不理想时仍有可用区域</pre>
+
+    <p>
+      统一入口仍然是 <code>SmartRegionDetector::detectAt</code>，
+      负责把不同来源生成的候选统一交给后续评分器处理。
+    </p>
+
+    <p class="path">src/smart_region/smart_region_detector.cpp</p>
+
+    <h3 id="section-challenge-1-solution">2.1.1 当前代码怎么解决</h3>
+
+    <ol>
+      <li>UI 线程只做快速窗口快照、已有候选命中和 Client / Window 兜底，避免等待慢查询；</li>
+      <li>发现通道在后台生成 KnownContent 和 Visual 候选；</li>
+      <li>无障碍通道在后台用 UIA 识别控件，局部 UIA 不足时才尝试 MSAA；</li>
+      <li>Chromium 浏览器在鼠标停留约 120ms 且还没有可信局部候选时，可提交一次深度细化查询；</li>
+      <li>所有返回结果先确认仍属于当前窗口、当前会话和当前鼠标位置，再与已有候选合并；</li>
+      <li>最后统一执行合法性过滤、近似去重、评分和稳定展示。</li>
+    </ol>
+
+    <p>评分器不会简单选择“最小矩形”，而是综合：</p>
+
+    <ul>
+      <li>候选来源是否可靠；</li>
+      <li>是否属于明确的 <code>ActionableControl</code>；</li>
+      <li>候选是否真正覆盖当前鼠标；</li>
+      <li>区域是否过大、过小或接近整个窗口；</li>
+      <li>视觉候选的边界完整度和置信度；</li>
+      <li>候选是否符合合理的父子层级。</li>
+    </ul>
+
+    <div class="important">
+      <strong>答辩时一句话：</strong><br />
+      先用 Client / Window 保证“马上有框”，再让 KnownContent、Visual、UIA / MSAA
+      在后台竞争更好的局部结果；只有仍适用于当前鼠标的结果才能更新高亮。
+    </div>
+
+    <h3 id="section-challenge-1-evidence">2.1.2 结项时怎么证明“识别正确”</h3>
+
+    <ul class="evidence-list">
+      <li>Chrome 标签页能吸附到标签本身，而不是退化成整个网页或窗口；</li>
+      <li>VS Code 编辑器、侧栏、终端能够区分，不会全部合并成一个大 Client；</li>
+      <li>小图标、小按钮不会因为面积小而被一律过滤；</li>
+      <li>UIA / MSAA 失效时，仍能稳定回退到 KnownContent、Visual、Client 或 Window。</li>
+    </ul>
+
+    <h3 id="section-challenge-2">2.2 难点二：UIA 查询可能很慢，如何做到既不阻塞界面，又不显示过期结果</h3>
+
+    <p>
+      第二个真正有工程含量的问题，是<strong>异步一致性</strong>。
+      UIA / MSAA 可能涉及跨进程 COM 查询，KnownContent 和视觉分析也可能产生额外开销，
+      而鼠标移动速度远快于这些查询完成速度。
+    </p>
+
+    <pre>鼠标从 A 移到 B
+  ↓
+A 的 UIA 查询还没完成
+  ↓
+鼠标已经停在 B
+  ↓
+A 的旧结果此时才返回
+  ↓
+高亮框错误跳回 A</pre>
+
+    <p>
+      如果所有 UIA 查询都直接放在 UI 线程中，又会出现另一个问题：
+      鼠标移动时界面被阻塞，截图体验明显卡顿。
+    </p>
+
+    <div class="key-point">
+      <div class="key-point-title">当前实现的核心思路</div>
+      <pre>UI 线程：
+窗口快照 + 缓存/Atlas 命中 + Client / Window
+→ 先立即显示，不做重型扫描
+
+发现通道：KnownContent + Visual
+无障碍通道：UIA + 条件式 MSAA
+细化通道：Chromium 停留后的深度查询
+→ 后台完成，合格结果再更新 UI</pre>
+    </div>
+
+    <p class="path">src/overlay/selection_overlay.cpp</p>
+    <p class="path">src/smart_region/uia_region_query_worker.cpp</p>
+
+    <h3 id="section-challenge-2-protection">2.2.1 如何防止“旧结果回跳”</h3>
+
+    <ul>
+      <li>后台任务采用 <code>latest-wins</code>：尚未开始的旧请求会被最新请求替换；</li>
+      <li>结果必须匹配当前请求编号、截图会话、进程、Root HWND 和窗口矩形；</li>
+      <li>普通后台请求期限约为 120ms，Chromium 深度细化请求期限约为 300ms；</li>
+      <li>可复用结果的最大年龄为 120ms，而且必须仍能在新位置命中有效局部候选；</li>
+      <li>同一窗口内 4 像素附近、80ms 内的成功结果可以复用，减少重复跨进程查询；</li>
+      <li>普通失败默认冷却 100ms，浏览器语义未命中冷却 16ms，超时或提供方故障冷却 2 秒；</li>
+      <li>候选若不再覆盖当前鼠标，或只剩 Window / Client 这类泛化结果，就不能借缓存冒充精确结果。</li>
+    </ul>
+
+    <pre>旧请求 A 正在查询
+        ↓
+鼠标已经产生新请求 B
+        ↓
+A 完成时先检查：
+A 的结果现在是否仍适用于 B？
+        ↓
+仍适用 → 可以复用
+不适用 → 丢弃，等待 B</pre>
+
+    <p>
+      因此 <code>latest-wins</code> 不是“所有旧结果一律丢弃”。
+      如果旧查询返回的局部区域仍覆盖新鼠标位置，并且窗口与会话都没变，代码允许把它重新绑定给新请求；
+      否则就丢弃，避免高亮回跳。
+    </p>
+
+    <h3 id="section-challenge-2-stability">2.2.2 如何防止高亮框频繁闪烁</h3>
+
+    <ul>
+      <li>鼠标检测大约按 16ms 合并一次，避免每个 <code>WM_MOUSEMOVE</code> 都完整重算；</li>
+      <li>后台完成会主动通知覆盖层，同时约 8ms 的轮询定时器负责及时收取结果；</li>
+      <li>普通候选切换设置约 48ms 稳定延迟；</li>
+      <li>首次可信的局部控件可以快速替换粗粒度回退区域；</li>
+      <li>Chromium 顶部快速移动时，异步结果会短暂延后；相邻外壳候选通常等待约 8ms；</li>
+      <li>用户真正开始拖拽后，手动框选优先于所有异步结果。</li>
+    </ul>
+
+    <div class="defense">
+      <strong>答辩时一句话：</strong><br />
+      首帧不等待后台发现或无障碍查询，先用快速路径保证“马上有框”；
+      后台再补充已知区域、视觉和结构化控件，并通过 latest-wins、结果有效性校验、
+      缓存、冷却和稳定延迟，避免卡顿、回跳和闪烁。
+    </div>
+
+    <h3 id="section-challenge-2-evidence">2.2.3 结项时怎么证明“体验稳定”</h3>
+
+    <ol>
+      <li><strong>首帧响应：</strong>进入截图后不等待后台查询，立即出现合理高亮；</li>
+      <li><strong>慢速移动：</strong>更精确的局部控件最终能够替换粗粒度回退区域；</li>
+      <li><strong>快速移动：</strong>旧结果不会长时间覆盖新位置，高亮框不会持续闪烁或回跳。</li>
+    </ol>
+
+    <p>
+      如果后续补性能数据，建议重点记录：
+      首帧高亮延迟、局部控件出现延迟、候选切换延迟的 P50 / P95。
+    </p>
+
+    <div class="summary">
+      <strong>两个难点的关系：</strong><br />
+      难点一解决“选谁”——保证识别结果正确；<br />
+      难点二解决“什么时候显示、能不能稳定显示”——保证交互体验可靠。
+    </div>
+
+
+    <!-- ==================== 2 ==================== -->
+
+    <h2 id="section-3">3. 各层候选分别负责什么</h2>
+
+
+    <h3 id="section-3-1">3.1 快速窗口定位</h3>
+
+    <p>
+      窗口检测位于 <code>WindowDetector</code>：
+    </p>
+
+    <p class="path">src/window/window_detector.cpp</p>
+
+    <p>
+      首先利用 <code>WindowFromPoint</code> 根据鼠标屏幕坐标寻找窗口，
+      再通过 <code>GetAncestor(..., GA_ROOT)</code>
+      将命中的子窗口提升到顶层窗口。
+    </p>
+
+    <p>随后会过滤不适合吸附的窗口，例如：</p>
+
+    <ul>
+      <li>QingYing 自己的截图覆盖层窗口；</li>
+      <li>桌面窗口；</li>
+      <li>不可见窗口；</li>
+      <li>最小化窗口；</li>
+      <li>不满足吸附要求的工具窗口；</li>
+      <li>不在有效虚拟桌面区域内的窗口。</li>
+    </ul>
+
+    <p>
+      由于截图覆盖层本身通常是全屏置顶窗口，
+      <code>WindowFromPoint</code> 很容易首先命中 QingYing 自身。
+      因此代码还会沿 Z 序继续向下查找，
+      直到找到真正位于覆盖层下面、且能够吸附的目标窗口。
+    </p>
+
+
+    <h3 id="section-3-2">3.2 已知内容区域</h3>
+
+    <p>
+      已知区域识别位于：
+    </p>
+
+    <p class="path">src/smart_region/known_content_locator.cpp</p>
+
+    <p>
+      KnownContent 的核心思路是：
+      对一些结构非常明确、使用频率很高的应用，
+      不必每一次都完全依赖 UIA 或视觉推断，而是可以直接根据
+      窗口类型和已知布局得到较可靠的内容区域。
+    </p>
+
+    <p>目前主要针对：</p>
+
+    <ul>
+      <li>Chrome / Edge / Brave 的网页渲染区域和浏览器外壳；</li>
+      <li>记事本编辑区域；</li>
+      <li>资源管理器文件列表、树形目录等滚动表面；</li>
+      <li>VS Code / Cursor 等 Electron 工作台。</li>
+    </ul>
+
+    <p>
+      KnownContent 的价值主要在于：
+      当无障碍树质量较差，或者 UIA 异步结果尚未返回时，
+      仍然能够快速给出一个较合理的内容级吸附区域。
+    </p>
+
+
+    <!-- UIA -->
+
+    <h3 id="section-3-3">3.3 UIA：主要的结构化控件来源</h3>
+
+    <p>
+      UIA 是当前项目中首选的结构化控件检测方式，
+      主要代码位于：
+    </p>
+
+    <p class="path">src/smart_region/uia_region_locator.cpp</p>
+
+    <p>整体流程可以概括为：</p>
+
+    <ol>
+      <li>通过 <code>ElementFromPoint</code> 找到鼠标下的 UIA 元素；</li>
+      <li>从命中元素沿父级向上收集有限祖先路径；</li>
+      <li>过滤不属于目标窗口或质量较低的节点；</li>
+      <li>必要时从目标窗口根节点进行范围受限的补充查询；</li>
+      <li>根据 ControlType、Pattern 和语义信息生成候选。</li>
+    </ol>
+
+    <h3 id="section-3-3-parent">为什么 UIA 是沿父级向上收集，而不是继续向下遍历？</h3>
+
+    <p>
+      因为 <code>ElementFromPoint</code> 本身已经完成了
+      “根据屏幕坐标向下找到具体元素”的工作。
+    </p>
+
+    <p>例如：</p>
+
+    <pre>Window
+└── Pane
+    └── Document
+        └── Group
+            └── Button
+                └── Text "确定"</pre>
+
+    <p>
+      如果鼠标位于“确定”文字上，
+      <code>ElementFromPoint</code> 很可能已经直接返回 Text，
+      此时继续向下遍历并没有太大价值。
+    </p>
+
+    <p>真正有价值的是沿父级向上得到：</p>
+
+    <pre>Text
+  ↑
+Button
+  ↑
+Group
+  ↑
+Document
+  ↑
+Pane
+  ↑
+Window</pre>
+
+    <p>
+      这样就可以同时得到从“小控件”到“大内容区域”的不同粒度候选，
+      后续再通过评分选择最合适的区域。
+    </p>
+
+    <div class="important">
+      可以把 UIA 的逻辑概括为：
+      <strong>ElementFromPoint 负责“定位”，Parent Walk 负责“生成候选”。</strong>
+    </div>
+
+    <p>
+      这种做法还有一个重要优势：性能更加稳定。
+    </p>
+
+    <p>
+      父级路径本质上是一条链。当前快速点命中最多取 4 层，
+      需要根窗口范围补充查询时内部路径上限为 12 层，且整次 UIA 查询受约 80ms 预算约束。
+      如果从某个节点开始无条件向下扫描 UIA 子树，
+      浏览器、Electron、WPS 或大型 IDE 的无障碍树可能包含大量节点，
+      很容易造成截图覆盖层卡顿。
+    </p>
+
+    <h3 id="section-3-3-semantic">UIA 候选如何判断语义</h3>
+
+    <p>UIA 会综合以下信息：</p>
+
+    <ul>
+      <li><code>ControlType</code>；</li>
+      <li><code>IsControlElement</code>；</li>
+      <li><code>IsContentElement</code>；</li>
+      <li>控件名称；</li>
+      <li>是否启用；</li>
+      <li>是否可聚焦；</li>
+      <li>是否支持 Invoke、Toggle、SelectionItem、Value 等 Pattern。</li>
+    </ul>
+
+    <p>
+      Button、TabItem、MenuItem、ListItem、TreeItem 等通常归入
+      <code>ActionableControl</code>。
+    </p>
+
+    <p>
+      Document、Image、List、Table 等通常更倾向于
+      <code>ContentSurface</code>。
+    </p>
+
+    <p>
+      禁用控件、没有有效矩形的节点、没有有效语义的容器，
+      以及接近整个窗口的大型泛化容器，会被过滤或降低优先级。
+    </p>
+
+
+    <!-- MSAA -->
+
+    <h3 id="section-3-4">3.4 MSAA：UIA 失败后的兼容性兜底</h3>
+
+    <p>
+      MSAA 主要代码位于：
+    </p>
+
+    <p class="path">src/smart_region/msaa_region_locator.cpp</p>
+
+    <p>
+      MSAA 并不是和 UIA 并行争抢所有候选，
+      而主要在 UIA 没有获得有效局部结构化候选时作为兜底，
+      尤其用于浏览器顶部控件等场景。
+    </p>
+
+    <p>其主要入口逻辑可概括为两条路径。</p>
+
+    <h3 id="section-3-4-direct">第一条：鼠标点直接命中</h3>
+
+    <pre>screen_point
+    ↓
+AccessibleObjectFromPoint
+    ↓
+IAccessible + child
+    ↓
+读取 Role / Name / State / Location
+    ↓
+转换为 SmartRegionCandidate</pre>
+
+    <p>
+      <code>AccessibleObjectFromPoint</code>
+      与 UIA 的 <code>ElementFromPoint</code> 类似，
+      用于寻找当前鼠标位置下对应的 MSAA 无障碍对象。
+    </p>
+
+    <p>
+      MSAA 与 UIA 一个重要区别是，
+      一个 <code>IAccessible</code> 对象可能管理多个 Child，
+      因此实际命中结果通常由：
+    </p>
+
+    <pre>IAccessible*
++
+VARIANT child</pre>
+
+    <p>共同表示。</p>
+
+    <p>
+      <code>makeCandidateFromAccessible</code>
+      则负责将 MSAA 对象进一步转换成智能吸附候选，
+      包括读取角色、名称、状态、矩形，并判断候选是否有效。
+    </p>
+
+    <h3 id="section-3-4-root">第二条：Root Scoped Traversal</h3>
+
+    <p>
+      如果 <code>AccessibleObjectFromPoint</code> 失败，
+      或者命中的对象质量不够好，
+      就会进入 <code>locateRootScopedMsaaCandidate</code>。
+    </p>
+
+    <pre>root_window
+    ↓
+目标窗口 MSAA Root
+    ↓
+在目标窗口范围内有限向下搜索
+    ↓
+寻找真正覆盖当前鼠标位置的局部对象</pre>
+
+    <p>
+      这种查询不是无条件遍历整个 MSAA 树，
+      而是限制：
+    </p>
+
+    <ul>
+      <li>搜索深度；</li>
+      <li>访问节点数量；</li>
+      <li>搜索区域；</li>
+      <li>总耗时。</li>
+    </ul>
+
+    <p>
+      浏览器 MSAA 范围搜索最多深入 10 层、每层最多取 32 个子节点、
+      总计最多枚举 96 个子节点，并设置约 16ms 的时间预算。
+      这些限制的目的不是保证“必然找到”，而是避免为了找一个小控件无限扫描无障碍树。
+    </p>
+
+    <h3 id="section-3-4-browser">为什么浏览器需要特殊处理？</h3>
+
+    <p>
+      浏览器中的 <code>AccessibleObjectFromPoint</code>
+      有时虽然调用成功，却只返回类似：
+    </p>
+
+    <pre>ROLE_SYSTEM_CLIENT
+ROLE_SYSTEM_DOCUMENT
+ROLE_SYSTEM_PANE</pre>
+
+    <p>
+      这样的“大容器”。
+    </p>
+
+    <p>
+      例如鼠标实际上位于一个浏览器按钮上，
+      直接命中结果却可能覆盖整个浏览器顶部区域。
+      因此：
+    </p>
+
+    <pre>msaaShouldDeferDirectBrowserContainerCandidate()</pre>
+
+    <p>
+      会判断当前直接候选是否只是一个过于粗糙的浏览器容器。
+      如果是，则暂不立即采用，而是从浏览器根节点继续寻找更具体的后代节点。
+    </p>
+
+    <p>
+      因此 MSAA 的总体策略可以概括为：
+    </p>
+
+    <div class="important">
+      <strong>
+        Point Hit 优先 + Window Root 范围搜索兜底 +
+        浏览器大容器特殊处理。
+      </strong>
+    </div>
+
+
+    <!-- Visual -->
+
+    <h3 id="section-3-5">3.5 视觉候选：轻量级截图分析</h3>
+
+    <p>
+      视觉定位位于：
+    </p>
+
+    <p class="path">src/smart_region/visual_region_locator.cpp</p>
+
+    <p>
+      当前视觉检测并没有使用 OCR、深度学习模型或复杂的目标检测算法，
+      而是在冻结后的截图中分析有限区域，
+      利用颜色变化、边缘和矩形连续性寻找可能的视觉区域。
+    </p>
+
+    <p>普通视觉区域一般要求：</p>
+
+    <ul>
+      <li>尺寸至少约 <code>48 × 36</code> 像素；</li>
+      <li>边界具有较高连续性；</li>
+      <li>边界覆盖率通常不少于约 60%；</li>
+      <li>默认视觉置信度至少约为 70。</li>
+    </ul>
+
+    <p>紧凑视觉控件则允许更小尺寸：</p>
+
+    <ul>
+      <li>最小约 <code>24 × 20</code>；</li>
+      <li>通常不超过约 <code>320 × 160</code>。</li>
+    </ul>
+
+    <p>
+      VS Code / Cursor 等 Electron 工作台使用了更特殊的分隔线检测策略，
+      在满足特定结构条件时，最低视觉置信度可以适当降低到约 45。
+    </p>
+
+    <div class="note">
+      这里的 <code>48×36</code>、<code>24×20</code>、
+      <code>16×16</code>、<code>12×12</code>
+      均指候选矩形对应的屏幕像素尺寸。
+    </div>
+
+    <p>
+      视觉置信度也不是一个全局固定阈值。
+      <code>selectBestInternal</code> 接收
+      <code>minimum_visual_confidence</code>，
+      因此不同场景可以传入不同最低置信度。
+    </p>
+
+    <p>本质上类似：</p>
+
+    <pre>if (candidate.source == Visual &&
+    candidate.visual_confidence &lt; minimum_visual_confidence) {
+    reject();
+}</pre>
+
+    <p>
+      因此所谓“低置信度视觉候选拒绝”，
+      实际是指低于当前场景要求的
+      <code>minimum_visual_confidence</code>。
+    </p>
+
+
+    <!-- ==================== 3 ==================== -->
+
+    <h2 id="section-4">4. 候选如何过滤、评分和选择</h2>
+
+    <p>
+      核心选择函数位于：
+    </p>
+
+    <p class="path">src/smart_region/smart_region_detector.cpp</p>
+
+    <p>
+      即：
+      <code>selectBestInternal</code>。
+    </p>
+
+    <p>
+      它并不是简单地从所有候选中选择面积最小的一个，
+      而是先进行合法性过滤，再结合来源、语义、大小和候选质量进行评分。
+    </p>
+
+    <h3 id="section-4-1">4.1 基础合法性过滤</h3>
+
+    <p>主要包括：</p>
+
+    <ul>
+      <li>鼠标必须位于候选矩形内部；</li>
+      <li>候选必须位于 Owner 窗口有效区域中；</li>
+      <li>候选矩形不能为空；</li>
+      <li>候选不能明显越出当前目标窗口。</li>
+    </ul>
+
+
+    <h3 id="section-4-2">4.2 尺寸限制</h3>
+
+    <p>
+      普通候选通常至少需要：
+    </p>
+
+    <pre>16 × 16 像素</pre>
+
+    <p>
+      也就是：
+    </p>
+
+    <pre>width  = rect.right  - rect.left
+height = rect.bottom - rect.top
+
+width  ≥ 16
+height ≥ 16</pre>
+
+    <p>
+      这里使用的是屏幕坐标矩形，
+      因此这里的 16 和 12 可以理解为物理屏幕像素尺度。
+    </p>
+
+    <p>
+      对于 UIA 已经明确判断为可操作控件的小型控件，
+      最小尺寸可以适当放宽到：
+    </p>
+
+    <pre>12 × 12</pre>
+
+    <p>
+      这样可以避免关闭按钮、小图标按钮等真正有语义价值的紧凑控件
+      因为尺寸过小而被误过滤。
+    </p>
+
+
+    <h3 id="section-4-3">4.3 什么是“泛化容器”</h3>
+
+    <p>
+      泛化容器指的是：
+      虽然矩形合法、包含鼠标，也属于当前窗口，
+      但范围非常大、语义又比较泛，
+      几乎等价于整个 Client 或整个 Window 的候选。
+    </p>
+
+    <p>例如鼠标位于浏览器“登录”按钮上时，可能同时得到：</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>候选</th>
+          <th>示例尺寸</th>
+          <th>意义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Button</td>
+          <td>90 × 32</td>
+          <td>明确的局部控件</td>
+        </tr>
+        <tr>
+          <td>Group</td>
+          <td>300 × 120</td>
+          <td>局部功能区域</td>
+        </tr>
+        <tr>
+          <td>Document</td>
+          <td>1100 × 700</td>
+          <td>大内容区域</td>
+        </tr>
+        <tr>
+          <td>Client</td>
+          <td>1180 × 760</td>
+          <td>接近整个客户区</td>
+        </tr>
+        <tr>
+          <td>Window</td>
+          <td>1200 × 800</td>
+          <td>整个窗口</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      后两个虽然技术上是有效矩形，
+      但如果存在 Button、Group 等更精确候选，
+      就不应该默认选择它们。
+    </p>
+
+    <p>
+      因此“泛化容器”通常具有：
+    </p>
+
+    <ul>
+      <li>面积接近 Owner 窗口；</li>
+      <li>矩形边界接近 Client / Window；</li>
+      <li>语义较弱；</li>
+      <li>缺少明确的交互或内容结构信息。</li>
+    </ul>
+
+    <p>
+      并不是“大区域一定被拒绝”。
+      如果一个较大的区域确实具有明确内容语义，
+      例如编辑器正文、文件列表、网页正文等，
+      仍然可能作为有效 <code>ContentSurface</code> 保留。
+    </p>
+
+
+    <h3 id="section-4-4">4.4 可操作控件优先</h3>
+
+    <p>在候选语义上，一般体现出：</p>
+
+    <pre>ActionableControl
+    >
+ContentSurface
+    >
+普通回退区域</pre>
+
+    <p>
+      原因是可操作控件通常具有更加明确的边界和用户意图。
+    </p>
+
+    <p>
+      例如鼠标停在“保存”按钮上时，
+      UIA 已明确告诉程序：
+    </p>
+
+    <pre>ControlType = Button
+InvokePattern = true
+Enabled = true</pre>
+
+    <p>
+      这种信息通常比视觉算法仅根据颜色和边缘判断出的矩形更加可靠。
+    </p>
+
+
+    <h3 id="section-4-5">4.5 “视觉和 Client / Window 不会抢走 UIA/MSAA”是什么意思？</h3>
+
+    <p>
+      这里并不是说：
+    </p>
+
+    <pre>UIA 找到了候选
+→ 视觉候选全部删除</pre>
+
+    <p>
+      而是说：
+      如果已经存在有效的 UIA / MSAA
+      <code>ActionableControl</code>，
+      Visual、Client 和 Window 不应该因为某些单项评分更高，
+      反过来成为默认第一候选。
+    </p>
+
+    <p>例如：</p>
+
+    <pre>UIA Button
+    visual-like score = 90
+
+Visual Region
+    confidence = 96
+
+Client
+    large fallback</pre>
+
+    <p>
+      如果只比较一个简单分值，
+      Visual 可能因为置信度为 96 而超过 UIA Button。
+    </p>
+
+    <p>
+      但结构化 Accessibility 数据已经明确告诉程序：
+      当前鼠标下存在一个真正的 Button。
+    </p>
+
+    <p>因此需要额外的候选保护规则：</p>
+
+    <pre>如果存在：
+UIA/MSAA + ActionableControl + Valid
+
+则：
+Visual / Client / Window
+不能仅凭普通评分覆盖它</pre>
+
+    <div class="important">
+      所谓“不会抢走”，准确来说是：
+      <strong>
+        不允许低语义级别的候选覆盖已经存在的高质量结构化可操作候选。
+      </strong>
+    </div>
+
+    <p>
+      但是视觉候选并不会因此从候选列表中彻底删除，
+      它仍然可以保留给后续的滚轮、Tab、Shift+Tab 等候选切换逻辑。
+    </p>
+
+
+    <h3 id="section-4-6">4.6 Client / Window 是真正的兜底</h3>
+
+    <p>
+      Client 和 Window 候选的目标并不是和 UIA Button 竞争。
+    </p>
+
+    <p>
+      它们的意义在于：
+    </p>
+
+    <pre>UIA 失败
+    ↓
+MSAA 失败
+    ↓
+KnownContent 没有合适区域
+    ↓
+Visual 也没有可靠矩形
+    ↓
+至少还能吸附 Client 或 Window</pre>
+
+    <p>
+      这样即使所有精细识别方式都失效，
+      截图功能仍然能够保持基本可用。
+    </p>
+
+
+    <h3 id="section-4-7">4.7 相近候选去重</h3>
+
+    <p>
+      UIA、MSAA 和 Visual 很可能对同一个真实控件生成多个非常相近的矩形。
+    </p>
+
+    <p>例如：</p>
+
+    <pre>UIA Button : 100,100 - 200,136
+MSAA Button: 101,100 - 199,136
+Visual Box :  99, 99 - 201,137</pre>
+
+    <p>
+      如果全部作为独立候选展示，
+      用户滚轮切换时就会连续看到几个几乎没有区别的框。
+    </p>
+
+    <p>
+      因此系统会对相近矩形进行去重，
+      同时仍然保留足够的候选层级，
+      供滚轮、Tab 和 Shift+Tab 切换不同粒度的吸附区域。
+    </p>
+
+    <p>当前代码的选择规则更准确地说分为两步：</p>
+
+    <ol>
+      <li>
+        如果存在合法的 UIA / MSAA <code>ActionableControl</code>，
+        默认选择只在这些明确可操作候选之间进行，避免视觉或大区域抢走按钮、标签页等控件。
+      </li>
+      <li>
+        其他情况下再综合来源、语义、鼠标位置、面积、UIA 质量、视觉置信度和父子层级评分；
+        同分时优先选择面积更小的区域。
+      </li>
+    </ol>
+
+    <div class="note">
+      因此不能把实际代码描述成一条永远不变的优先级链。
+      例如高置信度视觉内容区可能超过普通 KnownContent，
+      但它不能覆盖已经确认的 UIA / MSAA 可操作控件。
+    </div>
+
+
+    <!-- ==================== 4 ==================== -->
+
+    <h2 id="section-5">5. 悬停响应、缓存和稳定性</h2>
+
+    <p>覆盖层相关逻辑主要位于：</p>
+    <p class="path">src/overlay/selection_overlay.cpp</p>
+
+    <p>这一部分解决的是“什么时候显示哪个框”，重点包括：</p>
+
+    <ul>
+      <li>候选出现得够不够快；</li>
+      <li>鼠标移动时是否卡顿；</li>
+      <li>后台发现和无障碍查询是否会展示过期结果；</li>
+      <li>候选在重叠区域之间是否频繁闪烁。</li>
+    </ul>
+
+    <h3 id="section-5-1">5.1 快速路径先显示</h3>
+
+    <p>
+      第一次鼠标移动不会等待 KnownContent、视觉、UIA 或 MSAA 查询完成。
+    </p>
+
+    <p>UI 线程优先利用：</p>
+
+    <ul>
+      <li>WindowDetector；</li>
+      <li>上一次已经发现、而且仍覆盖当前鼠标的候选；</li>
+      <li>Chromium 浏览器外壳 Atlas 的只读命中结果；</li>
+      <li>Client / Window 回退。</li>
+    </ul>
+
+    <p>
+      立即给用户显示一个初步吸附框。
+    </p>
+
+    <p>
+      随后，发现通道补充 KnownContent 和 Visual，
+      无障碍通道补充 UIA / MSAA；如果返回的是更合适且仍有效的候选，
+      再更新当前高亮区域。
+    </p>
+
+
+    <h3 id="section-5-2">5.2 鼠标事件合并</h3>
+
+    <p>
+      鼠标移动大约按照 16ms 的粒度进行合并。
+    </p>
+
+    <p>
+      这样可以避免系统每收到一次极高频率的
+      <code>WM_MOUSEMOVE</code>
+      都重新执行完整识别。
+    </p>
+
+    <p>
+      16ms 大致对应 60Hz 更新周期，
+      在保持视觉响应足够流畅的同时，
+      可以显著降低无障碍和视觉检测压力。
+    </p>
+
+
+    <h3 id="section-5-3">5.3 三类后台查询</h3>
+
+    <p>
+      当前覆盖层会提交三个相互独立的后台通道：
+    </p>
+
+    <ul>
+      <li><strong>Discovery：</strong>识别 KnownContent，并在冻结截图中寻找 Visual 候选；</li>
+      <li><strong>Accessibility：</strong>先查 UIA；没有有效局部 UIA 候选时再尝试 MSAA；</li>
+      <li><strong>Refinement：</strong>仅用于 Chromium 浏览器，鼠标停留约 120ms 且仍缺少可信局部结果时执行更深查询。</li>
+    </ul>
+
+    <p>
+      后台完成时会主动通知覆盖层；覆盖层同时保留约 8ms 的结果轮询定时器作为处理节奏。
+      这不等于每 8ms 重新执行一次 UIA 查询。
+    </p>
+
+    <p>
+      三个通道都遵循 <strong>latest-wins</strong>：
+      只有仍适用于当前窗口、当前截图会话和当前鼠标位置的结果才有资格更新 UI。
+    </p>
+
+    <p>以下结果会被直接丢弃：</p>
+
+    <ul>
+      <li>结果超过请求期限或可复用年龄；</li>
+      <li>鼠标已经移动到另一个窗口或另一次截图会话；</li>
+      <li>进程、Root Window 或窗口矩形已经变化；</li>
+      <li>候选矩形已经不再覆盖当前鼠标位置。</li>
+    </ul>
+
+    <p>
+      这可以避免出现：
+    </p>
+
+    <pre>鼠标已经移动到 B 按钮
+↓
+后台线程才返回之前 A 按钮的 UIA 结果
+↓
+吸附框突然跳回 A</pre>
+
+
+    <h3 id="section-5-4">5.4 结果缓存与浏览器 Atlas</h3>
+
+    <p>
+      UIA / MSAA 结果可以在有限时间内复用：鼠标移动不超过约 4 像素，
+      缓存生成不超过约 80ms，并且结果仍能命中当前局部区域时，才允许复用。
+    </p>
+
+    <p>
+      视觉候选缓存则结合：
+    </p>
+
+    <ul>
+      <li>目标窗口；</li>
+      <li>冻结截图背景身份；</li>
+      <li>Owner 矩形；</li>
+      <li>鼠标所在网格区域。</li>
+    </ul>
+
+    <p>
+      来判断是否能够复用之前的视觉检测结果。
+    </p>
+
+    <p>
+      Chromium 浏览器还会把可信的外壳控件整理成只读 Atlas。
+      UI 线程只做快速命中测试，不在鼠标移动的热路径里重新遍历整棵无障碍树。
+    </p>
+
+
+    <h3 id="section-5-5">5.5 候选稳定机制</h3>
+
+    <p>
+      在多个候选区域重叠时，
+      程序不会因为鼠标移动 1～2 个像素就立即改变吸附对象。
+    </p>
+
+    <p>
+      普通候选切换使用 48ms 稳定延迟；Chromium 浏览器外壳有单独的展示状态机，
+      相邻候选通常只短暂等待 8ms，并会拒绝窗口代次、布局代次或鼠标序列已经过期的结果。
+    </p>
+
+    <p>其目的主要是避免：</p>
+
+    <pre>Button
+↓
+Group
+↓
+Button
+↓
+Pane
+↓
+Button</pre>
+
+    <p>
+      在鼠标轻微抖动时不断来回切换，
+      从而造成吸附框闪烁。
+    </p>
+
+
+    <h3 id="section-5-6">5.6 用户手动拖拽优先</h3>
+
+    <p>
+      一旦用户真正开始拖拽截图区域，
+      系统会认为用户已经表达了明确的手动框选意图。
+    </p>
+
+    <p>此时优先级变为：</p>
+
+    <pre>手动拖拽
+    >
+智能吸附</pre>
+
+    <p>
+      如果用户只是单击而没有形成明显拖拽，
+      则优先采用当前最新、最可靠的局部智能吸附候选。
+    </p>
+
+
+    <!-- ==================== 5 ==================== -->
+
+    <h2 id="section-6">6. 浏览器和 VS Code / Cursor 的特殊处理</h2>
+
+    <p>
+      浏览器和 Electron IDE 是智能吸附中两个比较特殊的场景，
+      因为它们的窗口结构、渲染方式和无障碍树都比传统 Win32 应用复杂。
+    </p>
+
+
+    <h3 id="section-6-1">6.1 Chrome / Edge / Brave</h3>
+
+    <p>
+      当前专门识别 <code>chrome.exe</code>、<code>msedge.exe</code> 和
+      <code>brave.exe</code>，并结合 <code>Chrome_WidgetWin_1</code>
+      窗口类判断 Chromium 浏览器窗口。
+    </p>
+
+    <p>代码希望得到的候选包括：</p>
+
+    <ul>
+      <li>网页渲染区；</li>
+      <li>标签页、地址栏、书签和书签文件夹；</li>
+      <li>前进 / 后退 / 刷新按钮；</li>
+      <li>工具栏图标和扩展按钮；</li>
+      <li>扩展弹窗；</li>
+      <li>临时菜单和其他浏览器外壳区域。</li>
+    </ul>
+
+    <p>
+      网页正文区域更适合使用 KnownContent、
+      UIA 内容区域或者视觉候选。
+    </p>
+
+    <p>
+      浏览器顶部工具栏则更依赖 UIA / MSAA，
+      因为用户通常希望能够吸附单独的标签页、
+      地址栏、刷新按钮、扩展按钮等具体控件。
+    </p>
+
+    <p>
+      MSAA 主要识别的角色包括：
+    </p>
+
+    <ul>
+      <li>TabItem；</li>
+      <li>普通 PushButton；</li>
+      <li>关闭标签按钮；</li>
+      <li>新建标签按钮；</li>
+      <li>地址栏；</li>
+      <li>书签；</li>
+      <li>菜单按钮；</li>
+      <li><code>ROLE_SYSTEM_BUTTONMENU</code> 等。</li>
+    </ul>
+
+    <p>
+      如果 UIA / MSAA 无法可靠确认某个具体按钮，
+      系统不会无限制向下扫描整个无障碍树，
+      而会回退到较稳定的浏览器外壳区域。
+    </p>
+
+    <p>
+      为了兼顾速度和准确性，浏览器第一次只做较浅的点命中查询；
+      后台会把已确认的外壳控件保存为 Atlas，之后鼠标移动可以直接命中。
+      如果鼠标在同一小区域停留约 120ms，仍没有可信局部候选，
+      才允许提交范围更深、期限约 300ms 的细化查询。
+    </p>
+
+    <div class="note">
+      <strong>实际边界：</strong>
+      这套策略提高了常见 Chromium 控件的命中率，但不能承诺所有浏览器版本、主题、扩展和临时弹窗
+      都能识别成单独控件；失败时仍会回退到浏览器内容区、客户区或窗口。
+    </div>
+
+
+    <h3 id="section-6-2">6.2 VS Code / Cursor</h3>
+
+    <p>
+      VS Code、VS Code Insiders、Cursor 和 VSCodium 属于当前代码识别的 Electron 工作台，
+      大量界面并不是传统 Win32 子窗口，
+      某些区域的 UIA 结构也可能比较粗。
+    </p>
+
+    <p>
+      因此代码除了使用 UIA，
+      还会结合冻结截图中的：
+    </p>
+
+    <ul>
+      <li>水平分隔线；</li>
+      <li>垂直分隔线；</li>
+      <li>面板边界；</li>
+      <li>编辑器区域；</li>
+      <li>侧边栏；</li>
+      <li>终端面板；</li>
+      <li>其他工作台布局特征。</li>
+    </ul>
+
+    <p>
+      通过这些结构信息，
+      可以避免将整个 VS Code Client
+      始终作为唯一候选。
+    </p>
+
+    <p>例如：</p>
+
+    <pre>VS Code Window
+├── Activity Bar
+├── Side Bar
+├── Editor
+└── Bottom Panel
+    ├── Terminal
+    ├── Output
+    └── Problems</pre>
+
+    <p>
+      当鼠标位于终端区域时，
+      视觉结构检测可以结合明显的面板分隔线，
+      将 Bottom Panel 或 Terminal
+      作为更合理的区域候选。
+    </p>
+
+    <p>
+      对 Electron 工作台，
+      视觉策略允许比普通窗口更加灵活的置信度门限，
+      但同时要求分隔线和整体结构具有足够一致性，
+      防止代码文本、图标或普通文字边缘被误识别为截图矩形。
+    </p>
+
+
+
+    <h2 id="section-defense-summary">结项答辩建议讲法</h2>
+
+    <div class="defense">
+      <strong>推荐 40～60 秒版本：</strong><br />
+      智能吸附最关键的两个技术难点，一是不同应用没有统一的控件接口，
+      所以我们没有依赖单一算法，而是建立 UIA、MSAA、KnownContent、Visual 和 Client/Window
+      组成的分层候选链路，再通过统一语义和边界评分选择最可靠的局部区域；
+      二是这些识别任务速度不同，所以 UI 线程只负责快速窗口定位、复用已有几何和显示兜底框，
+      KnownContent/Visual、UIA/MSAA 以及浏览器深度细化分别放到后台通道。
+      后台结果必须通过请求、会话、窗口和鼠标位置校验，再结合缓存与稳定展示策略更新高亮，
+      从而避免界面卡顿、旧结果回跳和候选闪烁。
+    </div>
+
+    <table class="defense-table">
+      <thead>
+        <tr><th>答辩问题</th><th>建议回答重点</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>最大的技术难点是什么？</td><td>一是多应用异构界面的识别正确性，二是异步 UIA 带来的交互稳定性。</td></tr>
+        <tr><td>为什么不用纯视觉？</td><td>纯视觉容易把文字和纹理当成控件；有结构化语义时 UIA/MSAA 更可靠，视觉只做补充。</td></tr>
+        <tr><td>为什么不用纯 UIA？</td><td>不同应用的无障碍树质量差异很大，浏览器、自绘控件和 Electron 场景需要 MSAA、KnownContent 或视觉兜底。</td></tr>
+        <tr><td>怎么保证慢查询不卡？</td><td>UI 线程先显示 Client/Window 或缓存候选；发现、无障碍和浏览器细化分别后台执行，旧结果还要经过 latest-wins 与上下文校验。</td></tr>
+        <tr><td>代码是否保证所有控件都能识别？</td><td>不能。当前策略覆盖常见 Win32、Chromium 和 Electron 场景；无障碍树缺失、自绘界面或版本变化时，会安全回退到较大区域。</td></tr>
+        <tr><td>怎么证明效果？</td><td>用 Chrome/Edge/Brave、VS Code/Cursor、记事本、资源管理器及失败回退场景做真实应用回归；性能结论应以实际测得的 P50/P95 为准。</td></tr>
+      </tbody>
+    </table>
+
+
+    <!-- ==================== 总结 ==================== -->
+
+    <h2 id="summary">整体工作机制总结</h2>
+
+    <p>
+      QingYing 当前的智能吸附本质上是一套
+      <strong>多来源候选融合系统</strong>。
+    </p>
+
+    <pre>Mouse Point
+    │
+    ▼
+UI 线程：WindowDetector + 已有候选/Atlas + Client/Window
+    │                                  │
+    │                                  ├─ Discovery：KnownContent + Visual
+    │                                  ├─ Accessibility：UIA → 条件式 MSAA
+    │                                  └─ Refinement：Chromium 停留后深度细化
+    │                                                │
+    └────────────── 立即高亮              上下文与时效校验
+                                                     │
+                                      合并候选 + 过滤 + 去重 + 评分
+                                                     │
+                                           稳定策略更新 Overlay</pre>
+
+    <p>
+      其中各模块的职责可以简化为：
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>模块</th>
+          <th>主要职责</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>WindowDetector</td>
+          <td>快速判断鼠标下真正的目标窗口，并提供 Client / Window 兜底</td>
+        </tr>
+        <tr>
+          <td>Discovery Worker</td>
+          <td>在后台运行 KnownContent 和 Visual，避免 UI 线程承担图像与场景识别</td>
+        </tr>
+        <tr>
+          <td>KnownContent</td>
+          <td>识别浏览器、资源管理器等已知应用的固定内容区域</td>
+        </tr>
+        <tr>
+          <td>Accessibility Worker</td>
+          <td>在后台运行 UIA；局部 UIA 不足时再尝试 MSAA</td>
+        </tr>
+        <tr>
+          <td>Refinement Worker</td>
+          <td>为 Chromium 浏览器提供停留后的深度细化，不参与每一次鼠标移动</td>
+        </tr>
+        <tr>
+          <td>Visual</td>
+          <td>根据冻结截图中的边缘、颜色和分隔结构发现视觉区域</td>
+        </tr>
+        <tr>
+          <td>Client / Window</td>
+          <td>所有精细识别失败时保证截图仍然可用</td>
+        </tr>
+        <tr>
+          <td>selectBestInternal</td>
+          <td>过滤、评分、去重，并确定默认最佳吸附候选</td>
+        </tr>
+        <tr>
+          <td>SelectionOverlay</td>
+          <td>负责快速初始高亮、后台任务提交、结果校验、候选合并和最终显示</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary">
+      <strong>核心设计思想：</strong><br />
+      UI 快速路径保证“马上有框”，后台发现和无障碍通道负责“逐步变准”，
+      浏览器细化只在确实需要时增加查询深度，
+      Client / Window 保证“永远有兜底”，
+      最后通过严格的时效校验、统一候选评分和稳定展示策略，
+      在准确度、响应速度和交互稳定性之间取平衡。
+    </div>
+
+    <div class="footer">
+      QingYing · Smart Region Detection 技术分析
+    </div>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const links = Array.from(document.querySelectorAll('.sidebar a[href^="#"]'));
+      const sections = links
+        .map(link => document.querySelector(link.getAttribute('href')))
+        .filter(Boolean);
+
+      const setActive = () => {
+        const y = window.scrollY + 80;
+        let current = sections[0];
+
+        for (const section of sections) {
+          if (section.offsetTop <= y) {
+            current = section;
+          } else {
+            break;
+          }
+        }
+
+        links.forEach(link => link.classList.remove('active'));
+
+        if (current) {
+          const active = document.querySelector(
+            `.sidebar a[href="#${current.id}"]`
+          );
+          if (active) {
+            active.classList.add('active');
+          }
+        }
+      };
+
+      window.addEventListener('scroll', setActive, { passive: true });
+      window.addEventListener('resize', setActive);
+      setActive();
+    })();
+  </script>
+
+</body>
+</html>

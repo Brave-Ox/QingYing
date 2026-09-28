@@ -1,0 +1,1698 @@
+<title>轻映架构通读</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&amp;family=Noto+Serif+SC:wght@600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<style>
+  /* ── 色板：取自产品自身的视觉语汇（选区蓝 / 遮罩暗 / 纸面） ───────── */
+  :root {
+    --paper:      #F2F3F4;
+    --surface:    #FFFFFF;
+    --surface-2:  #E7EBEE;
+    --ink:        #0D141B;
+    --ink-2:      #45535F;
+    --ink-3:      #6C7B87;
+    --line:       #D2D9DE;
+    --line-soft:  #E3E8EC;
+    --accent:     #0E6FD9;
+    --accent-ink: #0B57A8;
+    --accent-bg:  #E2EDFA;
+    --hi:         #B3251E;
+    --hi-bg:      #FBE7E5;
+    --mid:        #9A5A08;
+    --mid-bg:     #FBF0DC;
+    --ok:         #1B6B45;
+    --ok-bg:      #E1F0E8;
+    --code-bg:    #0D141B;
+    --code-ink:   #D6E1EA;
+    --code-dim:   #7E93A3;
+    --shadow:     0 1px 2px rgba(13, 20, 27, .05), 0 8px 24px -16px rgba(13, 20, 27, .28);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0F161C;
+      --surface:    #16202A;
+      --surface-2:  #1D2934;
+      --ink:        #E5EDF3;
+      --ink-2:      #A9BAC7;
+      --ink-3:      #7E93A3;
+      --line:       #2A3946;
+      --line-soft:  #212E39;
+      --accent:     #5AA6F0;
+      --accent-ink: #8CC2F7;
+      --accent-bg:  #17293C;
+      --hi:         #F08A82;
+      --hi-bg:      #35201E;
+      --mid:        #E0AE62;
+      --mid-bg:     #33270F;
+      --ok:         #6FC79B;
+      --ok-bg:      #122C20;
+      --code-bg:    #0A1117;
+      --code-ink:   #D6E1EA;
+      --code-dim:   #6E8391;
+      --shadow:     0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0F161C;
+    --surface:    #16202A;
+    --surface-2:  #1D2934;
+    --ink:        #E5EDF3;
+    --ink-2:      #A9BAC7;
+    --ink-3:      #7E93A3;
+    --line:       #2A3946;
+    --line-soft:  #212E39;
+    --accent:     #5AA6F0;
+    --accent-ink: #8CC2F7;
+    --accent-bg:  #17293C;
+    --hi:         #F08A82;
+    --hi-bg:      #35201E;
+    --mid:        #E0AE62;
+    --mid-bg:     #33270F;
+    --ok:         #6FC79B;
+    --ok-bg:      #122C20;
+    --code-bg:    #0A1117;
+    --code-ink:   #D6E1EA;
+    --code-dim:   #6E8391;
+    --shadow:     0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Noto Sans SC", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 15.5px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1200px;
+    margin-inline: auto;
+    padding-inline: 24px;
+    padding-block: 0 96px;
+  }
+
+  /* ── 报头 ───────────────────────────────────────────────────────── */
+  .masthead { padding-block: 64px 40px; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: "Noto Serif SC", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.22;
+    letter-spacing: -.01em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 17px;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0 0 8px;
+  }
+
+  .readouts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 32px;
+    padding-top: 28px;
+    border-top: 1px solid var(--line);
+  }
+
+  .readout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 9px 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .readout b {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .readout span { font-size: 12.5px; color: var(--ink-3); }
+
+  /* ── 骨架：左侧目录 + 正文 ──────────────────────────────────────── */
+  .layout {
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  .toc { position: sticky; top: 28px; padding-block: 8px; }
+
+  .toc h2 {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin: 0 0 12px;
+  }
+
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+
+  .toc a {
+    display: block;
+    font-size: 13px;
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 9px;
+    border-left: 2px solid transparent;
+    border-radius: 0 2px 2px 0;
+    line-height: 1.5;
+  }
+
+  .toc a:hover, .toc a:focus-visible {
+    color: var(--accent);
+    background: var(--accent-bg);
+    border-left-color: var(--accent);
+    outline: none;
+  }
+
+  /* ── 区块 ───────────────────────────────────────────────────────── */
+  section { margin-bottom: 72px; scroll-margin-top: 24px; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sec-num {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border-radius: 2px;
+    padding: 3px 8px;
+    flex: none;
+    position: relative;
+    top: -2px;
+  }
+
+  h2.sec-title {
+    font-family: "Noto Serif SC", Georgia, serif;
+    font-weight: 600;
+    font-size: 25px;
+    line-height: 1.35;
+    margin: 0;
+    letter-spacing: -.005em;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: "Noto Serif SC", Georgia, serif;
+    font-weight: 600;
+    font-size: 18px;
+    margin: 40px 0 14px;
+    line-height: 1.4;
+  }
+
+  h4 {
+    font-size: 14px;
+    font-weight: 700;
+    margin: 26px 0 10px;
+    color: var(--ink);
+  }
+
+  p { margin: 0 0 15px; max-width: 68ch; }
+  p.wide { max-width: none; }
+
+  strong { font-weight: 700; color: var(--ink); }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: .875em;
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 1.5px 5px;
+    word-break: break-word;
+  }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 4px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.8px;
+    line-height: 1.72;
+    margin: 0 0 18px;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+
+  .cmt { color: var(--code-dim); }
+
+  ul, ol { margin: 0 0 15px; padding-left: 22px; max-width: 68ch; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--ink-3); }
+
+  /* ── 表格 ───────────────────────────────────────────────────────── */
+  .tw { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+
+  th {
+    text-align: left;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+    color: var(--ink-2);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  td:first-child { color: var(--ink); }
+  td.mono, th.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+  /* ── 徽标 ───────────────────────────────────────────────────────── */
+  .pill {
+    display: inline-block;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 2px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  .pill.hi  { color: var(--hi);  background: var(--hi-bg); }
+  .pill.mid { color: var(--mid); background: var(--mid-bg); }
+  .pill.ok  { color: var(--ok);  background: var(--ok-bg); }
+  .pill.no  { color: var(--ink-3); background: var(--surface-2); }
+
+  /* ── 分层图 ─────────────────────────────────────────────────────── */
+  .stack { display: flex; flex-direction: column; gap: 0; margin: 0 0 22px; }
+
+  .layer {
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 15px 18px;
+  }
+
+  .layer-tag {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 5px;
+  }
+
+  .layer-name { font-size: 15px; font-weight: 700; margin-bottom: 7px; }
+
+  .layer ul { margin: 0; padding-left: 18px; max-width: none; }
+  .layer li { font-size: 13.5px; color: var(--ink-2); margin-bottom: 3px; line-height: 1.6; }
+
+  .connector {
+    align-self: center;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    padding: 5px 0;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  .branch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .mods {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .mod { background: var(--surface); padding: 12px 14px; }
+  .mod b { display: block; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; color: var(--accent); margin-bottom: 3px; }
+  .mod span { font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
+
+  /* ── 流程步骤 ───────────────────────────────────────────────────── */
+  .flow { margin: 0 0 22px; display: flex; flex-direction: column; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 14px;
+    position: relative;
+    padding-bottom: 16px;
+  }
+
+  .step:last-child { padding-bottom: 0; }
+
+  .step::before {
+    content: "";
+    position: absolute;
+    left: 12.5px;
+    top: 22px;
+    bottom: 0;
+    width: 1px;
+    background: var(--line);
+  }
+
+  .step:last-child::before { display: none; }
+
+  .dot {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-3);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    position: relative;
+    z-index: 1;
+  }
+
+  .step.hot .dot { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+
+  .step-body { padding-top: 2px; min-width: 0; }
+  .step-body b { font-size: 14.5px; display: block; margin-bottom: 4px; }
+  .step-body p { font-size: 13.5px; color: var(--ink-2); margin: 0 0 8px; }
+  .step-body ul { margin: 6px 0 0; }
+  .step-body li { font-size: 13px; color: var(--ink-2); }
+
+  .step-body pre { font-size: 12.2px; margin: 10px 0 0; }
+  .step-body .hint {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    border-left: 2px solid var(--line);
+    padding-left: 10px;
+    margin: 10px 0 0;
+  }
+
+  /* ── 标注块 ─────────────────────────────────────────────────────── */
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-bg);
+    border-radius: 0 4px 4px 0;
+    padding: 14px 18px;
+    margin: 0 0 20px;
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+
+  .note b { color: var(--ink); }
+  .note.warn { border-left-color: var(--mid); background: var(--mid-bg); }
+  .note.risk { border-left-color: var(--hi); background: var(--hi-bg); }
+  .note p:last-child { margin-bottom: 0; }
+
+  /* ── 契约卡 ─────────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin: 0 0 22px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 17px 18px;
+    box-shadow: var(--shadow);
+  }
+
+  .card h4 { margin: 0 0 4px; font-size: 14.5px; }
+
+  .card .sig {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    color: var(--accent);
+    margin-bottom: 10px;
+    word-break: break-word;
+  }
+
+  .card p { font-size: 13.5px; color: var(--ink-2); margin: 0 0 9px; }
+  .card ul { margin: 0; padding-left: 17px; }
+  .card li { font-size: 13px; color: var(--ink-2); margin-bottom: 4px; line-height: 1.6; }
+
+  /* ── 依赖宪法 ───────────────────────────────────────────────────── */
+  .rules { counter-reset: rule; list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-direction: column; gap: 9px; }
+
+  .rules li {
+    counter-increment: rule;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 13px 16px 13px 52px;
+    position: relative;
+    font-size: 14px;
+    color: var(--ink-2);
+    margin: 0;
+  }
+
+  .rules li::before {
+    content: counter(rule);
+    position: absolute;
+    left: 16px;
+    top: 13px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .rules li b { color: var(--ink); }
+
+  /* ── 关闭阶段 ───────────────────────────────────────────────────── */
+  .phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 0 0 20px; }
+
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 0 0 4px 4px;
+    padding: 14px 16px;
+  }
+
+  .phase .n {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    letter-spacing: .08em;
+    margin-bottom: 6px;
+  }
+
+  .phase b { display: block; font-size: 14px; margin-bottom: 8px; }
+  .phase ul { margin: 0; padding-left: 16px; }
+  .phase li { font-size: 12.5px; color: var(--ink-2); margin-bottom: 3px; line-height: 1.55; }
+
+  /* ── 结尾 ───────────────────────────────────────────────────────── */
+  .verdict {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 4px;
+    padding: 26px 28px;
+    margin: 0 0 22px;
+  }
+
+  .verdict p { color: var(--code-ink); font-size: 15px; max-width: none; margin: 0 0 14px; }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict b { color: #fff; font-weight: 700; }
+  .verdict .hl { color: #7FB8F0; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+
+  footer p { max-width: none; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .toc { position: static; margin-bottom: 44px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+    .toc ol { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+    .toc a { border-left: none; border: 1px solid var(--line); border-radius: 3px; }
+    .toc a:hover, .toc a:focus-visible { border-color: var(--accent); }
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding-inline: 18px; }
+    .masthead { padding-block: 44px 30px; }
+    .branch { grid-template-columns: minmax(0, 1fr); }
+    section { margin-bottom: 56px; }
+    .sec-head { flex-wrap: wrap; gap: 10px; }
+  }
+</style>
+<div class="wrap">
+<header class="masthead">
+<p class="eyebrow">轻映 QingYing · 架构通读</p>
+<h1>从外到内、从静到动的一次项目通读</h1>
+<p class="standfirst">一个 Windows 原生轻量截图工具，用 C++17 + 纯 Win32 写成。这份通读按「先看它是什么 → 再看它编译成什么 → 再看它怎么分层 → 最后看它怎么跑起来」的顺序展开，重点帮助快速建立项目整体架构与核心链路的心智模型。</p>
+<div class="readouts">
+<div class="readout"><b>1</b><span>个 EXE</span></div>
+<div class="readout"><b>17+1</b><span>STATIC / INTERFACE</span></div>
+<div class="readout"><b>3</b><span>长截图插件 DLL</span></div>
+<div class="readout"><b>9</b><span>MCP 工具</span></div>
+
+<div class="readout"><b>5000ms</b><span>关闭预算</span></div>
+</div>
+</header>
+<div class="layout">
+<nav aria-label="目录" class="toc">
+<h2>目录</h2>
+<ol>
+<li><a href="#s1">这个项目是什么</a></li>
+<li><a href="#s2">物理形态</a></li>
+<li><a href="#s3">整体分层架构</a></li>
+<li><a href="#s4">目录 / 模块对照</a></li>
+<li><a href="#s5">依赖方向：宪法</a></li>
+<li><a href="#s6">三条核心链路</a></li>
+<li><a href="#s7">横切抽象</a></li>
+<li><a href="#smart-region">智能吸附：答辩重点</a></li>
+<li><a href="#s8">线程与关闭协议</a></li>
+<li><a href="#quality">质量基线与当前边界</a></li>
+<li><a href="#s9">建议阅读顺序</a></li>
+<li><a href="#s10">一句话总结</a></li>
+</ol>
+</nav>
+<main>
+<!-- ══ 1 ══════════════════════════════════════════════════════ -->
+<section id="s1">
+<div class="sec-head">
+<span class="sec-num">01</span>
+<h2 class="sec-title">这个项目到底是什么</h2>
+</div>
+<p>
+<strong>轻映 QingYing</strong> 是一个 <strong>Windows 原生轻量截图工具</strong>，
+          用 <strong>C++17 + 纯 Win32</strong> 写，<strong>不用 Qt / Electron</strong>。
+        </p>
+<p>它有两副面孔：</p>
+<ol>
+<li><strong>给人用</strong>：全局热键 → 全屏遮罩 → 框选 / 窗口吸附 → 标注 → 复制 / 保存 / 钉图 → 长截图</li>
+<li><strong>给 Agent 用</strong>：通过<strong>本地口令（F8，未做）</strong>和 <strong>MCP（F9，已接线）</strong>，把同一套截图能力暴露出去</li>
+</ol>
+<h4>核心指标</h4>
+<div class="tw">
+<table>
+<thead>
+<tr><th>指标</th><th class="mono">目标</th></tr>
+</thead>
+<tbody>
+<tr><td>绿色交付包体积</td><td class="mono">≤ 20 MB</td></tr>
+<tr><td>常驻内存</td><td class="mono">≤ 40 MB</td></tr>
+<tr><td>热键到遮罩首帧</td><td class="mono">≤ 300 ms</td></tr>
+<tr><td>主路径耗时</td><td class="mono">约 15 秒</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note">
+<p><b>理解这个项目时最重要的定位：</b>轻映不是要做一个“什么都能自动化”的桌面平台，而是先把截图这件事做成一套边界清晰的本地能力。GUI、长截图和 MCP 只是不同入口，真正的截图、结果管理和导出能力应该复用同一套实现。这样做的价值是：功能可以扩展，但 GDI、窗口句柄、UI 线程状态这些平台细节不会被外部入口随意穿透。</p>
+</div>
+
+</section>
+<!-- ══ 2 ══════════════════════════════════════════════════════ -->
+<section id="s2">
+<div class="sec-head">
+<span class="sec-num">02</span>
+<h2 class="sec-title">物理形态：构建出来是什么东西</h2>
+</div>
+<p>这是理解整个架构的第一个关键点。CMake 构建产物<strong>不是一个 EXE 而已</strong>：</p>
+<pre><code>qingying.exe                          <span class="cmt">← 唯一的 EXE（WIN32 子系统，无控制台）</span>
+  + 17 个 static lib                  <span class="cmt">← 编译期融进 EXE，不是独立文件</span>
+  + 1 个 INTERFACE target             <span class="cmt">← qingying_automation_contract，纯头文件契约</span>
+  + 3 个 longshot 插件 DLL            <span class="cmt">← 部署到 plugins/longshot/</span>
+        qingying_notepad_longshot_plugin.dll
+        qingying_explorer_longshot_plugin.dll
+        qingying_browser_longshot_plugin.dll</code></pre>
+
+<h4>为什么是「一个 EXE + 一堆静态库」这种形态？</h4>
+<p>
+          不是为了发多个文件，而是为了<strong>用编译期边界强制约束模块之间的依赖方向</strong>。
+          静态库在运行时不存在，但在编译期，A 库想用 B 库的符号就必须在 CMake 里显式声明
+          <code>target_link_libraries</code>——这就把「谁能调谁」写进了构建系统，改错了直接编译失败。
+        </p>
+</section>
+<!-- ══ 3 ══════════════════════════════════════════════════════ -->
+<section id="s3">
+<div class="sec-head">
+<span class="sec-num">03</span>
+<h2 class="sec-title">整体分层架构</h2>
+</div>
+<div class="stack">
+<div class="layer">
+<div class="layer-tag">进程入口</div>
+<div class="layer-name">src/app/main.cpp</div>
+<ul>
+<li>PMv2 DPI 感知声明（<b>必须在建窗口之前</b>）</li>
+<li>命令行分流：无参数 → 托盘 GUI ／ <code>--mcp-stdio</code> → 协议进程</li>
+</ul>
+</div>
+<div class="connector">│<br/>├──────────────┴──────────────┐<br/>▼<span style="display:inline-block;width:9em"></span>▼</div>
+<div class="branch">
+<div class="layer">
+<div class="layer-tag">托盘 GUI 模式</div>
+<div class="layer-name">qingying.exe</div>
+<ul>
+<li>Application 组合根</li>
+<li>单实例 Mutex</li>
+<li>TrayController</li>
+<li>HotkeyManager</li>
+<li>顶层消息循环</li>
+<li>消息路由 message filter</li>
+</ul>
+</div>
+<div class="layer">
+<div class="layer-tag">MCP stdio 模式</div>
+<div class="layer-name">runMcpStdio()</div>
+<ul>
+<li>轻量协议进程</li>
+<li>不建托盘 / 热键 / 单例 / 插件</li>
+<li>McpBridge + StdioTransport</li>
+<li>PipeAutomationClient</li>
+<li>↓ Named Pipe（私有 wire v1）</li>
+</ul>
+</div>
+</div>
+<div class="connector">│<br/>▼（GUI 模式继续）</div>
+<div class="layer">
+<div class="layer-tag">应用编排层 · UI 线程</div>
+<div class="layer-name">CaptureWorkflow 与它的协作者</div>
+<ul>
+<li><b>CaptureWorkflow</b> — 选区 / 标注 / 结果动作 的状态机</li>
+<li><b>LongShotController</b> — 长截图 worker 生命周期</li>
+<li><b>CaptureService</b> — 单次区域捕获 + 窗口解析 + 结果发布</li>
+<li><b>ResultActionService</b> — Copy / Save / Pin 的唯一出口</li>
+<li><b>InteractionGate</b> — 全局「谁在占用交互」的互斥门</li>
+<li><b>ResultStore</b> — 「每个作用域一张当前结果」+ 租约</li>
+</ul>
+</div>
+<div class="connector">│<br/>▼</div>
+<div class="layer">
+<div class="layer-tag">自动化接入层</div>
+<div class="layer-name">AutomationRuntime → PipeServer → UiActionScheduler → AutomationEndpoint</div>
+<ul>
+<li><b>OperationRegistry</b> — 操作状态 / 句柄 / 幂等</li>
+</ul>
+</div>
+<div class="connector">│<br/>▼　单步业务命令唯一入口</div>
+<div class="layer" style="border-color: var(--accent);">
+<div class="layer-tag">统一入口</div>
+<div class="layer-name">ActionDispatcher</div>
+<ul>
+<li>Status / CaptureRegion / CaptureWindow / CropCenter / Copy / Save / Pin</li>
+</ul>
+</div>
+<div class="connector">│<br/>▼　能力模块（互不依赖，只依赖 action 契约）</div>
+</div>
+<div class="mods">
+<div class="mod"><b>capture</b><span>区域捕获</span></div>
+<div class="mod"><b>export</b><span>剪贴板 · WIC PNG</span></div>
+<div class="mod"><b>pin</b><span>多钉图窗口</span></div>
+<div class="mod"><b>annotate</b><span>标注引擎</span></div>
+<div class="mod"><b>overlay</b><span>选区 UI</span></div>
+<div class="mod"><b>longshot</b><span>长截图引擎 + 插件宿主</span></div>
+<div class="mod"><b>window</b><span>窗口目录 / 检测 / 解析</span></div>
+<div class="mod"><b>ui</b><span>共用工具栏</span></div>
+</div>
+<h3>为什么 <code>Application</code> 要做“组合根”，而不是“大总管”</h3>
+<p><code>Application::Impl</code> 的核心职责是创建对象、连接依赖、安装消息路由并控制销毁顺序；真正的多步骤业务交给 <code>CaptureWorkflow</code>，单步动作交给 <code>ActionDispatcher</code> 和各能力服务。这样理解后，看到 <code>application.cpp</code> 里对象很多并不代表“业务都堆在这里”，它更像整个程序的接线板。</p>
+<p>这也是 PIMPL 在这里的实际意义：把大量 Windows 类型和实现细节压在 <code>.cpp</code> 中，公共头保持稳定，同时把对象的创建与析构顺序集中管理，特别适合这个拥有 UI、worker、插件和 IPC 的原生应用。</p>
+<div class="note">
+<p>
+<b>一句话记忆：</b><code>Application 负责组装</code> →
+            <code>CaptureWorkflow 负责编排</code> → <code>ActionDispatcher 负责单步命令</code> →
+            <code>各能力模块干活</code>。
+          </p>
+</div>
+</section>
+<!-- ══ 4 ══════════════════════════════════════════════════════ -->
+<section id="s4">
+<div class="sec-head">
+<span class="sec-num">04</span>
+<h2 class="sec-title">目录 / 模块职责对照表</h2>
+</div>
+<p>
+          把 <code>include/qingying/</code> 与 <code>src/</code> 一一对应，这样看目录就知道去哪找东西：
+        </p>
+<div class="tw">
+<table>
+<thead>
+<tr>
+<th class="mono">src/ 目录</th>
+<th class="mono">CMake target</th>
+<th>职责</th>
+
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">action</td>
+<td class="mono">qingying_action</td>
+<td>Action 契约 + Dispatcher</td>
+
+</tr>
+<tr>
+<td class="mono">action/compatibility</td>
+<td class="mono">qingying_action_compatibility</td>
+<td>旧 all-fields 请求迁移适配器</td>
+
+</tr>
+<tr>
+<td class="mono">app</td>
+<td class="mono">workflow · app_handlers<br/>app_runtime · qingying(EXE)</td>
+<td>组合根、托盘、热键、工作流、结果服务、关闭协调</td>
+
+</tr>
+<tr>
+<td class="mono">capture</td>
+<td class="mono">qingying_capture</td>
+<td>GDI <code>BitBlt</code> 区域捕获</td>
+
+</tr>
+<tr>
+<td class="mono">export</td>
+<td class="mono">qingying_export</td>
+<td>CF_DIB 剪贴板 + WIC PNG + 原子文件事务</td>
+
+</tr>
+<tr>
+<td class="mono">overlay</td>
+<td class="mono">qingying_overlay</td>
+<td>桌面快照遮罩、框选、八点调区、窗口吸附、选区工具条、长截图预览</td>
+
+</tr>
+<tr>
+<td class="mono">annotate</td>
+<td class="mono">qingying_annotate</td>
+<td>标注文档 / 引擎 / 渲染器 / 就地编辑 Overlay</td>
+
+</tr>
+<tr>
+<td class="mono">pin</td>
+<td class="mono">qingying_pin</td>
+<td>多钉图窗口、自动避让、缩放、捕获排除</td>
+
+</tr>
+<tr>
+<td class="mono">longshot</td>
+<td class="mono">qingying_longshot<br/>+ 3 个 MODULE</td>
+<td>通用长截图运行时、profile 注册表、插件宿主</td>
+
+</tr>
+<tr>
+<td class="mono">window</td>
+<td class="mono">qingying_window</td>
+<td>窗口目录、检测、解析、SmartRegion 定位器</td>
+
+</tr>
+<tr>
+<td class="mono">ui</td>
+<td class="mono">qingying_ui</td>
+<td>共用白圆角工具栏 <code>ModernToolbar</code> + SVG 图标</td>
+
+</tr>
+<tr>
+<td class="mono">command</td>
+<td class="mono">qingying_command</td>
+<td>F8 本地口令</td>
+
+</tr>
+<tr>
+<td class="mono">mcp</td>
+<td class="mono">qingying_mcp</td>
+<td>MCP 协议 session、stdio、工具目录、bridge</td>
+
+</tr>
+<tr>
+<td class="mono">ipc</td>
+<td class="mono">qingying_ipc</td>
+<td>Named Pipe 服务端 / 客户端、私有 wire 编解码、身份校验</td>
+
+</tr>
+<tr>
+<td class="mono">automation</td>
+<td class="mono">qingying_automation</td>
+<td>操作注册表、UI 调度器、AutomationEndpoint</td>
+
+</tr>
+<tr>
+<td class="mono">vendor/nlohmann_json</td>
+<td class="mono">nlohmann_json::nlohmann_json</td>
+<td>固定 3.11.3，<b>SHA-256 校验，不联网下载</b></td>
+
+</tr>
+</tbody>
+</table>
+</div>
+<div class="note warn">
+<p>
+<b>小提醒：</b><code>qrc/</code> 目录放的是 SVG / PNG 图标，
+            <b>不是 Qt 资源文件</b>——项目根本不用 Qt，别被目录名误导。
+          </p>
+</div>
+</section>
+<!-- ══ 5 ══════════════════════════════════════════════════════ -->
+<section id="s5">
+<div class="sec-head">
+<span class="sec-num">05</span>
+<h2 class="sec-title">依赖方向：项目的「宪法」</h2>
+</div>
+<p>
+          这是整个架构最值得理解的部分。<code>docs/architecture.md</code> §4 明确写死了依赖箭头：
+        </p>
+<pre><code>action      <span class="cmt">←</span> capture / export / pin / annotate / command / mcp
+action + ui <span class="cmt">←</span> overlay
+authority_contract <span class="cmt">←</span> automation / ipc / mcp / app_runtime
+action + capture   <span class="cmt">←</span> longshot
+action + overlay + capture + annotate + export + pin + longshot <span class="cmt">←</span> workflow
+app <span class="cmt">→</span> workflow + 上述服务 + app_runtime          <span class="cmt">（组合根）</span>
+longshot runtime <span class="cmt">←</span> 受控 profile 插件 DLL</code></pre>
+<h3>四条硬性红线</h3>
+<p>违反任何一条，就是架构 bug：</p>
+<ol class="rules">
+<li>
+<b><code>command</code> / <code>mcp</code> 只能依赖稳定契约</b>，
+            绝不能 include DXGI、GDI 或 <code>*Impl</code> 私有头。
+          </li>
+<li><b>引擎模块不得反向依赖 <code>app</code>。</b></li>
+<li><b>跨模块不得 include 对方 <code>.cpp</code> 旁的私有头。</b></li>
+<li>
+<b>UI 背景快照、文件对话框、长截图预览这类表现层行为可以留在 workflow</b>，
+            但必须明确标注「这是例外」，不能假装「一切都走了 Dispatcher」。
+          </li>
+</ol>
+
+
+
+
+</section>
+<!-- ══ 6 ══════════════════════════════════════════════════════ -->
+<section id="s6">
+<div class="sec-head">
+<span class="sec-num">06</span>
+<h2 class="sec-title">三条核心链路</h2>
+</div>
+<h3>6.1　普通截图主链路（最常用）</h3>
+<div class="flow">
+<div class="step hot">
+<div class="dot">1</div>
+<div class="step-body">
+<b>Ctrl+Shift+Q</b>
+<p>
+                HotkeyManager 收到 <code>WM_HOTKEY</code>，<code>Application::onCaptureHotkey()</code>
+                只是 <code>PostMessage(WM_QINGYING_BEGIN_CAPTURE)</code> 就返回。
+              </p>
+<p><b>关键：热键回调必须快，不能阻塞在这。</b></p>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">2</div>
+<div class="step-body">
+<b>消息路由 → <code>capture_workflow_.beginSelection()</code></b>
+<ul>
+<li><b>InteractionGate</b> 抢占「交互占用」（防重入）</li>
+<li><code>ResultStore.clearScope()</code> — 释放上一张大图，避免常驻大内存</li>
+<li>记录原前台顶层窗口（<code>GetForegroundWindow</code> → <code>GetAncestor(GA_ROOT)</code>）</li>
+<li><code>PinManager.temporarilyHideForCapture()</code> — RAII，隐藏自己的钉图</li>
+<li><code>CaptureEngine</code> 抓整个虚拟桌面 → <code>selection_background</code></li>
+</ul>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">3</div>
+<div class="step-body">
+<b><code>SelectionOverlay.show(background, callbacks...)</code> — 非模态！创建后立即返回</b>
+<ul>
+<li>用户自由框选 / 悬停窗口高亮吸附 / 八点调整</li>
+<li>底部 SelectionToolbar：复制 / 保存 / 长截图 / 编辑 / 钉图</li>
+</ul>
+</div>
+</div>
+<div class="step">
+<div class="dot">4</div>
+<div class="step-body">
+<b>用户点某个按钮 → overlay 回调写 <code>pending_selection</code></b>
+<p>关闭时 <code>postContinuation()</code> → <code>PostMessage(WM_QINGYING_WORKFLOW_CONTINUE)</code></p>
+</div>
+</div>
+<div class="step">
+<div class="dot">5</div>
+<div class="step-body">
+<b>消息路由 → <code>capture_workflow_.continueWorkflow()</code></b>
+<p><code>decideCaptureWorkflowRoute()</code> — <b>纯函数决策，可单测！</b> 然后按分支走：</p>
+<ul>
+<li>
+<b>复制 / 保存 / 钉图</b> → <code>CaptureService.capture()</code> →
+                  <code>dispatch(CaptureRegion)</code> → <code>ResultStore.publish()</code> →
+                  <code>ResultActionService.copy/save/pin</code>
+</li>
+<li>
+<b>编辑</b> → <code>beginAnnotation()</code> → 抓选区源图 →
+                  <code>AnnotationOverlay.showInPlace()</code>（同样非模态）→ 确认后 publish + 自动 Copy →
+                  <code>composeCapturePreview()</code> 把结果贴回桌面快照 →
+                  恢复同一选区的结果操作条（<b>选区锁定只读</b>，防止物理矩形与标注栅格失配）
+                </li>
+<li><b>长截图</b> → <code>LongShotController.start()</code> → 见下一节</li>
+</ul>
+</div>
+</div>
+</div>
+<h4>这里有几个非常值得学的设计点</h4>
+<div class="cards">
+<div class="card">
+<h4>非模态 Overlay + 顶层消息泵续接</h4>
+<p>
+              以前 Overlay 自己跑消息循环（模态），会导致一堆嵌套问题。现在改成
+              <code>show()</code> <b>创建窗口后立即返回</b>，所有交互由
+              <code>Application::run()</code> 里<b>唯一的 <code>GetMessageW</code> 循环</b>驱动，
+              完成 / 取消通过 <code>WM_QINGYING_WORKFLOW_CONTINUE</code> 回到 <code>CaptureWorkflow</code> 续接。
+            </p>
+<p>文档原话：<b>「Win32 消息循环只在 app」</b>。</p>
+</div>
+<div class="card">
+<h4><code>decideCaptureWorkflowRoute()</code> 是纯函数</h4>
+<div class="sig">include/qingying/app/capture_workflow.hpp</div>
+<pre><code>CaptureWorkflowRoute decideCaptureWorkflowRoute(
+    const SelectionIntent&amp; selection,
+    bool longshot_result_ready,
+    bool annotated_result_ready = false) noexcept;</code></pre>
+<p>
+              分支优先级：<code>Edit &gt; AnnotatedResult &gt; StartLongShot &gt;
+              ExistingLongShotResult &gt; CaptureRegion</code>。
+            </p>
+<p>拆出来就能不建窗口直接跑单测。</p>
+</div>
+<div class="card">
+<h4><code>WS_EX_NOACTIVATE</code></h4>
+<p>
+              遮罩窗口刻意不激活，否则原前台窗口的 <b>owned popup（下拉菜单、tooltip）会立刻消失</b>。
+            </p>
+<p>这是踩过坑的修复（commit <code>615c2f2a</code>）。</p>
+</div>
+</div>
+<div class="note">
+<p><b>再补一个容易忽略、但直接决定“截得准不准”的基础：</b>程序在创建窗口前就启用 Per-Monitor V2 DPI 感知，并把遮罩、鼠标位置、窗口矩形和截图区域统一看成<strong>物理像素坐标</strong>。因此在 125% / 150% 缩放、多显示器甚至负坐标副屏场景下，UI 看到的选框和 GDI 真正截取的区域仍属于同一坐标系，不需要在业务层反复猜缩放比例。</p>
+</div>
+<h3>6.2　长截图链路（最复杂）</h3>
+<div class="flow">
+<div class="step hot">
+<div class="dot">1</div>
+<div class="step-body">
+<b>用户框选 → 点「长截图」</b>
+<p>Overlay 保留在屏幕上，选区孔洞切换为「捕获透传」。</p>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">2</div>
+<div class="step-body">
+<b><code>LongShotController.start(request)</code> — 启动独立 worker 线程</b>
+<ul>
+<li>
+<b>LongShotProfileRegistry</b> 挑 profile —
+                  从 <code>plugins/longshot/*.dll</code> 通过受控 C ABI 加载
+                </li>
+<li>
+<code>profile.resolve(request, out)</code> —
+                  定位滚动控件与内容边界。返回 <code>true</code>
+                  同时意味着「这个 profile 接受该选区」，兼作能力探测，所以没有单独的
+                  <code>probe()</code>
+</li>
+<li>
+<code>profile.scrollDown()</code> — 向目标发一次向下滚动输入
+                </li>
+<li>
+<code>profile.queryScrollState()</code> —
+                  读滚动位置；返回 <code>false</code> 表示自绘控件读不到，
+                  引擎退回图像重叠兜底
+                </li>
+<li>
+<code>profile.cancel()</code> — 可选协作式取消（默认空实现，保旧插件 ABI）
+                </li>
+</ul>
+<p class="hint">
+                接口只有这五个虚函数：<code>name / resolve / scrollDown /
+                queryScrollState / cancel</code>。没有 <code>probe()</code> 或
+                <code>open()</code>——「支不支持」和「建会话」都由
+                <code>resolve()</code> 一并回答。
+              </p>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">3</div>
+<div class="step-body">
+<b>循环</b>
+<ul>
+<li><code>CaptureEngine.captureRegion(同一矩形)</code></li>
+<li><code>ImageStitcher</code> 重叠匹配去重拼接</li>
+<li>向 Overlay <code>postLongShotPreview()</code>（实时预览）</li>
+<li><code>profile.scroll_down()</code> 驱动滚轮</li>
+<li><code>profile.query_scroll_state()</code> 判断是否到底</li>
+</ul>
+</div>
+</div>
+<div class="step">
+<div class="dot">4</div>
+<div class="step-body">
+<b>停止条件（任一命中）</b>
+<ul>
+<li>已到垂直滚动条底部</li>
+<li>新帧与累计图完全重合 / 无新增内容</li>
+<li><code>max_frames = 30</code></li>
+<li><code>max_output_height = 30000</code></li>
+<li>用户暂停 / 停止、应用退出</li>
+<li>目标窗口 / 选区 / 捕获失败</li>
+</ul>
+</div>
+</div>
+<div class="step">
+<div class="dot">5</div>
+<div class="step-body">
+<b>worker 完成 → 把 token PostMessage 到托盘窗口</b>
+<p>
+<code>WM_QINGYING_LONGSHOT_COMPLETE</code> →
+                <code>capture_workflow_.handleLongShotCompletion(token)</code> →
+                结果写 ResultStore + 自动 Copy。
+              </p>
+</div>
+</div>
+</div>
+<h4>两个值得单独说的设计</h4>
+<div class="cards">
+<div class="card">
+<h4>跨线程预览的所有权模型</h4>
+<p>
+              worker 复制预览图后写进 <code>UiMessageChannel</code>，
+              <b>Windows 消息只携带一个 token</b>（不携带指针），
+              UI 线程凭 token 取出并接管所有权。
+            </p>
+<p>这样避免了跨线程裸指针的经典坑。</p>
+</div>
+<div class="card">
+<h4>3 个插件 DLL 的加载是受控的</h4>
+<p>
+<code>longshot_plugin_api.h</code> 是<b>唯一的 ABI 契约</b>，
+              里面只有 C 兼容类型——<b>没有 STL、没有 C++ 类、没有异常、没有所有权转移 API</b>。
+            </p>
+<p>连 <code>HWND</code> 都用 <code>uint64_t</code> 表示，就是为了让 <code>Windows.h</code> 不跨越 ABI 边界。</p>
+<p>还带了 <code>static_assert</code> 锁死结构体大小。</p>
+</div>
+</div>
+
+<div class="note warn">
+<p><b>插件“能加载”不等于“可以随便操作桌面”。</b>长截图开始前会保存原始 owner window，插件只能解析这个 owner 及其子孙窗口；host 在真正发送滚动输入前还会重新校验父子关系。这个边界把“应用适配能力”限制在用户刚刚选中的那块上下文里，避免插件因为拿到 DLL 身份就向任意窗口广播输入。</p>
+</div>
+<h3>6.3　F9 MCP / Agent 外部接入链路</h3>
+<p>这是最「分布式」的一条链路——<strong>同一个 EXE 的两种运行模式</strong>：</p>
+<div class="flow">
+<div class="step">
+<div class="dot">▸</div>
+<div class="step-body">
+<b>MCP 客户端（如 Cursor / Codex）</b>
+<p>标准 MCP / stdio（逐行 UTF-8 JSON-RPC）</p>
+</div>
+</div>
+<div class="step">
+<div class="dot">▸</div>
+<div class="step-body">
+<b><code>qingying.exe --mcp-stdio</code> — 客户端拉起的轻量协议进程</b>
+<p>不建托盘、不建热键、不建单例 Mutex、不建插件宿主。</p>
+</div>
+</div>
+<div class="step">
+<div class="dot">▸</div>
+<div class="step-body">
+<b>私有、版本化 IPC / Named Pipe</b>
+<p>连到已在运行的托盘主进程。</p>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">▸</div>
+<div class="step-body">
+<b><code>PipeServer</code>（worker 线程做 I/O）</b>
+<ul>
+<li>端点：<code>\\.\pipe\QingYing.Automation.v1.&lt;logon-sid&gt;</code></li>
+<li><code>PIPE_REJECT_REMOTE_CLIENTS</code> + 显式登录 SID DACL</li>
+<li>双向 token 校验（真实进程 / 会话 / 用户 SID）</li>
+<li>最多 4 个槽位，握手 3 秒期限</li>
+</ul>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">▸</div>
+<div class="step-body">
+<b>UI 线程 <code>drain()</code> → <code>UiActionScheduler</code>（有界队列）</b>
+</div>
+</div>
+<div class="step hot">
+<div class="dot">▸</div>
+<div class="step-body">
+<b><code>AutomationEndpoint</code>（可信组合边界）</b>
+<ul>
+<li>
+<code>connectAuthenticated()</code> 分配 <code>ResultScopeId</code> —
+                  <b>绝不从客户端 JSON 构造 scope</b>
+</li>
+<li><b>OperationRegistry</b> 管操作状态、随机句柄、幂等</li>
+<li><b>InteractionGate</b> 仲裁「用户正在交互」vs「Agent 要截图」</li>
+</ul>
+</div>
+</div>
+<div class="step">
+<div class="dot">▸</div>
+<div class="step-body">
+<b>分流</b>
+<ul>
+<li>单步动作 → <code>ActionDispatcher</code> → Handler → 能力模块</li>
+<li>交互长截图 → <code>CaptureWorkflow</code> → <code>LongShotController</code></li>
+</ul>
+</div>
+</div>
+</div>
+<h4>把 <code>crop_center</code> 看成一条完整链路，会更容易理解 F9</h4>
+<p>外部 JSON 并不会“解析完就直接调用截图函数”。它先经过 MCP 会话校验和 tool schema，转换成内部类型化请求；随后通过有界 Named Pipe 写队列进入托盘主进程，Pipe worker 只负责传输和身份校验，再把 payload 放入 <code>UiMessageChannel</code>，Windows 消息本身只携带 token。UI 线程拿到 token 后，由 <code>AutomationEndpoint</code> 建立可信 scope、登记 operation，再进入 <code>ActionDispatcher</code> / <code>CaptureService</code>。完成结果沿同一路径返回。</p>
+<p>这条链路看起来比“直接调 GDI”长，但它换来了三个关键边界：<strong>协议和业务解耦、I/O 线程不碰 UI 状态、外部连接不能伪造内部结果作用域</strong>。而且返回的是尺寸、状态和不透明句柄，不是把整张 BGRA 像素塞进 JSON。</p>
+<h4>MCP 工具目录当前有 9 个工具</h4>
+<p><code>src/mcp/tool_catalog.cpp</code>：</p>
+<div class="tw">
+<table>
+<thead>
+<tr><th class="mono">Tool</th><th>是否显示遮罩</th><th>说明</th></tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">status</td>
+<td><span class="pill no">否</span></td>
+<td>查询可用性与限额</td>
+</tr>
+<tr>
+<td class="mono">crop_center(w, h)</td>
+<td><span class="pill no">否</span></td>
+<td>主显示器中央直接截图</td>
+</tr>
+<tr>
+<td class="mono">capture_window(query)</td>
+<td><span class="pill no">否</span></td>
+<td>唯一匹配后截窗口可见像素，多匹配返回 <code>WindowAmbiguous</code></td>
+</tr>
+<tr>
+<td class="mono">copy(result_id)</td>
+<td><span class="pill no">否</span></td>
+<td>不释放结果、不延长 TTL</td>
+</tr>
+<tr>
+<td class="mono">pin(result_id)</td>
+<td><span class="pill no">否</span></td>
+<td>创建原生钉图窗口</td>
+</tr>
+<tr>
+<td class="mono">save(result_id, path, name)</td>
+<td><span class="pill no">否</span></td>
+<td>不弹对话框，走允许目录 + 原子文件事务</td>
+</tr>
+<tr>
+<td class="mono">get_operation(op_id)</td>
+<td><span class="pill no">否</span></td>
+<td>查询操作状态</td>
+</tr>
+<tr>
+<td class="mono">cancel_operation(op_id)</td>
+<td><span class="pill no">否</span></td>
+<td>请求取消（幂等）</td>
+</tr>
+<tr>
+<td class="mono">release_result(result_id)</td>
+<td><span class="pill no">否</span></td>
+<td>显式释放结果</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>
+          协议范围被刻意冻结在 <strong>MCP <code>2025-11-25</code> / stdio profile</strong>，
+          并明确声明「不宣称通过任何特定产品客户端验收」。
+        </p>
+<p>
+<strong>开关默认关闭</strong>，勾选托盘菜单「允许本机 Agent 接口」后写入
+          <code>HKCU\Software\QingYing\Automation</code>。
+        </p>
+</section>
+<!-- ══ 7 ══════════════════════════════════════════════════════ -->
+<section id="s7">
+<div class="sec-head">
+<span class="sec-num">07</span>
+<h2 class="sec-title">几个必须理解的横切抽象</h2>
+</div>
+<h3>7.1　<code>Image</code> — 极薄的像素契约</h3>
+<pre><code>struct Image {
+  int width, height;
+  std::vector&lt;std::uint32_t&gt; pixels;  <span class="cmt">// 每像素 uint32（BGRA 通道序）</span>
+};</code></pre>
+<p>
+          全项目统一为 <strong>BGRA32 / 行优先 / 物理像素</strong>。注释里写得很清楚：
+          「刻意保持极薄：不携带算法 / 句柄；P0 以值传递（单区域，≤ 4K 屏）」。
+        </p>
+<div class="note">
+<p>
+<b>所有坐标都是物理屏幕像素</b>——这是 <code>main.cpp</code> 里必须在建窗口前声明
+            PMv2 DPI 感知的原因：不声明的话鼠标坐标是虚拟化逻辑像素，而 <code>BitBlt</code>
+            按物理像素取样，<b>选区会和实际截到的区域整体偏移</b>。
+          </p>
+</div>
+<h3>7.2　Action 契约 — 单步业务命令的统一入口</h3>
+<pre><code>struct ActionRequest {
+  RequestId request_id;            <span class="cmt">// 请求 ID</span>
+  OperationId operation_id;        <span class="cmt">// 操作 ID</span>
+  CancellationToken cancellation;  <span class="cmt">// 取消令牌</span>
+  std::chrono::milliseconds timeout;
+  std::chrono::steady_clock::time_point submitted_at;
+  ActionPayload payload;           <span class="cmt">// std::variant 类型化 payload</span>
+  ActionContext context;           <span class="cmt">// 结果作用域（由可信入口设置）</span>
+  std::shared_ptr&lt;IOperationControl&gt; operation_control;  <span class="cmt">// 提交仲裁</span>
+};</code></pre>
+<p>关键点：</p>
+<ul>
+<li>
+<strong>payload 是 <code>std::variant</code> 而不是「全字段万能 request」</strong>——
+            类型安全，改错了编译不过
+          </li>
+<li>
+<code>ActionContext.result_scope</code> 注释明确写：
+            <strong>「它不是客户端可控的动作参数」</strong>
+</li>
+<li><code>cancel</code> / <code>timeout</code> / <code>tryCommit()</code> 构成了完整的异步操作生命周期</li>
+<li>
+<code>ActionDispatcher::submit()</code> 保证 <strong>at-most-once completion</strong>：
+            无论校验失败、取消、无 Handler 还是抛异常，完成回调<strong>恰好投递一次</strong>
+</li>
+</ul>
+<h3>7.3　<code>ResultStore</code> — 结果生命周期的核心</h3>
+<p>这是 F9 之后重构最重的地方。核心模型：</p>
+<pre><code>每个「可信作用域」(ResultScopeId) 一个槽位
+  · kGuiResultScopeId = 1   <span class="cmt">← GUI 自己</span>
+  · &gt;= 2                    <span class="cmt">← 每个 MCP 连接一个，由 Endpoint 分配</span>
+
+GUI 清理不影响外部结果（scope 隔离）
+外部结果有固定 TTL + 字节预算
+ResultLease 是 shared_ptr&lt;const Image&gt;，可以比 Store 活得更久，能被 worker 线程消费</code></pre>
+<p>几个关键行为（都写在 <code>result_store.h</code> 注释里）：</p>
+<ul>
+<li>
+<strong>新截图开始时先 <code>clearScope()</code></strong>，失败后<strong>不恢复旧结果</strong>——
+            避免常驻进程长期持有大块像素
+          </li>
+<li>
+<strong><code>get()</code> 会深拷贝整张图，<code>acquire()</code> 才是零拷贝租约</strong>——
+            性能敏感路径要用后者
+          </li>
+<li>
+<strong><code>tombstones_</code></strong> 记录已失效的 ID，
+            让重复 <code>release_result</code> 能幂等返回
+          </li>
+</ul>
+<h3>7.4　<code>ResultActionService</code> — Copy / Save / Pin 的唯一出口</h3>
+<p>
+          无论 GUI、Dispatcher 还是 PinWindow 右键菜单，<strong>都走这一个服务</strong>。
+          这解决了「Pin 的复制保存错误地读到了最新 ResultStore」这类串图 bug。
+        </p>
+<p>
+          它还把保存拆成两半：<code>prepareSave()</code>（准备 + 路径授权 + lease）和
+          <code>executeSave()</code>（实际 I/O），中间夹着 <code>CommitAuthorization</code> ——
+          这是为了支持 <strong>取消竞争</strong>：编码完成后才去抢 <code>tryCommit()</code>，抢不到就不写文件。
+        </p>
+<h3>7.5　<code>InteractionGate</code> — 防止「人和 Agent 抢屏幕」</h3>
+<p>
+          一个全局互斥门。GUI 截图、MCP 截图、模态保存对话框都要先
+          <code>gate.acquire(InteractionKind::...)</code>。
+          这就是为什么 MCP 的 <code>capture_window</code> 不会在你正在框选时插入进来。
+        </p>
+<h3>7.6　<code>CaptureWorkflow</code> 状态机</h3>
+<pre><code>enum class WorkflowStage { Idle, Selecting, Annotating };</code></pre>
+<p>
+          配上一组布尔标记：<code>active</code> / <code>longshot_result_ready</code> /
+          <code>annotated_result_ready</code> / <code>selection_closed</code> /
+          <code>selection_result_ready</code> / <code>annotation_result_ready</code>。
+        </p>
+<div class="note warn">
+<p>
+<b>这是当前最值得注意的技术债之一：</b>这堆布尔标记的组合合法性靠人工维护。
+            文档说「后续重点是收紧 UI 状态 owner，而不是继续堆叠回调」。
+          </p>
+</div>
+<h3>7.7　四种 ID：一次外部调用为什么不能只用一个编号</h3>
+<div class="tw">
+<table>
+<thead><tr><th>ID</th><th>代表什么</th><th>为什么要分开</th></tr></thead>
+<tbody>
+<tr><td class="mono">MCP rpc id</td><td>把响应对应回外部 JSON-RPC 请求</td><td>只属于协议层</td></tr>
+<tr><td class="mono">RequestId</td><td>一次内部提交</td><td>负责调度过程，不等同于业务结果</td></tr>
+<tr><td class="mono">OperationId</td><td>可查询、可取消的一条操作记录</td><td>保存状态与取消控制，不拥有图像</td></tr>
+<tr><td class="mono">ResultId</td><td><code>ResultStore</code> 中的一张图像</td><td>结果有自己的 scope、TTL 和 lease</td></tr>
+</tbody>
+</table>
+</div>
+<p>外部真正看到的 <code>result_id</code> / <code>operation_id</code> 还是<strong>连接作用域内的不透明句柄</strong>，不是内部数字 ID。连接重建后，旧句柄不会跨 generation 继续生效。这样把“协议请求”“操作状态”“像素结果”三种生命周期拆开，Save / Copy / Pin 也必须明确指向一张结果，而不是猜测某个全局 current。</p>
+</section>
+<!-- ══ SmartRegion ════════════════════════════════════════════ -->
+<section id="smart-region">
+<div class="sec-head">
+<span class="sec-num">SR</span>
+<h2 class="sec-title">智能吸附：结题答辩只需要抓住两条主线</h2>
+</div>
+<p>
+          智能吸附的目标不是“从截图里猜一个框”，而是根据鼠标位置，尽快给出一个
+          <strong>可解释、可回退、不会误选大区域</strong>的候选矩形。核心入口是
+          <code>SmartRegionDetector::detectAt()</code>，实际悬停由
+          <code>selection_overlay.cpp</code> 驱动。
+        </p>
+<div class="cards">
+<div class="card">
+<h4>主线一：如何识别正确</h4>
+<div class="sig">多来源候选 → 语义筛选 → 统一评分</div>
+<p>
+              不同应用没有统一控件接口：浏览器可能提供 UIA / MSAA，Electron 工作台常常只有一个渲染窗口，
+              自绘区域则只能从截图边界判断。
+            </p>
+<ul>
+<li><code>UIA</code> 优先识别 Button、TabItem、MenuItem、ListItem 等可操作控件。</li>
+<li>UIA 没有有效局部结果时，后台用 <code>MSAA</code> 识别浏览器标签、书签、地址栏和工具栏。</li>
+<li>已知区域处理 Chrome 渲染区、记事本、资源管理器；视觉策略处理 VS Code 等 Electron 面板。</li>
+<li>最终保留 Client / Window 作为安全回退，不因局部识别失败而无结果。</li>
+</ul>
+</div>
+<div class="card">
+<h4>主线二：如何做到轻量且不卡顿</h4>
+<div class="sig">快速路径 + 后台查询 + 有效性校验</div>
+<p>
+              UI 线程不等待跨进程 UIA / MSAA。先用窗口、已知区域和冻结截图得到初步候选，
+              再让后台线程补充结构化结果。
+            </p>
+<ul>
+<li>首帧立即显示快速候选；UIA 查询由独立 worker 执行。</li>
+<li>鼠标移动按约 <code>16ms</code> 合并，UIA 结果约 <code>8ms</code> 轮询。</li>
+<li>请求采用 latest-wins，旧请求不与最新鼠标位置竞争。</li>
+<li>结果必须校验 Root、Owner、年龄和候选是否仍覆盖鼠标，避免迟到结果覆盖新区域。</li>
+<li>视觉结果和 UIA 结果都有限缓存；连续微动不重复执行完整扫描。</li>
+</ul>
+</div>
+</div>
+<h3>实际决策链：为什么不会“看到最小的就选最小的”</h3>
+<pre><code>候选来源：UIA / MSAA / KnownContent / Visual / Client / Window
+        ↓
+基础校验：鼠标在矩形内、矩形属于 Owner、尺寸和置信度合格
+        ↓
+语义优先：ActionableControl  优先于  ContentSurface  优先于  Fallback
+        ↓
+评分选择：来源可靠性 + 控件语义 + 层级关系 + 边界证据
+        ↓
+稳定呈现：首个可信局部候选快速提升，普通候选切换约 48ms 稳定</code></pre>
+<p>
+          代码中的关键保护是：UIA / MSAA 的可操作控件一旦有效，视觉和 Client / Window 回退不能抢走它；
+          视觉候选必须有连续边界证据，不能仅凭文字笔画或图片纹理成框。
+          候选模型、评分和稳定器集中在
+          <code>include/qingying/window/smart_region_detector.hpp</code> 与
+          <code>src/window/smart_region_detector.cpp</code>。
+        </p>
+<h3>轻量化是怎么实现的</h3>
+<div class="tw">
+<table>
+<thead><tr><th>开销来源</th><th>当前做法</th><th>轻量化含义</th></tr></thead>
+<tbody>
+<tr>
+<td>窗口识别</td>
+<td><code>WindowFromPoint</code> + 顶层窗口过滤</td>
+<td>只处理鼠标所在窗口，不扫描整张桌面</td>
+</tr>
+<tr>
+<td>UIA / MSAA</td>
+<td>后台线程、固定深度/节点/时间预算、latest-wins</td>
+<td>不阻塞 UI，也不让无障碍树无限遍历</td>
+</tr>
+<tr>
+<td>视觉识别</td>
+<td>冻结截图 + 有限 ROI + 边界采样，不启用 OCR / 重型模型</td>
+<td>默认悬停路径没有模型加载和逐帧推理成本</td>
+</tr>
+<tr>
+<td>重复移动</td>
+<td>视觉缓存、UIA 结果复用、16ms 输入合并</td>
+<td>相同窗口和相近位置不重复做完整查询</td>
+</tr>
+<tr>
+<td>内存和候选</td>
+<td>候选数组固定容量，RAII 管理 COM / HANDLE</td>
+<td>悬停热路径避免无界增长和资源泄漏</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="note">
+<p>
+<b>答辩一句话：</b>轻量化不是降低识别能力，而是把不同成本的工作放到正确的位置：
+            本地、确定、快速的工作走 UI 线程；跨进程和不确定的工作走后台；视觉只做有限兜底；
+            所有路径都有固定预算和安全回退。
+          </p>
+</div>
+<h3>评委最可能追问的三个问题</h3>
+<ol>
+<li>
+<strong>“为什么不用 OCR 或大模型直接识别？”</strong>——默认悬停要求低延迟和稳定性，
+            当前优先使用 UIA / MSAA 和局部边界；OCR / 视觉模型只能作为显式触发的增强模式。
+          </li>
+<li>
+<strong>“UIA 返回慢或返回错了怎么办？”</strong>——首帧不等 UIA；结果回来后必须通过 Root、Owner、年龄和鼠标覆盖校验，
+            不合格就丢弃，快速候选继续作为回退。
+          </li>
+<li>
+<strong>“怎么证明不是只在测试夹具里有效？”</strong>——答辩应区分自动化证据和真实应用证据，
+            至少展示 Chrome 外壳、VS Code 编辑器/终端，以及 UIA 失败时的回退日志；性能结论要用 P50/P95 数据支撑。
+          </li>
+</ol>
+<div class="note warn">
+<p>
+<b>必须记住的边界：</b>代码已经形成完整的候选、异步、缓存和稳定呈现链路；
+            “所有应用都稳定”“性能已经显著提升”不能只靠单元测试下结论，必须有对应的真实应用复测和测量数据。
+          </p>
+</div>
+</section>
+<!-- ══ 8 ══════════════════════════════════════════════════════ -->
+<section id="s8">
+<div class="sec-head">
+<span class="sec-num">08</span>
+<h2 class="sec-title">线程模型与关闭协议</h2>
+</div>
+<h3>线程模型</h3>
+<div class="tw">
+<table>
+<thead>
+<tr><th>事项</th><th>实现</th></tr>
+</thead>
+<tbody>
+<tr><td>进程消息循环</td><td><code>Application::run()</code> 中<b>唯一</b>的 <code>GetMessage</code></td></tr>
+<tr><td>Overlay</td><td>创建后立即返回，由顶层消息泵驱动</td></tr>
+<tr><td>长截图</td><td><code>LongShotController</code> 单个 worker + atomic 暂停 / 停止标志</td></tr>
+<tr><td>跨线程预览</td><td>worker 复制图 → <code>UiMessageChannel</code>，消息只带 token</td></tr>
+<tr><td>Action 异步</td><td><code>ActionDispatcher::submit()</code> + 注入的 <code>ActionExecutor</code></td></tr>
+<tr><td>SmartRegion 查询</td><td>UI 线程提交 latest-wins 请求，worker 返回带 root / generation / age 的结果，UI 线程丢弃迟到结果</td></tr>
+<tr><td>自动化 / IPC</td><td>Pipe worker 做传输，UI 消息泵 drain 后进 Endpoint</td></tr>
+<tr><td>单实例</td><td>Named Mutex</td></tr>
+</tbody>
+</table>
+</div>
+<h3>关闭协议（<code>ApplicationShutdownCoordinator</code>）</h3>
+<p>这是 F9 期间做得相当扎实的一块。<strong>四阶段</strong>：</p>
+<div class="phases">
+<div class="phase">
+<div class="n">①</div>
+<b>StopAdmission<br/>停止接入</b>
+<ul>
+<li>automation_transport</li>
+<li>tray_input</li>
+</ul>
+</div>
+<div class="phase">
+<div class="n">②</div>
+<b>RejectNewWork<br/>拒绝新任务</b>
+<ul>
+<li>automation_endpoint</li>
+<li>capture_workflow</li>
+</ul>
+</div>
+<div class="phase">
+<div class="n">③</div>
+<b>CancelAndWait<br/>取消并等待</b>
+<ul>
+<li>business_producers</li>
+<li>longshot_worker <code>1500ms</code></li>
+<li>uia_query_worker <code>1000ms</code></li>
+<li>export_worker <code>1500ms</code></li>
+<li>pipe_workers <code>1000ms</code></li>
+</ul>
+</div>
+<div class="phase">
+<div class="n">④</div>
+<b>DrainAndDestroy<br/>排空回调后销毁</b>
+<ul>
+<li>capture_callbacks</li>
+<li>automation_endpoint_callbacks</li>
+</ul>
+</div>
+</div>
+<p><strong>总预算 5000 ms。</strong></p>
+<h4>超时怎么办？</h4>
+<p>关键决策写在 <code>application.cpp</code> 里：</p>
+<pre><code>Application::~Application() {
+  impl_-&gt;shutdown();
+  if (impl_-&gt;requiresProcessReclaim()) {
+    <span class="cmt">// A timed-out worker still owns callbacks and context. Keep the complete</span>
+    <span class="cmt">// application graph alive until process teardown instead of destroying a</span>
+    <span class="cmt">// live joinable thread's owner.</span>
+    (void)impl_.release();   <span class="cmt">// ← 故意泄漏，交给操作系统回收</span>
+    return;
+  }
+  impl_.reset();
+}</code></pre>
+<div class="note">
+<p>
+<b>宁可泄漏也不 detach / TerminateThread</b> —— 这是正确的取舍，避免悬空回调和数据损坏。
+          </p>
+</div>
+<h4>取消不等于“线程此刻已经消失”</h4>
+<p>F9 的取消采用协作式语义：收到取消后先把操作标记为 cancelled / cancelling，再通过原来的调度链路通知真正执行者。对于保存文件、写剪贴板、创建 Pin 这类不可逆副作用，业务会在提交副作用前争抢 <code>tryCommit()</code>；如果取消已经取得优先权，就不再落盘或产生新的外部副作用。</p>
+<p>因此取消之后，<code>ResultLease</code>、交互锁和 worker context 仍可能暂时存在，直到执行者真正收尾。这和四阶段 shutdown 是同一个思想：<strong>先停止产生新工作，再等待旧工作安全退出，最后才销毁它依赖的对象。</strong></p>
+</section>
+<!-- ══ 9 ══════════════════════════════════════════════════════ -->
+<section id="quality">
+<div class="sec-head">
+<span class="sec-num">09</span>
+<h2 class="sec-title">质量基线、当前状态与边界</h2>
+</div>
+<p>理解项目不能只看“有哪些功能”，还要看它准备怎样证明这些功能可持续工作。中期阶段的测试思路是<strong>按边界分层</strong>，而不是只点一下截图按钮：Action / 类型契约、Workflow、ResultStore 与预算、PNG / 剪贴板、Pin、长截图拼接、插件 ABI、MCP session、wire codec、Pipe 身份与传输、进程集成以及关闭协调器都分别有自己的验证入口。</p>
+<div class="cards">
+<div class="card">
+<h4>已经形成主链路</h4>
+<p>普通截图、框选、窗口吸附、标注动作、复制 / 保存、Pin、托盘热键等已经形成完整用户路径；Notepad、Explorer、Chromium 的长截图 profile 与通用引擎也已经接入。</p>
+</div>
+<div class="card">
+<h4>已经接线，但还要做真实场景收口</h4>
+<p>F9 的 MCP protocol、stdio、Named Pipe、AutomationEndpoint，以及 Status / Capture / Copy / Save / Pin 等主链已经接通；真实客户端差异、安装包、断线、桌面关闭等场景仍需要继续验收。</p>
+</div>
+<div class="card">
+<h4>指标是“验收目标”，不是自动成立的结论</h4>
+<p>项目提供测量脚本去检查发布目录、常驻内存、热键到首帧延迟，以及多轮操作后的句柄、线程、GDI / User 对象稳定性。目标包括包体 ≤ 20 MB、常驻工作集 ≤ 40 MB、首帧 P95 ≤ 300 ms；真正汇报时应以当天实测数据为准。</p>
+</div>
+</div>
+<h3>当前最值得记住的三个边界</h3>
+<ol>
+<li><strong>ABI 合法 ≠ 插件来源可信。</strong>结构体大小、版本、必需回调可以校验，但签名、哈希、目录 ACL 等发布信任策略仍需继续补强。</li>
+<li><strong>结构还有收口空间。</strong>AutomationEndpoint 对具体 Workflow 仍有反向依赖，Overlay target 也直接编译了部分 SmartRegion 源文件；这些不影响主链路，但说明“依赖方向”还不是完全结束的工作。</li>
+<li><strong>自动化测试 ≠ 真实应用结论。</strong>尤其智能吸附、跨 DPI、真实浏览器窗口和关闭/断线场景，需要用真实环境复测，性能最好用 P50 / P95 而不是主观“很快”来描述。</li>
+</ol>
+<div class="note">
+<p><b>把整套设计压缩成五个词：</b>小而原生、能力复用、扩展有边界、异步可回收、状态可验证。它们基本可以解释为什么项目要有 Action、Workflow、ResultStore、受控 ABI、Named Pipe、token 消息和四阶段 shutdown。</p>
+</div>
+</section>
+<!-- ══ 10 ═════════════════════════════════════════════════════ -->
+<section id="s9">
+<div class="sec-head">
+<span class="sec-num">10</span>
+<h2 class="sec-title">建议的阅读顺序</h2>
+</div>
+<p>按这个顺序读，能最快建立完整心智模型：</p>
+<div class="flow">
+<div class="step"><div class="dot">1</div><div class="step-body">
+<b><code>README.md</code></b>
+<p>5 分钟建立产品印象。</p>
+</div></div>
+<div class="step"><div class="dot">2</div><div class="step-body">
+<b><code>docs/architecture.md</code> §2–§4</b>
+<p>分层图和依赖方向，<b>这是全篇精华</b>。</p>
+</div></div>
+<div class="step"><div class="dot">3</div><div class="step-body">
+<b><code>src/app/main.cpp</code></b>（96 行）
+            <p>看两种运行模式怎么分流、DPI 为什么要提前声明。</p>
+</div></div>
+<div class="step hot"><div class="dot">4</div><div class="step-body">
+<b><code>src/app/application.cpp</code></b>（463 行）
+            <p>
+<b>组合根</b>，看所有对象怎么拼起来、消息路由怎么装、关闭四阶段怎么编排。
+              <b>读懂这个文件基本就懂架构了。</b>
+</p>
+</div></div>
+<div class="step"><div class="dot">5</div><div class="step-body">
+<b><code>include/qingying/action/types.hpp</code></b>
+<p>Action 契约全貌。</p>
+</div></div>
+<div class="step"><div class="dot">6</div><div class="step-body">
+<b><code>src/app/capture_workflow.cpp</code></b>（726 行）
+            <p>主链路状态机，配 <code>decideCaptureWorkflowRoute()</code> 看。</p>
+</div></div>
+<div class="step"><div class="dot">7</div><div class="step-body">
+<b><code>include/qingying/app/result_store.h</code></b> + <code>result_action_service.h</code>
+<p>结果生命周期。</p>
+</div></div>
+<div class="step"><div class="dot">8</div><div class="step-body">
+<b><code>docs/F9-IPC-wire-v1.md</code></b> + <code>docs/F9-MCP-stdio-profile.md</code>
+<p>外部接入的契约细节（这两篇写得非常细，安全考量都在里面）。</p>
+</div></div>
+
+</div>
+</section>
+<!-- ══ 13 ═════════════════════════════════════════════════════ -->
+<section id="s10">
+<div class="sec-head">
+<span class="sec-num">11</span>
+<h2 class="sec-title">一句话总结</h2>
+</div>
+<div class="verdict">
+<p>
+            轻映是一个<span class="hl">「以 Action 为原子、以 Workflow 为编排、以 static lib 为编译期边界、
+            以受控 ABI 为插件边界、以 Named Pipe + MCP 为对外边界」</span>的 Windows 原生截图工具。
+          </p>
+<p>
+            它的架构主干是 <b>Application（组装）→ CaptureWorkflow（编排）→ ActionDispatcher（单步命令）→ 能力模块</b>。
+            所有 GUI 多步流程被收口进 <span class="hl">CaptureWorkflow</span> 的非模态状态机，
+            所有结果被收口进带作用域与租约的 <span class="hl">ResultStore</span>，
+            所有生命周期被收口进<span class="hl">四阶段关闭协调器</span>。
+          </p>
+
+</div>
+</section>
+<footer>
+<p>轻映 QingYing · 架构通读。基于仓库源码、docs/ 下架构文档与中期答辩材料综合整理；答辩材料中的内容已按上下文重新组织，用于补强设计动机、所有权、质量基线与当前边界，而非逐段照搬。</p>
+</footer>
+</main>
+</div>
+</div>
