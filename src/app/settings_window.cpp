@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <array>
 #include <cwchar>
 #include <memory>
@@ -10,6 +10,7 @@
 
 #include "qingying/app/settings_window.hpp"
 #include "qingying/app/settings_window_model.hpp"
+#include "resource.h"
 
 namespace qingying {
 namespace {
@@ -1254,10 +1255,14 @@ bool SettingsWindow::show(HWND owner, const SettingsState& initial_state)
   static bool class_registered = false;
   std::call_once(registration_once, []
   {
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const HICON icon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_QINGYING));
     WNDCLASSEXW window_class{};
     window_class.cbSize = sizeof(window_class);
     window_class.lpfnWndProc = Impl::windowProc;
-    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.hInstance = instance;
+    window_class.hIcon = icon;
+    window_class.hIconSm = icon;
     window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
     window_class.lpszClassName = SettingsWindowClassName;
     class_registered = RegisterClassExW(&window_class) != 0 ||

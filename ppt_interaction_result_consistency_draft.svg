@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .bg { fill:#081827; }
+      .title { font:700 31px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#F7FBFF; }
+      .sub { font:400 15px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#AFC2D4; }
+      .section { font:700 15px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#9DB9D3; letter-spacing:1px; }
+      .nodeTitle { font:700 18px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#142A43; }
+      .nodeText { font:400 13px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#50657A; }
+      .small { font:400 12px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#6B8298; }
+      .whiteTitle { font:700 17px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#FFFFFF; }
+      .whiteText { font:400 13px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#D9E8F5; }
+      .greenTitle { font:700 18px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill:#103D35; }
+      .line { fill:none; stroke:#8BA6BF; stroke-width:2.2; marker-end:url(#arrow); }
+      .dash { fill:none; stroke:#F0B353; stroke-width:2; stroke-dasharray:7 5; marker-end:url(#arrowOrange); }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6Z" fill="#8BA6BF"/></marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6Z" fill="#F0B353"/></marker>
+  </defs>
+
+  <rect class="bg" width="1600" height="900"/>
+  <text x="66" y="70" class="title">交互状态与结果一致性</text>
+  <text x="66" y="100" class="sub">临时展示不入库，用户确认后才形成正式结果</text>
+  <line x1="66" y1="124" x2="1534" y2="124" stroke="#2A587B"/>
+  <text x="1490" y="70" class="sub" fill="#6EC6F1">08</text>
+
+  <!-- state legend -->
+  <rect x="1130" y="150" width="18" height="18" rx="4" fill="#DCEBFA" stroke="#5794D4"/>
+  <text x="1158" y="165" class="small" fill="#CADBE9">临时状态</text>
+  <rect x="1290" y="150" width="18" height="18" rx="4" fill="#DDF3E7" stroke="#45A479"/>
+  <text x="1318" y="165" class="small" fill="#CADBE9">正式结果</text>
+  <line x1="1450" y1="159" x2="1490" y2="159" class="dash"/>
+  <text x="1495" y="165" class="small" fill="#CADBE9">异步</text>
+
+  <!-- main vertical entry -->
+  <text x="82" y="164" class="section">1. 准入与临时展示</text>
+  <rect x="590" y="145" width="420" height="54" rx="12" fill="#286195"/>
+  <text x="800" y="169" text-anchor="middle" class="whiteTitle">启动截图</text>
+  <text x="800" y="188" text-anchor="middle" class="whiteText">热键 / 托盘菜单</text>
+  <path d="M800 199 L800 220" class="line"/>
+  <rect x="590" y="222" width="420" height="58" rx="12" fill="#163D64" stroke="#5E99CA" stroke-width="2"/>
+  <text x="800" y="247" text-anchor="middle" class="whiteTitle">交互占用</text>
+  <text x="800" y="267" text-anchor="middle" class="whiteText">防止重复进入</text>
+  <path d="M800 280 L800 302" class="line"/>
+  <rect x="520" y="304" width="560" height="67" rx="12" fill="#DCEBFA" stroke="#5794D4" stroke-width="2"/>
+  <text x="800" y="332" text-anchor="middle" class="nodeTitle">生成遮罩背景</text>
+  <text x="800" y="353" text-anchor="middle" class="nodeText">临时展示，不入库</text>
+  <path d="M800 371 L800 395" class="line"/>
+  <rect x="520" y="397" width="560" height="66" rx="12" fill="#DCEBFA" stroke="#5794D4" stroke-width="2"/>
+  <text x="800" y="425" text-anchor="middle" class="nodeTitle">选择区域</text>
+  <text x="800" y="446" text-anchor="middle" class="nodeText">框选 / 吸附 / 调整</text>
+
+  <!-- async side lane -->
+  <rect x="85" y="304" width="340" height="159" rx="12" fill="#FFF3D9" stroke="#E4A73E" stroke-width="2"/>
+  <text x="255" y="332" text-anchor="middle" class="nodeTitle">异步智能选区</text>
+  <text x="255" y="356" text-anchor="middle" class="nodeText">校验后回流</text>
+  <text x="255" y="397" text-anchor="middle" class="small">手动选择优先</text>
+  <path d="M425 383 L518 424" class="dash"/>
+
+  <!-- decision / branches -->
+  <text x="82" y="510" class="section">2. 确认操作</text>
+  <path d="M800 463 L800 488" class="line"/>
+  <path d="M800 488 L265 488 L265 526" class="line"/>
+  <path d="M800 488 L800 526" class="line"/>
+  <path d="M800 488 L1335 488 L1335 526" class="line"/>
+
+  <rect x="85" y="528" width="360" height="83" rx="12" fill="#EAF2FC" stroke="#5794D4" stroke-width="2"/>
+  <text x="265" y="558" text-anchor="middle" class="nodeTitle">复制 / 保存 / 置顶</text>
+  <text x="265" y="581" text-anchor="middle" class="nodeText">捕获选区</text>
+
+  <rect x="620" y="528" width="360" height="83" rx="12" fill="#EAF2FC" stroke="#5794D4" stroke-width="2"/>
+  <text x="800" y="558" text-anchor="middle" class="nodeTitle">编辑标注</text>
+  <text x="800" y="581" text-anchor="middle" class="nodeText">生成标注图</text>
+
+  <rect x="1155" y="528" width="360" height="83" rx="12" fill="#EAF2FC" stroke="#5794D4" stroke-width="2"/>
+  <text x="1335" y="558" text-anchor="middle" class="nodeTitle">长截图</text>
+  <text x="1335" y="581" text-anchor="middle" class="nodeText">采集并拼接</text>
+
+  <path d="M265 611 L265 642 L620 642" class="line"/>
+  <path d="M800 611 L800 642" class="line"/>
+  <path d="M1335 611 L1335 642 L980 642" class="line"/>
+
+  <!-- authoritative results -->
+  <text x="82" y="666" class="section">3. 正式结果</text>
+  <rect x="500" y="650" width="600" height="84" rx="14" fill="#DDF3E7" stroke="#45A479" stroke-width="2.5"/>
+  <text x="800" y="681" text-anchor="middle" class="greenTitle">ResultStore：发布正式结果</text>
+  <text x="800" y="704" text-anchor="middle" class="nodeText">唯一结果源</text>
+  <path d="M800 734 L800 757" class="line"/>
+  <rect x="500" y="759" width="600" height="57" rx="12" fill="#CDEADD" stroke="#45A479" stroke-width="2"/>
+  <text x="800" y="785" text-anchor="middle" class="nodeTitle">执行结果操作</text>
+  <text x="800" y="805" text-anchor="middle" class="nodeText">复制 / 保存 / 置顶</text>
+
+  <!-- exception lines -->
+  <path d="M520 430 L469 430 L469 848 L405 848" fill="none" stroke="#C68181" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="85" y="822" width="320" height="52" rx="12" fill="#FBE7E7" stroke="#D27B7B" stroke-width="2"/>
+  <text x="245" y="846" text-anchor="middle" class="nodeTitle">取消或失效</text>
+  <text x="245" y="865" text-anchor="middle" class="nodeText">不发布结果</text>
+  <path d="M1100 788 L1170 788" class="line"/>
+  <rect x="1172" y="759" width="343" height="57" rx="12" fill="#193E5F" stroke="#5E99CA" stroke-width="2"/>
+  <text x="1344" y="784" text-anchor="middle" class="whiteTitle">结束本次交互</text>
+  <text x="1344" y="804" text-anchor="middle" class="whiteText">恢复并回收</text>
+
+  <!-- footer invariant -->
+  <rect x="485" y="839" width="1030" height="35" rx="9" fill="#123149"/>
+  <text x="1000" y="862" text-anchor="middle" class="whiteText">临时状态不入库；异步结果需校验；所有操作读取同一份正式结果</text>
+</svg>

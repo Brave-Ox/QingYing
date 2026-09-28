@@ -118,6 +118,30 @@ class Child {
     }, reinterpret_cast<LPARAM>(&search));
     return search.count;
   }
+  HWND window(const std::wstring& class_name) const
+  {
+    struct Search
+    {
+      DWORD pid;
+      const std::wstring* class_name;
+      HWND window{};
+    };
+    Search search{pid, &class_name};
+    EnumWindows([](HWND window, LPARAM context) -> BOOL
+    {
+      auto& search = *reinterpret_cast<Search*>(context);
+      DWORD window_pid{};
+      GetWindowThreadProcessId(window, &window_pid);
+      wchar_t name[128]{};
+      GetClassNameW(window, name, 128);
+      if (window_pid == search.pid && name == *search.class_name)
+      {
+        search.window = window;
+      }
+      return TRUE;
+    }, reinterpret_cast<LPARAM>(&search));
+    return search.window;
+  }
   bool send(const Json& value) {
     const auto text = value.dump() + "\n";
     DWORD written{};
@@ -267,6 +291,11 @@ TEST_F(McpProcessIntegrationTest, RepeatedSettingsCommandActivatesOneSettingsWin
   }));
   ASSERT_TRUE(gui.message(WM_COMMAND, TrayMenuSettingsCommandId));
   EXPECT_EQ(gui.windowCount(L"QingYing.SettingsWindow"), 1);
+
+  const HWND settings = gui.window(L"QingYing.SettingsWindow");
+  ASSERT_NE(settings, nullptr);
+  EXPECT_NE(GetClassLongPtrW(settings, GCLP_HICON), 0);
+  EXPECT_NE(GetClassLongPtrW(settings, GCLP_HICONSM), 0);
 
   ASSERT_TRUE(gui.message(WM_CLOSE));
   ASSERT_TRUE(gui.exited());
