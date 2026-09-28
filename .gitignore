@@ -15,6 +15,9 @@
 *.exe
 !**/bin/**
 .cache/
+/ppt_*_draft.png
+/ppt_*_draft.svg
+/答辩逐页提示稿.md
 
 # 三方库（vcpkg）不入库：源码量大，团队成员各自本地安装
 /thirdparty/
