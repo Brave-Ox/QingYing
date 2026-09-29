@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "window_query_helpers.h"
+
 namespace qingying {
 
 namespace {
@@ -63,6 +65,41 @@ TEST(WindowDetectorTest, OwnProcessWindowIsNotSnappable) {
 
 TEST(WindowDetectorTest, NullWindowIsNotSnappable) {
   EXPECT_FALSE(WindowDetector::isSnappable(nullptr));
+}
+
+TEST(WindowDetectorTest, TaskbarClassAllowlistAcceptsOnlyTaskbarClasses)
+{
+  EXPECT_TRUE(window_detail::isTaskbarWindowClass(L"Shell_TrayWnd"));
+  EXPECT_TRUE(window_detail::isTaskbarWindowClass(L"Shell_SecondaryTrayWnd"));
+  EXPECT_FALSE(window_detail::isTaskbarWindowClass(L"Shell_TrayWndExtra"));
+  EXPECT_FALSE(window_detail::isTaskbarWindowClass(L"WorkerW"));
+  EXPECT_FALSE(window_detail::isTaskbarWindowClass(L"QingYingTestWindow"));
+}
+
+TEST(WindowDetectorTest, SnapshotAtFindsVisibleTaskbarWhenDesktopIsAvailable)
+{
+  const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+  if (taskbar == nullptr || IsWindowVisible(taskbar) == FALSE)
+  {
+    GTEST_SKIP() << "interactive Windows taskbar is unavailable";
+  }
+
+  RECT taskbar_rect{};
+  ASSERT_NE(GetWindowRect(taskbar, &taskbar_rect), FALSE);
+  ASSERT_LT(taskbar_rect.left, taskbar_rect.right);
+  ASSERT_LT(taskbar_rect.top, taskbar_rect.bottom);
+
+  WindowDetector detector;
+  HWND detected_window = nullptr;
+  WindowRect detected_rect;
+  ASSERT_TRUE(detector.snapshotAt((taskbar_rect.left + taskbar_rect.right) / 2,
+                                  (taskbar_rect.top + taskbar_rect.bottom) / 2,
+                                  detected_window, detected_rect));
+  EXPECT_EQ(detected_window, taskbar);
+  EXPECT_EQ(detected_rect.left, taskbar_rect.left);
+  EXPECT_EQ(detected_rect.top, taskbar_rect.top);
+  EXPECT_EQ(detected_rect.right, taskbar_rect.right);
+  EXPECT_EQ(detected_rect.bottom, taskbar_rect.bottom);
 }
 
 }  // namespace qingying

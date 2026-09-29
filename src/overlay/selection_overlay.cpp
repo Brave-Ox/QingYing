@@ -27,6 +27,9 @@
 
 #include "browser_shell_atlas.hpp"
 #include "browser_shell_presentation.hpp"
+#include "hover_pointer_sampler.h"
+#include "overlay_z_order.h"
+#include "taskbar_snapshot.h"
 
 namespace qingying {
 
@@ -43,8 +46,10 @@ constexpr std::size_t kMaximumOverlayHotkeys = 11;
 constexpr UINT_PTR kHoverStabilizeTimerId = 3;
 constexpr UINT_PTR kHoverUpdateTimerId = 4;
 constexpr UINT_PTR kUiaResultPollTimerId = 5;
+constexpr UINT_PTR kHoverPointerSampleTimerId = 6;
 constexpr UINT kMinimumTimerDelayMs = 1;
 constexpr UINT kUiaResultPollIntervalMs = 8;
+constexpr UINT kHoverPointerSampleIntervalMs = 16;
 
 // 覆盖层内部的拖拽类型：创建 / 调整大小 / 整体移动。
 enum class DragKind { None, Create, Resize, Move };
@@ -83,6 +88,8 @@ struct OverlayWindowData {
   SmartRegionHoverRenderGate hover_render_gate;
   SmartRegionUpdateGate hover_update_gate;
   SmartRegionAsyncPresentationGate async_presentation_gate;
+  HoverPointerSampler hover_pointer_sampler;
+  overlay_detail::TaskbarSnapshotSet taskbar_snapshots;
   window_detail::UiaRegionQueryWorker* uia_query_worker{nullptr};
   window_detail::UiaRegionQueryWorker* discovery_worker{nullptr};
   window_detail::UiaRegionQueryWorker* refinement_worker{nullptr};
@@ -127,6 +134,44 @@ struct OverlayWindowData {
   Image longshot_preview;
 };
 
+HWND taskbarHoverOwner(const OverlayWindowData* data) noexcept
+{
+  if (data == nullptr || !data->has_hover)
+  {
+    return nullptr;
+  }
+
+  const HWND owner =
+      reinterpret_cast<HWND>(data->hover_candidate.owner_window);
+  if (owner == nullptr || IsWindow(owner) == FALSE)
+  {
+    return nullptr;
+  }
+
+  std::array<wchar_t, 64> class_name{};
+  if (GetClassNameW(owner, class_name.data(),
+                    static_cast<int>(class_name.size())) <= 0)
+  {
+    return nullptr;
+  }
+  if (lstrcmpW(class_name.data(), L"Shell_TrayWnd") != 0 &&
+      lstrcmpW(class_name.data(), L"Shell_SecondaryTrayWnd") != 0)
+  {
+    return nullptr;
+  }
+  return owner;
+}
+
+void ensureTaskbarHoverPresentation(HWND overlay,
+                                    const OverlayWindowData* data) noexcept
+{
+  const HWND taskbar = taskbarHoverOwner(data);
+  if (taskbar != nullptr)
+  {
+    static_cast<void>(overlay_detail::ensureWindowAbove(overlay, taskbar));
+  }
+}
+
 SelectionIntent toScreenSelection(const OverlayClientRect& client,
                                   const coord::VirtualScreenRect& screen);
 bool updateOverlay(HWND hwnd, OverlayWindowData* data);
@@ -138,6 +183,26 @@ void handleToolbarCommand(OverlayWindowData* data,
 void requestHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
                         int client_y,
                         std::uint64_t queued_at_ms = 0);
+
+bool canSampleHoverPointer(const OverlayWindowData* data) noexcept
+{
+  return data != nullptr && data->phase == OverlayPhase::Sniffing &&
+      data->drag == DragKind::None &&
+      data->smart_region_mode != SmartRegionMode::Disabled;
+}
+
+void configureHoverPointerSampling(HWND hwnd, OverlayWindowData* data)
+{
+  if (!canSampleHoverPointer(data))
+  {
+    static_cast<void>(KillTimer(hwnd, kHoverPointerSampleTimerId));
+    return;
+  }
+
+  data->hover_pointer_sampler.reset();
+  static_cast<void>(SetTimer(hwnd, kHoverPointerSampleTimerId,
+                             kHoverPointerSampleIntervalMs, nullptr));
+}
 
 const wchar_t kOverlayClassName[] = L"QingYingSelectionOverlay";
 
@@ -907,6 +972,18 @@ void recordRawHoverMotion(OverlayWindowData* data, int client_x,
       data->async_presentation_gate.hasRecentFastMotion(now_ms);
 }
 
+void processHoverPointerMotion(HWND hwnd, OverlayWindowData* data,
+                               int client_x, int client_y)
+{
+  if (data == nullptr)
+  {
+    return;
+  }
+
+  recordRawHoverMotion(data, client_x, client_y);
+  requestHoverUpdate(hwnd, data, client_x, client_y);
+}
+
 bool cycleHoverCandidate(HWND hwnd, OverlayWindowData* data,
                          int direction) noexcept
 {
@@ -958,10 +1035,15 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   SmartRegionWindowSnapshot window_snapshot;
   SmartRegionCandidateCollection fallbacks;
   const SmartRegionDetectionPolicy policy = SmartRegionDetectionPolicy::UiSnapshot;
-  if (!data->smart_region_detector.detectAt(
+  HWND taskbar_window = nullptr;
+  WindowRect taskbar_rect;
+  const bool taskbar_snapshot_hit = data->taskbar_snapshots.findAt(
+      screen_x, screen_y, taskbar_window, taskbar_rect);
+  const bool detected = taskbar_snapshot_hit ||
+      data->smart_region_detector.detectAt(
           screen_x, screen_y, candidate, &data->smart_region_diagnostics,
-          nullptr, policy, &fallbacks,
-          &window_snapshot))
+          nullptr, policy, &fallbacks, &window_snapshot);
+  if (!detected)
   {
     static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
         data->hover_motion_delta_x, data->hover_motion_delta_y,
@@ -970,6 +1052,18 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
         data->smart_region_overlay_render_count));
     clearHover(data);
     return;
+  }
+  if (taskbar_snapshot_hit)
+  {
+    candidate = {reinterpret_cast<std::uintptr_t>(taskbar_window),
+                 reinterpret_cast<std::uintptr_t>(taskbar_window),
+                 taskbar_rect, SmartRegionKind::Window};
+    candidate.source = SmartRegionDiagnosticSource::Window;
+    candidate.semantic = SmartRegionSemantic::Fallback;
+    window_snapshot.root_window =
+        reinterpret_cast<std::uintptr_t>(taskbar_window);
+    window_snapshot.owner_rect = taskbar_rect;
+    window_snapshot.client_rect = taskbar_rect;
   }
   static_cast<void>(data->smart_region_diagnostics.recordHoverMotion(
       data->hover_motion_delta_x, data->hover_motion_delta_y,
@@ -1008,6 +1102,10 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
   for (std::size_t i = 0; i < fallbacks.count() &&
        cached_count < SmartRegionMaxCandidates; ++i)
     cached[cached_count++] = fallbacks.candidateAt(i);
+  if (taskbar_snapshot_hit && cached_count < SmartRegionMaxCandidates)
+  {
+    cached[cached_count++] = candidate;
+  }
   SmartRegionCandidate selected = candidate;
   const std::uint64_t atlas_hit_test_begin_ms = GetTickCount64();
   const std::shared_ptr<const BrowserShellAtlasSnapshot> atlas =
@@ -1052,7 +1150,8 @@ void updateHover(OverlayWindowData* data, int client_x, int client_y)
       bounds, selected, data->minimum_visual_confidence);
   applyHoverCandidate(data, selected, data->hover_screen_point);
 
-  if (data->smart_region_mode != SmartRegionMode::DetectElements ||
+  if (taskbar_snapshot_hit ||
+      data->smart_region_mode != SmartRegionMode::DetectElements ||
       data->uia_query_worker == nullptr || data->discovery_worker == nullptr ||
       !window_snapshot.valid()) return;
   ++data->uia_request_id;
@@ -1311,6 +1410,7 @@ void setSmartRegionMode(HWND hwnd, OverlayWindowData* data,
 
   clearHover(data);
   data->smart_region_mode = mode;
+  configureHoverPointerSampling(hwnd, data);
   // A persistence failure must not block the selected mode in this session.
   static_cast<void>(data->smart_region_mode_settings.save(mode));
   if (data->smart_region_diagnostics.enabled())
@@ -1344,6 +1444,7 @@ void processHoverUpdate(HWND hwnd, OverlayWindowData* data, int client_x,
     return;
   }
   updateHover(data, client_x, client_y);
+  ensureTaskbarHoverPresentation(hwnd, data);
   const std::uint64_t now_ms = GetTickCount64();
   const std::uint64_t input_delay_ms =
       now_ms >= queued_at_ms ? now_ms - queued_at_ms : 0;
@@ -1418,6 +1519,7 @@ bool updateOverlay(HWND hwnd, OverlayWindowData* data) {
   if (data == nullptr) {
     return false;
   }
+  ensureTaskbarHoverPresentation(hwnd, data);
   const OverlayClientRect& selection = data->controller.selection();
   const OverlayRenderState render_state(
       selection, data->hover_rect, data->background ? *data->background : emptyBackground(), data->longshot_preview,
@@ -1482,6 +1584,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
       {
         static_cast<void>(data->refinement_worker->start());
       }
+      configureHoverPointerSampling(hwnd, data);
       if (data->phase == OverlayPhase::Selected) {
         const SelectionIntent selection_screen =
             toScreenSelection(data->controller.selection(), data->screen);
@@ -1661,8 +1764,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         // 空闲悬停：无按键且未确认选区 → 智能吸附高亮。
         if ((wparam & MK_LBUTTON) == 0 &&
             data->phase == OverlayPhase::Sniffing) {
-          recordRawHoverMotion(data, x, y);
-          requestHoverUpdate(hwnd, data, x, y);
+          processHoverPointerMotion(hwnd, data, x, y);
         }
         return 0;
       }
@@ -1743,6 +1845,25 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
         data->has_pending_hover_update = false;
         data->pending_hover_queued_at_ms = 0;
         requestHoverUpdate(hwnd, data, x, y, queued_at_ms);
+        return 0;
+      }
+      if (wparam == kHoverPointerSampleTimerId)
+      {
+        if (!canSampleHoverPointer(data))
+        {
+          static_cast<void>(KillTimer(hwnd, kHoverPointerSampleTimerId));
+          return 0;
+        }
+
+        POINT point{};
+        if (GetCursorPos(&point) != FALSE &&
+            data->hover_pointer_sampler.shouldProcess(point))
+        {
+          const int client_x = coord::screenToClientX(point.x, data->screen);
+          const int client_y = coord::screenToClientY(point.y, data->screen);
+          updateOverlayCursor(data, client_x, client_y);
+          processHoverPointerMotion(hwnd, data, client_x, client_y);
+        }
         return 0;
       }
       if (wparam != kHoverStabilizeTimerId ||
@@ -1940,6 +2061,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_DESTROY: {
       if (data != nullptr) {
+        static_cast<void>(KillTimer(hwnd, kHoverPointerSampleTimerId));
         if (data->phase != OverlayPhase::Closing) {
           (void)transitionOverlayPhase(data->phase, OverlayPhase::Closing);
         }
@@ -2086,6 +2208,7 @@ bool SelectionOverlay::show(
   data->owner_hwnd = &overlay_hwnd_;
   data->screen = coord::getVirtualScreen();
   data->controller.setBounds(data->screen.width, data->screen.height);
+  data->taskbar_snapshots.captureVisibleTaskbars();
 
   if (initial_selection.valid()) {
     const OverlayClientRect initial_client =

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 
 namespace qingying::window_detail {
 
@@ -15,6 +16,8 @@ using BoundsReader = std::function<bool(HWND, RECT&)>;
 bool ownProcess(HWND hwnd) noexcept;
 bool desktopShell(HWND hwnd) noexcept;
 bool cloaked(HWND hwnd) noexcept;
+bool isTaskbarWindowClass(std::wstring_view class_name) noexcept;
+bool isTaskbarWindow(HWND hwnd) noexcept;
 bool commonCandidate(HWND hwnd) noexcept;
 bool isBrowserOwnedTransientPopupStyle(LONG_PTR window_style,
                                        bool has_browser_owner) noexcept;

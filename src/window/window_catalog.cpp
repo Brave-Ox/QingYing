@@ -14,6 +14,7 @@
 namespace qingying::window_detail {
 namespace {
 constexpr DWORD BrowserProcessPathCapacity = 32768;
+constexpr std::size_t kWindowClassCapacity = 64;
 
 class ScopedProcessHandle
 {
@@ -114,6 +115,25 @@ bool cloaked(HWND hwnd) noexcept {
   BOOL value = FALSE;
   return SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &value,
       sizeof(value))) && value != FALSE;
+}
+bool isTaskbarWindowClass(std::wstring_view class_name) noexcept
+{
+  return class_name == L"Shell_TrayWnd" ||
+      class_name == L"Shell_SecondaryTrayWnd";
+}
+bool isTaskbarWindow(HWND hwnd) noexcept
+{
+  if (hwnd == nullptr || IsWindow(hwnd) == FALSE)
+  {
+    return false;
+  }
+
+  std::array<wchar_t, kWindowClassCapacity> class_name{};
+  const int class_name_length = GetClassNameW(
+      hwnd, class_name.data(), static_cast<int>(class_name.size()));
+  return class_name_length > 0 &&
+      isTaskbarWindowClass(
+          {class_name.data(), static_cast<std::size_t>(class_name_length)});
 }
 bool commonCandidate(HWND hwnd) noexcept {
   return hwnd && IsWindow(hwnd) && !ownProcess(hwnd) && IsWindowVisible(hwnd) &&

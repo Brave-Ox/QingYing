@@ -4,6 +4,17 @@
 
 namespace qingying {
 
+namespace {
+
+bool isTaskbarSnapCandidate(HWND hwnd) noexcept
+{
+  return window_detail::isTaskbarWindow(hwnd) &&
+      !window_detail::ownProcess(hwnd) && IsWindowVisible(hwnd) != FALSE &&
+      IsIconic(hwnd) == FALSE && !window_detail::cloaked(hwnd);
+}
+
+}  // namespace
+
 bool WindowDetector::snapshotAt(int x, int y, HWND& out_window,
                                 WindowRect& out_rect) const noexcept {
   out_window = nullptr;
@@ -11,6 +22,19 @@ bool WindowDetector::snapshotAt(int x, int y, HWND& out_window,
   HWND window = GetTopWindow(nullptr);
   for (unsigned count = 0; window && count < 128;
        ++count, window = GetWindow(window, GW_HWNDNEXT)) {
+    if (isTaskbarSnapCandidate(window))
+    {
+      RECT rect{};
+      if (GetWindowRect(window, &rect) && x >= rect.left && x < rect.right &&
+          y >= rect.top && y < rect.bottom)
+      {
+        out_window = window;
+        out_rect = {rect.left, rect.top, rect.right, rect.bottom};
+        return true;
+      }
+      continue;
+    }
+
     DWORD pid = 0;
     GetWindowThreadProcessId(window, &pid);
     if (!pid || pid == GetCurrentProcessId() || window == GetShellWindow() ||
@@ -30,7 +54,10 @@ bool WindowDetector::snapshotAt(int x, int y, HWND& out_window,
 }
 
 bool WindowDetector::isSnappable(HWND hwnd) {
-  if (!window_detail::commonCandidate(hwnd)) return false;
+  if (!isTaskbarSnapCandidate(hwnd) && !window_detail::commonCandidate(hwnd))
+  {
+    return false;
+  }
   RECT rect{};
   return GetWindowRect(hwnd, &rect) != FALSE &&
       window_detail::intersectsVirtualDesktop(rect);

@@ -10,6 +10,10 @@
 #include "qingying/overlay/selection_toolbar.hpp"
 #include "qingying/ui/shortcut_types.hpp"
 
+#include "overlay/hover_pointer_sampler.h"
+#include "overlay/overlay_z_order.h"
+#include "overlay/taskbar_snapshot.h"
+
 namespace qingying {
 namespace {
 
@@ -104,6 +108,133 @@ class ScopedThreadHotkey
   int m_hotkey_id{0};
   bool m_registered{false};
 };
+
+class ScopedTopmostWindow
+{
+ public:
+  ScopedTopmostWindow(const wchar_t* title, int x)
+  {
+    m_window = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", title,
+        WS_POPUP | WS_VISIBLE, x, -10000, 120, 80, nullptr, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
+  }
+
+  ~ScopedTopmostWindow()
+  {
+    if (m_window != nullptr)
+    {
+      static_cast<void>(DestroyWindow(m_window));
+    }
+  }
+
+  ScopedTopmostWindow(const ScopedTopmostWindow&) = delete;
+  ScopedTopmostWindow& operator=(const ScopedTopmostWindow&) = delete;
+
+  HWND window() const noexcept
+  {
+    return m_window;
+  }
+
+ private:
+  HWND m_window{nullptr};
+};
+
+TEST(TaskbarSnapshotSetTest, FindsCapturedTaskbarAfterWindowBecomesHidden)
+{
+  ScopedTopmostWindow taskbar(L"captured-taskbar", -9600);
+  ASSERT_NE(taskbar.window(), nullptr);
+
+  overlay_detail::TaskbarSnapshotSet snapshots;
+  const WindowRect expected{0, 1032, 1920, 1080};
+  ASSERT_TRUE(snapshots.add(taskbar.window(), expected));
+  EXPECT_EQ(snapshots.count(), 1u);
+
+  static_cast<void>(ShowWindow(taskbar.window(), SW_HIDE));
+
+  HWND detected_window = nullptr;
+  WindowRect detected_rect;
+  ASSERT_TRUE(snapshots.findAt(960, 1056, detected_window, detected_rect));
+  EXPECT_EQ(detected_window, taskbar.window());
+  EXPECT_EQ(detected_rect.left, expected.left);
+  EXPECT_EQ(detected_rect.top, expected.top);
+  EXPECT_EQ(detected_rect.right, expected.right);
+  EXPECT_EQ(detected_rect.bottom, expected.bottom);
+}
+
+TEST(HoverPointerSamplerTest, ProcessesFirstAndChangedScreenPointsOnly)
+{
+  HoverPointerSampler sampler;
+
+  EXPECT_TRUE(sampler.shouldProcess({100, 200}));
+  EXPECT_FALSE(sampler.shouldProcess({100, 200}));
+  EXPECT_TRUE(sampler.shouldProcess({101, 200}));
+
+  sampler.reset();
+
+  EXPECT_TRUE(sampler.shouldProcess({101, 200}));
+}
+
+TEST(HoverPointerSamplerTest, RechecksStationaryPointOnceAfterCacheCanExpire)
+{
+  constexpr DWORD kStationaryPointRecheckWaitMs = 80;
+  HoverPointerSampler sampler;
+  const POINT point{100, 200};
+
+  EXPECT_TRUE(sampler.shouldProcess(point));
+  EXPECT_FALSE(sampler.shouldProcess(point));
+
+  Sleep(kStationaryPointRecheckWaitMs);
+
+  EXPECT_TRUE(sampler.shouldProcess(point));
+  EXPECT_FALSE(sampler.shouldProcess(point));
+}
+
+TEST(HoverPointerSamplerTest, MovementRearmsStationaryPointRecheck)
+{
+  constexpr DWORD kStationaryPointRecheckWaitMs = 80;
+  HoverPointerSampler sampler;
+  const POINT first_point{100, 200};
+  const POINT second_point{101, 200};
+
+  EXPECT_TRUE(sampler.shouldProcess(first_point));
+  Sleep(kStationaryPointRecheckWaitMs);
+  EXPECT_TRUE(sampler.shouldProcess(first_point));
+
+  EXPECT_TRUE(sampler.shouldProcess(second_point));
+  Sleep(kStationaryPointRecheckWaitMs);
+  EXPECT_TRUE(sampler.shouldProcess(second_point));
+}
+
+TEST(OverlayZOrderTest, RestoresOverlayAboveTopmostObstructionWithoutMovingIt)
+{
+  ScopedTopmostWindow overlay(L"overlay", -10000);
+  ScopedTopmostWindow taskbar(L"taskbar", -9800);
+  ASSERT_NE(overlay.window(), nullptr);
+  ASSERT_NE(taskbar.window(), nullptr);
+
+  ASSERT_NE(SetWindowPos(overlay.window(), HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE),
+            FALSE);
+  ASSERT_NE(SetWindowPos(taskbar.window(), HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE),
+            FALSE);
+  ASSERT_TRUE(overlay_detail::isWindowAbove(taskbar.window(), overlay.window()));
+
+  RECT before{};
+  ASSERT_NE(GetWindowRect(overlay.window(), &before), FALSE);
+  EXPECT_TRUE(
+      overlay_detail::ensureWindowAbove(overlay.window(), taskbar.window()));
+  EXPECT_TRUE(overlay_detail::isWindowAbove(overlay.window(), taskbar.window()));
+
+  RECT after{};
+  ASSERT_NE(GetWindowRect(overlay.window(), &after), FALSE);
+  EXPECT_EQ(after.left, before.left);
+  EXPECT_EQ(after.top, before.top);
+  EXPECT_EQ(after.right, before.right);
+  EXPECT_EQ(after.bottom, before.bottom);
+}
+
 TEST(SelectionOverlayTest, ShowReturnsWithoutBlockingAndHideIsSilent) {
   SelectionOverlay overlay;
   bool callback_invoked = false;
